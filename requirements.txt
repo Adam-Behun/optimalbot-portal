@@ -1,8 +1,9 @@
-pipecat-ai[livekit,silero,elevenlabs]
+pipecat-ai[daily,silero,elevenlabs]
 pipecat-ai-flows
 openai
 deepgram-sdk
 cartesia
+daily-python
 
 # Database and storage
 pymongo
@@ -11,6 +12,7 @@ motor
 # Web framework and server
 uvicorn
 fastapi
+requests
 
 # Environment and configuration
 python-dotenv

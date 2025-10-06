@@ -57,6 +57,77 @@ class AsyncPatientRecord:
             return await cursor.to_list(length=None)
         except:
             return []
+    
+    # NEW METHOD 1: Add patient
+    async def add_patient(self, patient_data: dict) -> Optional[str]:
+        """
+        Insert a new patient record
+        
+        Args:
+            patient_data: Dictionary with patient fields
+        
+        Returns:
+            String patient_id if successful, None otherwise
+        """
+        try:
+            # Add creation timestamp and default values
+            patient_data["created_at"] = datetime.utcnow().isoformat()
+            patient_data["updated_at"] = datetime.utcnow().isoformat()
+            
+            # Set default values for new fields if not provided
+            if "call_status" not in patient_data:
+                patient_data["call_status"] = "Not Started"
+            if "prior_auth_status" not in patient_data:
+                patient_data["prior_auth_status"] = "Pending"
+            
+            result = await self.patients.insert_one(patient_data)
+            return str(result.inserted_id)
+        except Exception as e:
+            print(f"Error adding patient: {e}")
+            return None
+    
+    # NEW METHOD 2: Update call information
+    async def update_call_info(
+        self, 
+        patient_id: str, 
+        call_status: str,
+        insurance_phone_number: str = None,
+        call_transcript: str = None
+    ) -> bool:
+        """
+        Update call-related fields for a patient
+        
+        Args:
+            patient_id: MongoDB ObjectId as string
+            call_status: "Not Started" | "In Progress" | "Completed"
+            insurance_phone_number: Phone number called (optional)
+            call_transcript: JSON string of transcript array (optional)
+        
+        Returns:
+            True if update successful, False otherwise
+        """
+        from bson import ObjectId
+        try:
+            update_doc = {
+                "call_status": call_status,
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            
+            # Add optional fields if provided
+            if insurance_phone_number:
+                update_doc["insurance_phone_number"] = insurance_phone_number
+            
+            if call_transcript:
+                update_doc["call_transcript"] = call_transcript
+            
+            result = await self.patients.update_one(
+                {"_id": ObjectId(patient_id)},
+                {"$set": update_doc}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating call info: {e}")
+            return False
 
 def get_async_db_client():
     """Get asynchronous MongoDB client"""
