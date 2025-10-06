@@ -26,6 +26,8 @@ export interface Patient {
 export interface PatientsResponse {
   patients: Patient[];
   total_count: number;
+  skip: number;
+  limit: number;
 }
 
 export interface PatientResponse {
@@ -40,6 +42,7 @@ export interface AddPatientResponse {
   message: string;
 }
 
+// Fixed to match actual backend response from app.py
 export interface StartCallResponse {
   status: string;
   session_id: string;
@@ -47,9 +50,8 @@ export interface StartCallResponse {
   patient_name: string;
   facility_name: string;
   phone_number: string;
-  room_url: string;
   room_name: string;
-  user_token: string;
+  dialout_id?: string; // Changed from user_token and room_url
   message: string;
 }
 

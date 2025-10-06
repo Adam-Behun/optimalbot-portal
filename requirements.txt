@@ -1,7 +1,6 @@
-pipecat-ai[daily,silero,elevenlabs]
+pipecat-ai[daily,silero,elevenlabs,deepgram]
 pipecat-ai-flows
 openai
-deepgram-sdk
 cartesia
 daily-python
 
@@ -21,14 +20,12 @@ python-dotenv
 pytest
 pytest-asyncio
 
-# Audio processing (Python 3.10 compatible versions)
-numpy>=1.21.0,<2.0.0
+# Audio processing
+numpy
 scipy
 
-# Simple Langfuse integration
+# Observability
 langfuse
-
-# Basic OpenTelemetry (only what pipecat needs)
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http

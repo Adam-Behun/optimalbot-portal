@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Healthcare AI Agent", version="1.0.0")
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
 
 # Add CORS middleware
 app.add_middleware(
@@ -473,19 +473,12 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """Serve the main application interface"""
-    try:
-        return FileResponse("static/index.html")
-    except FileNotFoundError:
-        return HTMLResponse("""
-        <html>
-            <body style="font-family: Arial; padding: 40px; text-align: center;">
-                <h1>Prior Authorization Voice Agent</h1>
-                <p>Application is loading...</p>
-                <p>If this persists, please contact support.</p>
-            </body>
-        </html>
-        """)
+    return FileResponse("frontend/build/index.html")
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Serve React app for all non-API routes"""
+    return FileResponse("frontend/build/index.html")
 
 if __name__ == "__main__":
     # Validate required environment variables
