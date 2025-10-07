@@ -45,7 +45,7 @@ Keep it brief and natural. Do NOT provide patient details until asked."""
         respond_immediately=False,  # Wait for insurance rep to speak first
     )
 
-def create_patient_verification_node(patient_data: dict) -> NodeConfig:
+def create_patient_verification_node(patient_data: dict, returning_from_hold: bool = False) -> NodeConfig:
     """Node 2: Provide patient information when asked"""
     
     # Format DOB properly
@@ -58,6 +58,10 @@ def create_patient_verification_node(patient_data: dict) -> NodeConfig:
             dob = date_obj.strftime("%B %d, %Y").replace(" 0", " ")
         except:
             pass
+    
+    hold_context = ""
+    if returning_from_hold:
+        hold_context = "\n\nNOTE: You were just on hold. The representative has returned. Resume the conversation naturally from where you left off."
     
     return NodeConfig(
         name="patient_verification",
@@ -81,14 +85,13 @@ IMPORTANT RULES:
 5. If they ask what procedure/CPT code, say: "We're looking to verify CPT code {patient_data.get('cpt_code', 'N/A')}"
 6. Don't volunteer information they haven't asked for yet
 
-Keep responses short and clear. This is a phone conversation."""
+Keep responses short and clear. This is a phone conversation.{hold_context}"""
             }
         ],
         respond_immediately=False,
-        # Don't include transitions in NodeConfig - handle in function handlers
     )
 
-def create_authorization_check_node(patient_data: dict) -> NodeConfig:
+def create_authorization_check_node(patient_data: dict, returning_from_hold: bool = False) -> NodeConfig:
     """Node 3: Handle authorization status and reference number"""
     
     from pipecat_flows import FlowsFunctionSchema
@@ -111,6 +114,10 @@ def create_authorization_check_node(patient_data: dict) -> NodeConfig:
             }
         }
     )
+    
+    hold_context = ""
+    if returning_from_hold:
+        hold_context = "\n\nNOTE: You were just on hold. The representative has returned. Resume the conversation naturally from where you left off."
     
     return NodeConfig(
         name="authorization_check",
@@ -136,10 +143,10 @@ You: "Thank you, I have reference number 12345"
 [IMMEDIATELY call update_prior_auth_status(status="Approved", reference_number="12345")]
 
 DO NOT end the conversation or thank them until AFTER you've called the function.
-The function updates the database with patient ID: {patient_data.get('_id', 'N/A')}"""
+The function updates the database with patient ID: {patient_data.get('_id', 'N/A')}{hold_context}"""
             }
         ],
-        functions=[update_auth_function],  # Pass the actual function schema
+        functions=[update_auth_function],
         respond_immediately=False,
     )
 
@@ -158,5 +165,23 @@ Say something like: "Thank you so much for your help, [their name]. Have a great
 Keep it brief and friendly."""
             }
         ],
-        respond_immediately=True,  # Respond immediately with thanks
+        respond_immediately=True,
+    )
+
+def create_hold_return_node(patient_data: dict) -> NodeConfig:
+    """Node for confirming return from hold"""
+    return NodeConfig(
+        name="hold_return",
+        task_messages=[
+            {
+                "role": "system",
+                "content": """You were on hold and think the representative may have returned.
+
+Say ONLY: "Yes, I'm here."
+
+Then WAIT for the representative to respond. Do not say anything else yet."""
+            }
+        ],
+        respond_immediately=True,
+        functions=[],
     )

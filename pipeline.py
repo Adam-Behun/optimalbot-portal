@@ -16,6 +16,7 @@ from deepgram import LiveOptions
 
 # Local imports
 from audio_processors import AudioResampler, DropEmptyAudio
+from hold_detector import HoldDetector
 from flow_nodes import create_greeting_node
 from functions import PATIENT_FUNCTIONS
 
@@ -34,6 +35,14 @@ def setup_logging(level=logging.INFO):
     """Configure logging for the pipeline"""
     logger = logging.getLogger(__name__)
     logger.setLevel(level)
+    
+    # Suppress verbose libraries
+    logging.getLogger("pipecat").setLevel(logging.WARNING)
+    logging.getLogger("deepgram").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("websockets.client").setLevel(logging.WARNING)
+    logging.getLogger("pymongo").setLevel(logging.WARNING)
+    logging.getLogger("pymongo.topology").setLevel(logging.WARNING)
     
     if not logger.handlers:
         handler = logging.StreamHandler()
@@ -159,6 +168,7 @@ class HealthcareAIPipeline:
             AudioResampler(),
             DropEmptyAudio(),
             stt,
+            HoldDetector(flow_manager=self.flow_manager),
             self.transcript_processor.user(),
             self.context_aggregators.user(),
             self.llm,
@@ -276,12 +286,26 @@ class HealthcareAIPipeline:
         )
         logger.info("FlowManager created")
         
+        # Set flow_manager reference in HoldDetector
+        logger.info("=== CONFIGURING HOLD DETECTOR ===")
+        from hold_detector import HoldDetector
+        for processor in self.pipeline.processors:
+            if isinstance(processor, HoldDetector):
+                processor.flow_manager = self.flow_manager
+                logger.info("✓ HoldDetector flow_manager reference set")
+                break
+        
         # Initialize flow with patient data
         if self.flow_manager and self.patient_data:
             logger.info("=== INITIALIZING FLOW WITH PATIENT DATA ===")
             logger.info(f"Patient: {self.patient_data.get('patient_name')}")
             logger.info(f"Insurance: {self.patient_data.get('insurance_company_name')}")
             logger.info(f"Facility: {self.patient_data.get('facility_name')}")
+            
+            # Initialize hold state
+            self.flow_manager.state["hold_status"] = "active"
+            self.flow_manager.state["returning_from_hold"] = False
+            self.flow_manager.state["previous_node"] = None
             
             self.flow_manager.state["patient_data"] = self.patient_data
             self.flow_manager.state["patient_id"] = self.patient_data.get('_id')
@@ -290,7 +314,7 @@ class HealthcareAIPipeline:
                 "auth_status": None,
                 "insurance_rep_name": None
             }
-            logger.info("Flow state initialized")
+            logger.info("Flow state initialized with hold tracking")
             
             logger.info("Creating greeting node...")
             greeting_node = create_greeting_node(self.patient_data)
