@@ -1,3 +1,0 @@
-1. Hold Detection and Management
-Impact: ~35% of total improvement
-Nearly every insurance call involves being placed on hold, often multiple times. The agent must detect hold music patterns (or extended silence), remain completely silent while on hold, track hold duration, and detect when the representative returns. Without this single capability, the agent will speak over hold music, confuse the system, and cause immediate call failure. This is the #1 blocker to production viability because it affects 80-90% of calls and causes cascading failures in the conversation flow. Implementing robust hold detection using audio pattern matching (for music) and silence thresholds (for dead air) would immediately move success rates from <30% to >60%.

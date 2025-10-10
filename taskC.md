@@ -1,3 +1,0 @@
-3. IVR Navigation (DTMF and Speech)
-Impact: ~15% of total improvement
-Many insurance companies route calls through automated phone trees before reaching humans. The agent must detect IVR prompts ("Press 1 for claims, 2 for authorizations"), generate DTMF tones via Daily.co's API, or respond with speech ("authorizations") to navigate menus. Add pattern matching for common IVR phrases, decision logic to select correct menu options based on patient data, and timeout handling for slow IVR systems. While not every insurance company uses complex IVR (maybe 50-70%), those that do become completely inaccessible without this capability, making it a critical gating factor for market coverage.

@@ -1,3 +1,0 @@
-4. Prompt Testing and Iteration Framework
-Impact: ~10% of total improvement
-Move prompts from hardcoded Python strings to versioned YAML templates with variable substitution, implement automated testing with Promptfoo to validate prompt behavior across 20+ test scenarios, and create a prompt playground for rapid iteration. The key insight is that you cannot improve what you cannot measure - without systematic prompt testing, you're making blind changes and hoping they work. Set up metrics for success (did agent wait for rep? did it collect reference number? did it handle clarification correctly?) and A/B test prompt variations. This creates a continuous improvement engine where every week you can test and deploy better prompts based on real call data.
