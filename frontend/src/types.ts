@@ -11,6 +11,7 @@ export interface Patient {
   appointment_time?: string;
   prior_auth_status: string;
   reference_number?: string;
+  [key: string]: any;
   
   // Call-related fields (added in models.py)
   call_status: 'Not Started' | 'In Progress' | 'Completed';

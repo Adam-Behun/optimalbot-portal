@@ -26,7 +26,7 @@ Files You Need to Request
 Please provide:
 1. Current app.py (full file)
 2. engine/schema_loader.py from Stage 1
-3. engine/precompute.py from Stage 2
+3. engine/data_formatter.py from Stage 2
 4. engine/prompt_renderer.py from Stage 2
 5. Any existing logging/monitoring setup
 Implementation Requirements

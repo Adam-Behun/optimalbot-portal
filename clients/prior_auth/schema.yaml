@@ -1,0 +1,242 @@
+# Conversation metadata
+conversation:
+  name: "Healthcare Prior Authorization"
+  version: "2.0.0"
+  client_id: "prior_auth"
+  
+  precompute_strategy:
+    pronunciation_formatters: true
+    static_prompts: true
+    template_cache: true
+
+# Voice configuration
+voice:
+  persona:
+    name: "Alexandra"
+    role: "Medical office assistant"
+    company: "Adam's Medical Practice"
+  
+  speaking_style:
+    tone: "professional, friendly"
+    pace: "moderate"
+    max_words_per_response: 30
+
+# Data schema matching your models.py
+data_schema:
+  entity_name: "Patient"
+  
+  required_fields:
+    - patient_name
+    - date_of_birth
+    - insurance_member_id
+    - insurance_company_name
+    - cpt_code
+    - provider_npi
+  
+  optional_fields:
+    - facility_name
+    - appointment_time
+    - prior_auth_status
+    - reference_number
+  
+  output_fields:
+    - prior_auth_status
+    - reference_number
+    - call_status
+  
+  # Pre-formatting rules for voice pronunciation
+  preformat_rules:
+    date_of_birth:
+      format: "natural_speech"  # "January 15, 1980"
+    
+    insurance_member_id:
+      format: "spell_out"  # Individual characters/digits
+    
+    cpt_code:
+      format: "individual_digits"  # "9 9 2 1 3"
+    
+    provider_npi:
+      format: "grouped_digits"
+      grouping: [3, 3, 4]  # "123 456 7890"
+
+# State machine (maps to your flow_nodes.py)
+states:
+  initial_state: "greeting"
+  
+  definitions:
+    - name: "greeting"
+      description: "Initial greeting after insurance rep answers"
+      respond_immediately: false
+      prompts_ref: "greeting"
+      streaming:
+        enabled: true
+      transitions:
+        - trigger: "rep_asked_for_patient_info"
+          next_state: "patient_verification"
+        - trigger: "rep_said_hold"
+          next_state: "on_hold"
+    
+    - name: "patient_verification"
+      description: "Provide patient information when requested"
+      respond_immediately: false
+      prompts_ref: "patient_verification"
+      data_access:
+        - patient_name
+        - date_of_birth
+        - insurance_member_id
+        - cpt_code
+        - provider_npi
+      streaming:
+        enabled: true
+      transitions:
+        - trigger: "rep_asked_for_authorization"
+          next_state: "authorization_check"
+        - trigger: "all_info_provided"
+          next_state: "authorization_check"
+        - trigger: "rep_said_hold"
+          next_state: "on_hold"
+    
+    - name: "authorization_check"
+      description: "Get authorization status and reference number"
+      respond_immediately: false
+      prompts_ref: "authorization_check"
+      data_access:
+        - patient_name
+        - cpt_code
+        - _id
+      streaming:
+        enabled: true
+      functions:
+        - name: "update_prior_auth_status"
+          module: "functions"
+          required_params:
+            - status
+            - reference_number
+      transitions:
+        - trigger: "database_updated"
+          next_state: "closing"
+        - trigger: "rep_said_hold"
+          next_state: "on_hold"
+    
+    - name: "on_hold"
+      description: "Waiting while rep checks system"
+      respond_immediately: true
+      prompts_ref: "on_hold"
+      streaming:
+        enabled: false
+      transitions:
+        - trigger: "rep_returned"
+          next_state: "hold_return"
+    
+    - name: "hold_return"
+      description: "Confirm presence after hold"
+      respond_immediately: true
+      prompts_ref: "hold_return"
+      streaming:
+        enabled: true
+      transitions:
+        - trigger: "continue_verification"
+          next_state: "patient_verification"
+        - trigger: "continue_authorization"
+          next_state: "authorization_check"
+    
+    - name: "closing"
+      description: "Thank rep and end call"
+      respond_immediately: true
+      prompts_ref: "closing"
+      streaming:
+        enabled: true
+      post_actions:
+        - type: "end_conversation"
+
+# Intent classification
+intent_classification:
+  method: "llm_few_shot"
+  max_classification_latency_ms: 100
+  
+  examples:
+    - user_message: "Can I get the patient's full name?"
+      intent: "rep_asked_for_patient_info"
+      reasoning: "Rep requesting patient details"
+    
+    - user_message: "What's the date of birth?"
+      intent: "rep_asked_for_patient_info"
+      reasoning: "Rep asking for patient info"
+    
+    - user_message: "Hold on, let me pull that up"
+      intent: "rep_said_hold"
+      reasoning: "Rep needs to check system"
+    
+    - user_message: "One moment please"
+      intent: "rep_said_hold"
+      reasoning: "Rep asking to wait"
+    
+    - user_message: "Okay you're approved, reference is X123"
+      intent: "authorization_provided"
+      reasoning: "Rep providing auth decision"
+
+# Fallback intents (keyword-based)
+intents:
+  - name: "rep_asked_for_patient_info"
+    description: "Rep requests patient information"
+    keywords:
+      - "patient name"
+      - "date of birth"
+      - "member id"
+      - "birthday"
+      - "cpt code"
+    patterns:
+      - "can i get"
+      - "what is the"
+      - "i need the"
+  
+  - name: "rep_said_hold"
+    description: "Rep putting caller on hold"
+    keywords:
+      - "hold"
+      - "one moment"
+      - "give me a second"
+    patterns:
+      - "let me check"
+      - "pulling that up"
+  
+  - name: "rep_asked_for_authorization"
+    description: "Rep ready to provide auth status"
+    keywords:
+      - "approved"
+      - "denied"
+      - "authorization"
+      - "pending"
+  
+  - name: "authorization_provided"
+    description: "Rep gave auth status and reference"
+    keywords:
+      - "reference number"
+      - "auth number"
+      - "approved"
+      - "denied"
+  
+  - name: "database_updated"
+    description: "Function successfully updated database"
+    keywords: []
+  
+  - name: "rep_returned"
+    description: "Rep back from hold"
+    keywords:
+      - "thank you for holding"
+      - "are you still there"
+      - "sorry about that"
+
+# Observability
+observability:
+  track_latency:
+    schema_load_time: true
+    precompute_time: true
+    state_transition_time: true
+    prompt_render_time: true
+  
+  events:
+    - state_transitions
+    - intent_classifications
+    - function_calls
+    - latency_warnings

@@ -1,3 +1,4 @@
+# Pipecat and AI services
 pipecat-ai[daily,silero,elevenlabs,deepgram]
 pipecat-ai-flows
 openai
@@ -29,3 +30,8 @@ langfuse
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
+
+# Schema and templating
+jinja2
+pyyaml
+pydantic
