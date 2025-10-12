@@ -4,7 +4,7 @@ FROM python:3.11-slim-bookworm
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including Node.js
+# Install system dependencies including Node.js 20
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     build-essential \
@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Update npm to latest version
+RUN npm install -g npm@11.6.2
 
 # Copy requirements first for better caching
 COPY requirements.txt .
