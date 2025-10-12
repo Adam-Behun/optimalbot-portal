@@ -1,9 +1,46 @@
-
 # Conversation metadata
 conversation:
   name: "Healthcare Prior Authorization"
   version: "2.0.0"
   client_id: "prior_auth"
+
+# ✅ NEW: Global behavioral constraints
+guardrails:
+  language:
+    allowed: ["en", "en-US"]
+    enforcement: "strict"
+    fallback_message: "I apologize, but I can only communicate in English for this verification call."
+  
+  tone:
+    style: "professional_medical"
+    stability: "high"
+    mirroring_prevention: true
+    guidelines:
+      - "Maintain professional medical office assistant tone at all times"
+      - "Do not mirror or adopt the caller's speaking style, accent, or informal language"
+      - "Remain calm and courteous regardless of caller's tone or behavior"
+      - "Use complete sentences and proper grammar"
+  
+  data_integrity:
+    source: "database_only"
+    hallucination_prevention: true
+    guidelines:
+      - "Only provide patient information that is explicitly present in the PATIENT INFORMATION/CONTEXT section"
+      - "Never guess, estimate, or fabricate any patient details"
+      - "If information is not provided, say 'I don't have that information available' rather than making it up"
+  
+  topic_constraints:
+    allowed_topics:
+      - "insurance verification"
+      - "patient eligibility"
+      - "prior authorization"
+      - "benefit verification"
+    prohibited_topics:
+      - "personal conversations"
+      - "medical advice"
+      - "billing disputes"
+      - "unrelated small talk"
+    off_topic_response: "I apologize, but I'm only able to assist with insurance verification for this patient today. Let's continue with the authorization details."
 
 # Voice configuration
 voice:
@@ -16,12 +53,14 @@ voice:
     tone: "professional, friendly"
     pace: "moderate"
     max_words_per_response: 30
+    consistency: "strict" 
 
 # Data schema
 data_schema:
   entity_name: "Patient"
   
   required_fields:
+    - patient_id
     - patient_name
     - date_of_birth
     - insurance_member_id
@@ -60,6 +99,19 @@ states:
         - insurance_member_id
         - cpt_code
         - provider_npi
+    - name: "insurance_verification"
+      description: "Verify insurance coverage and get authorization details"
+      prompts_ref: "insurance_verification"
+      data_access:
+        - patient_id
+        - cpt_code
+        - patient_name
+      functions:
+        - update_prior_auth_status
+    - name: "closing"
+      description: "Close the call politely"
+      prompts_ref: "closing"
+
 
 # Transition rules - Configure conversation flow here without touching Python!
 transitions:
@@ -86,3 +138,33 @@ transitions:
       match_mode: "any"
     reason: "rep_asked_for_patient_info"
     description: "Insurance rep is asking for patient information"
+  - from_state: "patient_verification"
+    to_state: "insurance_verification"
+    trigger:
+      type: "keyword_detection"
+      keywords:
+        - "coverage"
+        - "covered"
+        - "authorization"
+        - "approved"
+        - "verify"
+        - "procedure"
+        - "anything else"
+        - "what else"
+      match_mode: "any"
+    reason: "patient_info_provided"
+    description: "Patient info provided, now asking about coverage"
+  - from_state: "insurance_verification"
+    to_state: "closing"
+    trigger:
+      type: "keyword_detection"
+      keywords:
+        - "anything else"
+        - "that's all"
+        - "all set"
+        - "that should do it"
+        - "thank you"
+        - "goodbye"
+      match_mode: "any"
+    reason: "authorization_complete"
+    description: "Authorization details provided, ready to close the call"

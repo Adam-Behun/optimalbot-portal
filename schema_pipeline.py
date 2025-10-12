@@ -7,7 +7,9 @@ from pipecat.frames.frames import (
     Frame, 
     LLMMessagesAppendFrame,
     LLMMessagesUpdateFrame,
-    TranscriptionFrame
+    TranscriptionFrame,
+    FunctionCallResultFrame,
+    FunctionCallInProgressFrame
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -19,10 +21,11 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.transports.services.daily import DailyTransport, DailyParams
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext 
 from deepgram import LiveOptions
 
 # Local imports
+from functions import PATIENT_TOOLS, update_prior_auth_status_handler
 from audio_processors import AudioResampler, DropEmptyAudio
 from engine import ConversationContext
 from monitoring import emit_event
@@ -120,9 +123,9 @@ class SchemaBasedPipeline:
         
         vad_analyzer = SileroVADAnalyzer(params=VADParams(
             confidence=0.7,
-            start_secs=0.3,
-            stop_secs=0.5,
-            min_volume=0.6
+            start_secs=0.2,
+            stop_secs=0.8,
+            min_volume=0.5
         ))
         
         # Transport
@@ -137,14 +140,14 @@ class SchemaBasedPipeline:
                     audio_in_sample_rate=16000,
                     audio_in_channels=1,
                     audio_out_enabled=True,
-                    audio_out_sample_rate=16000,
+                    audio_out_sample_rate=24000,
                     audio_out_channels=1,
                     transcription_enabled=False,
                     vad_analyzer=vad_analyzer,
                     vad_enabled=True,
                     vad_audio_passthrough=True,
-                    api_key=transport_config['api_key'],  # ✅ Already substituted in app.py
-                    phone_number_id=transport_config['phone_number_id']  # ✅ Already substituted
+                    api_key=transport_config['api_key'],
+                    phone_number_id=transport_config['phone_number_id']
                 )
             )
         
@@ -176,17 +179,23 @@ class SchemaBasedPipeline:
         logger.info("Creating LLM...")
         llm_config = self.services_config['services']['llm']
         initial_prompt = self.conversation_context.render_prompt()
-        
+
         if llm_config['provider'] == 'openai':
             self.llm = OpenAILLMService(
-                api_key=llm_config['api_key'],  # ✅ Already substituted in app.py
+                api_key=llm_config['api_key'],
                 model=llm_config['model'],
                 temperature=llm_config['temperature']
             )
-        
-        # Create context with initial system message
+
+        self.llm.register_function(
+            "update_prior_auth_status",
+            update_prior_auth_status_handler
+        )
+
+        # ✅ Create context with tools (documented approach)
         llm_context = OpenAILLMContext(
-            messages=[{"role": "system", "content": initial_prompt}]
+            messages=[{"role": "system", "content": initial_prompt}],
+            tools=PATIENT_TOOLS  # ✅ Pass tools to context, not LLM service
         )
         self.context_aggregators = self.llm.create_context_aggregator(llm_context)
         
@@ -203,7 +212,7 @@ class SchemaBasedPipeline:
         
         # Setup transcript handler (monitors conversation for state transitions)
         self._setup_transcript_handler()
-        
+
         logger.info("=== BUILDING PIPELINE ===")
         # ✅ Standard Pipecat pipeline order (documented approach)
         self.pipeline = Pipeline([
@@ -252,6 +261,49 @@ class SchemaBasedPipeline:
                 # Only check user messages for state transitions
                 if message.role == "user":
                     await self._check_state_transition(message.content)
+
+    def _setup_function_call_handler(self):
+        """Setup handler for LLM function calls"""
+        
+        @self.llm.event_handler("on_function_call")
+        async def handle_function_call(llm, function_name, arguments):
+            """Execute function calls from LLM"""
+            logger.info(f"🔧 [FUNCTION CALL] {function_name}")
+            logger.info(f"   Arguments: {arguments}")
+            
+            try:
+                # Get function from registry
+                func = FUNCTION_REGISTRY.get(function_name)
+                if not func:
+                    logger.error(f"Function not found: {function_name}")
+                    return {"error": f"Function {function_name} not found"}
+                
+                # Add patient_id if not in arguments
+                if "patient_id" not in arguments:
+                    arguments["patient_id"] = self.patient_id
+                
+                # Execute function
+                result = await func(**arguments)
+                
+                logger.info(f"✅ [FUNCTION RESULT] {function_name}: {result}")
+                
+                emit_event(
+                    session_id=self.session_id,
+                    category="FUNCTION",
+                    event="function_executed",
+                    metadata={
+                        "function_name": function_name,
+                        "arguments": arguments,
+                        "result": result
+                    }
+                )
+                
+                return {"success": result}
+                
+            except Exception as e:
+                logger.error(f"❌ [FUNCTION ERROR] {function_name}: {e}")
+                logger.error(traceback.format_exc())
+                return {"error": str(e)}
     
     async def _check_state_transition(self, user_message: str):
         """
@@ -286,13 +338,6 @@ class SchemaBasedPipeline:
         
         This uses the documented approach from Pipecat's context management:
         https://docs.pipecat.ai/guides/learn/context-management
-        
-        From the docs:
-        - LLMMessagesAppendFrame: Appends a new message to the existing context
-        - LLMMessagesUpdateFrame: Completely replaces the existing context with new messages
-        
-        We use LLMMessagesUpdateFrame to replace the system message while preserving
-        conversation history (user/assistant messages).
         """
         
         if not self.task:
@@ -305,13 +350,18 @@ class SchemaBasedPipeline:
         # Update context state
         self.conversation_context.transition_to(new_state, reason=reason)
         
-        # Render new prompt for the new state
+        # ✅ Render new prompt FIRST (this line must come before any logging)
         new_prompt = self.conversation_context.render_prompt()
-        logger.info(f"📝 [PROMPT] New prompt length: {len(new_prompt)} chars")
-        logger.info(f"📝 [PROMPT] Preview: {new_prompt[:200]}...")
+        
+        # ✅ Add patient_id to prompt for insurance_verification state
+        if new_state == "insurance_verification":
+            new_prompt += f"\n\nIMPORTANT: The patient_id for function calls is: {self.patient_id}"
+        
+        # Now we can safely log (new_prompt is defined)
+        logger.info(f"📄 [PROMPT] New prompt length: {len(new_prompt)} chars")
+        logger.info(f"📄 [PROMPT] Preview: {new_prompt[:200]}...")
         
         # Get current context (includes all user/assistant messages)
-        # Reference: "The context aggregator provides a context property for getting the current context"
         current_context = self.context_aggregators.user().context
         current_messages = current_context.messages if current_context else []
         
@@ -325,16 +375,15 @@ class SchemaBasedPipeline:
             if msg.get("role") != "system":
                 new_messages.append(msg)
         
-        logger.info(f"📝 [CONTEXT] Rebuilding context with {len(new_messages)} messages")
-        logger.info(f"📝 [CONTEXT] Message roles: {[m['role'] for m in new_messages]}")
+        logger.info(f"📄 [CONTEXT] Rebuilding context with {len(new_messages)} messages")
+        logger.info(f"📄 [CONTEXT] Message roles: {[m['role'] for m in new_messages]}")
         
         try:
             # ✅ Use LLMMessagesUpdateFrame to replace entire context
-            # This ensures the new system message is at the start, followed by conversation history
             await self.task.queue_frames([
                 LLMMessagesUpdateFrame(
                     messages=new_messages,
-                    run_llm=False  # Don't trigger immediate response, wait for next user input
+                    run_llm=False  # Don't trigger immediate response
                 )
             ])
             logger.info(f"✅ State transition complete: {old_state} → {new_state}")

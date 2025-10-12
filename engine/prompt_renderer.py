@@ -18,7 +18,8 @@ class PromptRenderer:
         )
         
         self._template_cache: Dict[str, Template] = {}
-        self._precompile_all_templates()  # Always precompile
+        self._global_instructions_template: Optional[Template] = None  # ✅ NEW
+        self._precompile_all_templates()
         
         logger.info("PromptRenderer initialized")
     
@@ -26,6 +27,15 @@ class PromptRenderer:
         start_time = time.perf_counter()
         compile_count = 0
         
+        # ✅ NEW: Precompile global instructions if they exist
+        prompts_dict = self.schema.prompts if hasattr(self.schema, 'prompts') else {}
+        if isinstance(prompts_dict, dict) and '_global_instructions' in prompts_dict:
+            global_text = prompts_dict['_global_instructions']
+            self._global_instructions_template = self.env.from_string(global_text)
+            compile_count += 1
+            logger.info("Pre-compiled global instructions template")
+        
+        # Precompile state-specific templates
         for state_def in self.schema.states.definitions:
             prompts = self.schema.get_prompts_for_state(state_def.name)
             
@@ -45,8 +55,14 @@ class PromptRenderer:
         precomputed_data: Dict[str, Any],
         additional_context: Optional[Dict[str, Any]] = None
     ) -> str:
+        """Render state-specific prompt with global instructions injected"""
         context = self._build_context(state_name, precomputed_data, additional_context)
         state = self.schema.get_state(state_name)
+        
+        # ✅ NEW: Render global instructions first (if they exist)
+        global_instructions_text = ""
+        if self._global_instructions_template:
+            global_instructions_text = self._global_instructions_template.render(**context)
         
         sections = []
         prompts = self.schema.get_prompts_for_state(state_name)
@@ -57,6 +73,14 @@ class PromptRenderer:
                 template = self._template_cache.get(cache_key)
                 if template:
                     rendered = template.render(**context)
+                    
+                    # ✅ NEW: Replace placeholder with rendered global instructions
+                    if '{{ _global_instructions }}' in rendered:
+                        rendered = rendered.replace(
+                            '{{ _global_instructions }}',
+                            global_instructions_text
+                        )
+                    
                     if rendered.strip():
                         sections.append(rendered.strip())
         
@@ -68,6 +92,7 @@ class PromptRenderer:
         precomputed_data: Dict[str, Any],
         additional_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
+        """Build template context with voice config and accessible data"""
         state = self.schema.get_state(state_name)
         
         context = {
