@@ -12,6 +12,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "axios": "^1.12.2",
+    "papaparse": "^5.5.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.9.3",
@@ -44,6 +45,7 @@
     ]
   },
   "devDependencies": {
+    "@types/papaparse": "^5.3.16",
     "@types/react-router-dom": "^5.3.3"
   }
 }

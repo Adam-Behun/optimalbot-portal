@@ -5,7 +5,8 @@ import {
   PatientResponse,
   AddPatientFormData,
   AddPatientResponse,
-  StartCallResponse
+  StartCallResponse,
+  BulkAddResponse
 } from './types';
 
 const API_BASE_URL = ''; 
@@ -26,13 +27,24 @@ export const getPatients = async (): Promise<Patient[]> => {
 // GET /patients/:id - Fetch single patient by ObjectID
 export const getPatient = async (patientId: string) => {
   const response = await axios.get(`${API_BASE_URL}/patients/${patientId}`);
-  return response.data.patient; // Note: the backend wraps it in {patient: {...}}
+  return response.data.patient;
 };
 
 // POST /add-patient - Add a new patient
 export const addPatient = async (patientData: AddPatientFormData): Promise<AddPatientResponse> => {
   const response = await api.post<AddPatientResponse>('/add-patient', patientData);
   return response.data;
+};
+
+// POST /add-patients-bulk - Add multiple patients
+export const addPatientsBulk = async (patients: AddPatientFormData[]): Promise<BulkAddResponse> => {
+  const response = await api.post<BulkAddResponse>('/add-patients-bulk', { patients });
+  return response.data;
+};
+
+// DELETE /patients/:id - Delete a patient
+export const deletePatient = async (patientId: string): Promise<void> => {
+  await api.delete(`/patients/${patientId}`);
 };
 
 // POST /start-call - Start a call for a patient

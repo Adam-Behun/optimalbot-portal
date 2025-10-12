@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getPatients, startCall } from '../api';
+import { getPatients, startCall, deletePatient } from '../api';
 import { Patient } from '../types';
 
 const PatientList: React.FC = () => {
@@ -8,10 +8,18 @@ const PatientList: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [startingCall, setStartingCall] = useState<string | null>(null);
+  const [deletingPatient, setDeletingPatient] = useState<string | null>(null);
+  const [showDeleteMenu, setShowDeleteMenu] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     loadPatients();
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = () => setShowDeleteMenu(null);
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
   const loadPatients = async () => {
@@ -29,20 +37,14 @@ const PatientList: React.FC = () => {
   };
 
   const handleStartCall = async (patient: Patient) => {
-    const defaultPhone = patient.insurance_phone_number || '+1';
-    const phoneNumber = window.prompt(
-      `Enter insurance company phone number for ${patient.patient_name}:`,
-      defaultPhone
-    )?.trim();
-
-    if (!phoneNumber || phoneNumber === '+1') {
-      alert('Please enter a valid phone number');
+    if (!patient.insurance_phone) {
+      alert('Insurance phone number is missing for this patient. Please update patient information.');
       return;
     }
 
     try {
       setStartingCall(patient.patient_id);
-      await startCall(patient.patient_id, phoneNumber);
+      await startCall(patient.patient_id, patient.insurance_phone);
       
       await loadPatients();
       
@@ -53,6 +55,33 @@ const PatientList: React.FC = () => {
       alert(errorMsg);
     } finally {
       setStartingCall(null);
+    }
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, patientId: string) => {
+    e.stopPropagation();
+    setShowDeleteMenu(showDeleteMenu === patientId ? null : patientId);
+  };
+
+  const handleConfirmDelete = async (e: React.MouseEvent, patient: Patient) => {
+    e.stopPropagation();
+    
+    if (!window.confirm(`Are you sure you want to delete ${patient.patient_name}?`)) {
+      setShowDeleteMenu(null);
+      return;
+    }
+
+    try {
+      setDeletingPatient(patient.patient_id);
+      await deletePatient(patient.patient_id);
+      await loadPatients();
+      alert(`${patient.patient_name} deleted successfully`);
+    } catch (err) {
+      console.error('Error deleting patient:', err);
+      alert('Failed to delete patient. Please try again.');
+    } finally {
+      setDeletingPatient(null);
+      setShowDeleteMenu(null);
     }
   };
 
@@ -129,65 +158,107 @@ const PatientList: React.FC = () => {
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8f9fa')}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'white')}
+                onClick={() => handleRowClick(patient.patient_id)}
               >
-                <td
-                  style={{ padding: '12px', fontWeight: 600 }}
-                  onClick={() => handleRowClick(patient.patient_id)}
-                >
+                <td style={{ padding: '12px', fontWeight: 600 }}>
                   {patient.patient_name}
                 </td>
-                <td
-                  style={{ padding: '12px' }}
-                  onClick={() => handleRowClick(patient.patient_id)}
-                >
+                <td style={{ padding: '12px' }}>
                   {patient.facility_name}
                 </td>
-                <td
-                  style={{ padding: '12px' }}
-                  onClick={() => handleRowClick(patient.patient_id)}
-                >
+                <td style={{ padding: '12px' }}>
                   {patient.insurance_company_name}
                 </td>
-                <td
-                  style={{ padding: '12px' }}
-                  onClick={() => handleRowClick(patient.patient_id)}
-                >
+                <td style={{ padding: '12px' }}>
                   {patient.prior_auth_status}
                 </td>
-                <td
-                  style={{ padding: '12px', textAlign: 'center' }}
-                  onClick={() => handleRowClick(patient.patient_id)}
-                >
+                <td style={{ padding: '12px', textAlign: 'center' }}>
                   {getStatusBadge(patient.call_status)}
                 </td>
                 <td style={{ padding: '12px', textAlign: 'center' }}>
-                  {patient.call_status === 'Not Started' && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStartCall(patient);
-                      }}
-                      disabled={startingCall === patient.patient_id}
-                      style={{
-                        padding: '6px 16px',
-                        backgroundColor: '#667eea',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: startingCall === patient.patient_id ? 'not-allowed' : 'pointer',
-                        fontSize: '14px',
-                        opacity: startingCall === patient.patient_id ? 0.6 : 1
-                      }}
-                    >
-                      {startingCall === patient.patient_id ? 'Starting...' : 'Start Call'}
-                    </button>
-                  )}
-                  {patient.call_status === 'In Progress' && (
-                    <span style={{ color: '#666', fontSize: '14px' }}>Call in progress...</span>
-                  )}
-                  {patient.call_status === 'Completed' && (
-                    <span style={{ color: '#28a745', fontSize: '14px' }}>✓ Completed</span>
-                  )}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'center' }}>
+                    {patient.call_status === 'Not Started' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartCall(patient);
+                        }}
+                        disabled={startingCall === patient.patient_id}
+                        style={{
+                          padding: '6px 16px',
+                          backgroundColor: '#667eea',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: startingCall === patient.patient_id ? 'not-allowed' : 'pointer',
+                          fontSize: '14px',
+                          opacity: startingCall === patient.patient_id ? 0.6 : 1
+                        }}
+                      >
+                        {startingCall === patient.patient_id ? 'Starting...' : 'Start Call'}
+                      </button>
+                    )}
+                    {patient.call_status === 'In Progress' && (
+                      <span style={{ color: '#666', fontSize: '14px' }}>Call in progress...</span>
+                    )}
+                    {patient.call_status === 'Completed' && (
+                      <span style={{ color: '#28a745', fontSize: '14px' }}>✓ Completed</span>
+                    )}
+                    
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        onClick={(e) => handleDeleteClick(e, patient.patient_id)}
+                        disabled={deletingPatient === patient.patient_id}
+                        style={{
+                          padding: '6px 10px',
+                          backgroundColor: 'transparent',
+                          border: '1px solid #dee2e6',
+                          borderRadius: '4px',
+                          cursor: deletingPatient === patient.patient_id ? 'not-allowed' : 'pointer',
+                          fontSize: '16px',
+                          lineHeight: '1'
+                        }}
+                      >
+                        {deletingPatient === patient.patient_id ? '...' : '⋮'}
+                      </button>
+                      
+                      {showDeleteMenu === patient.patient_id && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            right: '0',
+                            top: '100%',
+                            marginTop: '4px',
+                            backgroundColor: 'white',
+                            border: '1px solid #dee2e6',
+                            borderRadius: '4px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                            zIndex: 1000,
+                            minWidth: '150px'
+                          }}
+                        >
+                          <button
+                            onClick={(e) => handleConfirmDelete(e, patient)}
+                            style={{
+                              width: '100%',
+                              padding: '10px 16px',
+                              backgroundColor: 'transparent',
+                              border: 'none',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              color: '#dc3545',
+                              fontSize: '14px',
+                              fontWeight: 500
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f8d7da')}
+                            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                          >
+                            Delete Patient
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </td>
               </tr>
             ))}

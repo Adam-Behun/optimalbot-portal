@@ -25,6 +25,7 @@ from engine import ConversationSchema, DataFormatter, PromptRenderer, Conversati
 from models import get_async_patient_db
 from schema_pipeline import SchemaBasedPipeline
 from monitoring import get_collector, emit_event
+from patient_validator import validate_patient_data
 
 # Load environment variables
 load_dotenv()
@@ -67,6 +68,9 @@ class CallResponse(BaseModel):
     room_name: str
     room_url: str
     message: str
+
+class BulkPatientRequest(BaseModel):
+    patients: list[dict]
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -455,6 +459,61 @@ async def add_patient(patient_data: dict):
         
     except Exception as e:
         logger.error(f"Error creating patient: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/add-patients-bulk")
+async def add_patients_bulk(request: BulkPatientRequest):
+    """Add multiple patients from CSV upload"""
+    try:
+        success_count = 0
+        failed_count = 0
+        errors = []
+        
+        for idx, patient_data in enumerate(request.patients):
+            # Validate patient data
+            is_valid, error_msg = validate_patient_data(patient_data)
+            
+            if not is_valid:
+                failed_count += 1
+                errors.append({
+                    "row": idx + 1,
+                    "patient_name": patient_data.get("patient_name", "Unknown"),
+                    "error": error_msg
+                })
+                continue
+            
+            # Set defaults
+            if "call_status" not in patient_data:
+                patient_data["call_status"] = "Not Started"
+            
+            if "prior_auth_status" not in patient_data:
+                patient_data["prior_auth_status"] = "Pending"
+            
+            # Add patient to database
+            patient_id = await patient_db.add_patient(patient_data)
+            
+            if patient_id:
+                success_count += 1
+                logger.info(f"Added patient: {patient_data.get('patient_name')} (ID: {patient_id})")
+            else:
+                failed_count += 1
+                errors.append({
+                    "row": idx + 1,
+                    "patient_name": patient_data.get("patient_name", "Unknown"),
+                    "error": "Database insertion failed"
+                })
+        
+        return {
+            "status": "completed",
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors if errors else None,
+            "message": f"Successfully added {success_count} patients. {failed_count} failed."
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in bulk patient upload: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 

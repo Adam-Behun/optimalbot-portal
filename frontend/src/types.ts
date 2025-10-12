@@ -3,19 +3,20 @@ export interface Patient {
   patient_id: string; // MongoDB ObjectID as string
   patient_name: string;
   date_of_birth: string;
-  insurance_member_id?: string;
+  insurance_member_id: string;
   insurance_company_name: string;
+  insurance_phone: string; // Format: +1234567890
   facility_name: string;
   cpt_code: string;
   provider_npi: string;
-  appointment_time?: string;
+  provider_name: string;
+  appointment_time: string;
   prior_auth_status: string;
   reference_number?: string;
   [key: string]: any;
   
-  // Call-related fields (added in models.py)
+  // Call-related fields
   call_status: 'Not Started' | 'In Progress' | 'Completed';
-  insurance_phone_number?: string;
   call_transcript?: string; // JSON string of transcript array
   
   // Timestamps
@@ -43,7 +44,6 @@ export interface AddPatientResponse {
   message: string;
 }
 
-// Fixed to match actual backend response from app.py
 export interface StartCallResponse {
   status: string;
   session_id: string;
@@ -52,20 +52,35 @@ export interface StartCallResponse {
   facility_name: string;
   phone_number: string;
   room_name: string;
-  dialout_id?: string; // Changed from user_token and room_url
+  dialout_id?: string;
   message: string;
 }
 
-// Form data for adding a patient
+// Unified form data for adding patient(s) - ALL FIELDS REQUIRED
 export interface AddPatientFormData {
   patient_name: string;
   date_of_birth: string;
-  insurance_member_id?: string;
+  insurance_member_id: string;
   insurance_company_name: string;
+  insurance_phone: string; // Format: +1234567890
   facility_name: string;
   cpt_code: string;
   provider_npi: string;
-  appointment_time?: string;
+  provider_name: string;
+  appointment_time: string;
+}
+
+// Bulk add response
+export interface BulkAddResponse {
+  status: string;
+  success_count: number;
+  failed_count: number;
+  errors?: Array<{
+    row: number;
+    patient_name?: string;
+    error: string;
+  }>;
+  message: string;
 }
 
 // Transcript message structure

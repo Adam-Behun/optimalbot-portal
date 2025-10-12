@@ -130,12 +130,15 @@ const PatientDetail: React.FC = () => {
           <div style={valueStyle}>{patient.insurance_company_name}</div>
         </div>
 
-        {patient.insurance_member_id && (
-          <div style={detailRowStyle}>
-            <div style={labelStyle}>Member ID:</div>
-            <div style={valueStyle}>{patient.insurance_member_id}</div>
-          </div>
-        )}
+        <div style={detailRowStyle}>
+          <div style={labelStyle}>Insurance Member ID:</div>
+          <div style={valueStyle}>{patient.insurance_member_id}</div>
+        </div>
+
+        <div style={detailRowStyle}>
+          <div style={labelStyle}>Insurance Phone:</div>
+          <div style={valueStyle}>{patient.insurance_phone}</div>
+        </div>
 
         <div style={detailRowStyle}>
           <div style={labelStyle}>CPT Code:</div>
@@ -145,6 +148,16 @@ const PatientDetail: React.FC = () => {
         <div style={detailRowStyle}>
           <div style={labelStyle}>Provider NPI:</div>
           <div style={valueStyle}>{patient.provider_npi}</div>
+        </div>
+
+        <div style={detailRowStyle}>
+          <div style={labelStyle}>Provider Name:</div>
+          <div style={valueStyle}>{patient.provider_name}</div>
+        </div>
+
+        <div style={detailRowStyle}>
+          <div style={labelStyle}>Appointment Time:</div>
+          <div style={valueStyle}>{new Date(patient.appointment_time).toLocaleString()}</div>
         </div>
 
         <div style={detailRowStyle}>
@@ -168,13 +181,6 @@ const PatientDetail: React.FC = () => {
             </span>
           </div>
         </div>
-
-        {patient.appointment_time && (
-          <div style={detailRowStyle}>
-            <div style={labelStyle}>Appointment Time:</div>
-            <div style={valueStyle}>{new Date(patient.appointment_time).toLocaleString()}</div>
-          </div>
-        )}
       </div>
 
       {/* Call Transcript Section */}

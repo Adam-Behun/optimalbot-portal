@@ -1,0 +1,142 @@
+Implementation Plan: CSV Upload & Patient Management
+Goals
+
+CSV Upload: Allow admin to upload a CSV file of multiple patients
+Preview & Validation: Display parsed patients with data validation before database insertion
+Bulk Add: Add all validated patients to database in one action
+Patient Deletion: iPhone-style swipe-to-delete on PatientList
+Simplified Call Flow: Use insurance_phone from patient record (no more prompts)
+
+
+Structured Implementation Plan
+PHASE 1: Update Data Types & API Layer
+1.1 Frontend Types (types.ts)
+
+Add insurance_phone: string to AddPatientFormData interface
+Ensure Patient interface has insurance_phone?: string
+Add BulkAddResponse interface for bulk upload response
+
+1.2 API Client (api.ts)
+
+Add deletePatient(patientId: string): Promise<void>
+Add addPatientsBulk(patients: AddPatientFormData[]): Promise<BulkAddResponse>
+
+
+PHASE 2: Backend API Endpoints
+2.1 New Endpoints in app.py
+
+DELETE /patients/{patient_id}
+
+Call models.delete_patient(patient_id)
+Return success/failure status
+
+
+POST /add-patients-bulk
+
+Accept array of patient objects
+Validate each patient through data_formatter.py
+Call models.add_patient() for each valid patient
+Return: success count, failed count, error details
+
+
+
+2.2 Database Layer (models.py)
+
+Add async def delete_patient(patient_id: str) -> bool
+
+Delete patient by ObjectId
+Return True if deleted, False otherwise
+
+
+
+2.3 Data Validation (data_formatter.py)
+
+Create/update validate_patient_data(patient_dict) -> (bool, error_message)
+Check required fields: patient_name, date_of_birth, insurance_company_name, facility_name, cpt_code, provider_npi, insurance_phone
+Validate data types (dates, strings, etc.)
+Return validation result with clear error messages
+
+
+PHASE 3: CSV Upload Feature (AddPatientForm.tsx)
+3.1 Add CSV Upload Section
+
+File input button: "Upload CSV"
+"Download Example CSV" button (generates template)
+CSV preview table (hidden until file uploaded)
+"Add Patients" button (only shown after successful validation)
+Error display area for validation issues
+
+3.2 CSV Processing Logic
+
+Parse CSV using PapaParser library (already available)
+Map CSV columns to AddPatientFormData fields
+Validate: all required columns present
+Display parsed data in preview table
+Show validation errors per row if any
+
+3.3 Example CSV Generator
+
+Create function to download example CSV with correct columns:
+
+patient_name, date_of_birth, insurance_company_name, facility_name, cpt_code, provider_npi, insurance_phone, insurance_member_id (optional), appointment_time (optional)
+
+
+
+3.4 Bulk Upload Flow
+
+User clicks "Add Patients"
+Call addPatientsBulk() API
+Show loading state
+On success: navigate to / (PatientList)
+On error: display specific errors
+
+
+PHASE 4: Patient Deletion (PatientList.tsx)
+4.1 Row Actions UI
+
+Add dropdown arrow icon at end of each row
+On click: show "Delete Patient" option
+On "Delete Patient" click: trigger slide animation
+
+4.2 Slide-to-Delete Animation
+
+Row slides left (CSS transform)
+Red "Delete" button appears on right edge
+Click "Delete": confirm and call API
+On success: remove row from list
+On cancel/click elsewhere: slide back
+
+4.3 Delete API Integration
+
+Call deletePatient(patient.patient_id)
+Remove patient from local state on success
+Show error message on failure
+
+
+PHASE 5: Simplify Call Flow (PatientList.tsx)
+5.1 Update handleStartCall
+
+Remove window.prompt() for phone number
+Use patient.insurance_phone directly
+If insurance_phone is missing: show error alert
+Call startCall(patient.patient_id, patient.insurance_phone)
+
+
+File Changes Summary
+FileChangestypes.tsAdd insurance_phone to AddPatientFormData, add BulkAddResponseapi.tsAdd deletePatient() and addPatientsBulk()AddPatientForm.tsxAdd CSV upload, preview table, validation, bulk add buttonPatientList.tsxRemove phone prompt, add dropdown menu, add slide-to-delete UIapp.pyAdd DELETE /patients/{id} and POST /add-patients-bulkmodels.pyAdd delete_patient() methoddata_formatter.pyAdd/update patient validation function
+
+Minimal Validation Requirements
+Required CSV Columns:
+
+patient_name (string, non-empty)
+date_of_birth (date format: YYYY-MM-DD)
+insurance_company_name (string, non-empty)
+facility_name (string, non-empty)
+cpt_code (string, non-empty)
+provider_npi (string, non-empty)
+insurance_phone (string, phone format)
+
+Optional Columns:
+
+insurance_member_id
+appointment_time (datetime format)
