@@ -43,8 +43,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Healthcare AI Agent", version="1.0.0")
 
-app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
-
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -53,6 +51,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if os.path.exists("frontend/build/assets"):
+    app.mount("/assets", StaticFiles(directory="frontend/build/assets"), name="assets")
+    logger.info("✅ Mounted /assets from frontend/build/assets")
+
+# Legacy static mount (keep for backwards compatibility if needed)
+if os.path.exists("frontend/build/static"):
+    app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+    logger.info("✅ Mounted /static from frontend/build/static")
+
+# Serve other static files from build root (manifest.json, robots.txt, etc.)
+if os.path.exists("frontend/build"):
+    @app.get("/manifest.json")
+    async def serve_manifest():
+        return FileResponse("frontend/build/manifest.json")
+    
+    @app.get("/robots.txt")
+    async def serve_robots():
+        return FileResponse("frontend/build/robots.txt")
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -663,20 +680,30 @@ async def health_check():
     }
 
 # ============================================================================
-# FRONTEND SERVING
+# SPA CATCH-ALL ROUTE
 # ============================================================================
-
-@app.get("/")
-async def root():
-    return FileResponse("frontend/build/index.html")
 
 @app.get("/{full_path:path}")
-async def serve_react_app(full_path: str):
-    """Serve React app for all non-API routes"""
-    return FileResponse("frontend/build/index.html")
+async def serve_spa(full_path: str):
+    """
+    Catch-all to serve React SPA. Explicitly excludes /assets to let mount handle it.
+    """
+    # Don't catch /assets/* - let the StaticFiles mount handle it
+    if full_path.startswith("assets"):
+        raise HTTPException(status_code=404)
+    
+    # Serve index.html for all other routes (React Router handles routing)
+    index_path = "frontend/build/index.html"
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend not built. Run: cd frontend && npm run build"
+        )
 
 # ============================================================================
-# MAIN ENTRY POINT
+# DEVELOPMENT SERVER
 # ============================================================================
 
 if __name__ == "__main__":
