@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 import PatientList from './components/patients/patient-list';
 import AddPatientForm from './components/AddPatientForm';
 import PatientDetail from './components/PatientDetail';
+import { Toaster } from "@/components/ui/sonner";  // ✅ Added
 
 const Navigation = () => {
   const location = useLocation();
@@ -69,6 +70,7 @@ const App = () => {
           Healthcare AI Agent © 2025
         </footer>
       </div>
+      <Toaster />  {/* ✅ Added - renders toasts */}
     </Router>
   );
 };

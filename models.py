@@ -47,6 +47,26 @@ class AsyncPatientRecord:
         except Exception as e:
             print(f"Error updating patient: {e}")
             return False
+
+    async def update_call_status(
+        self, 
+        patient_id: str, 
+        status: str
+    ) -> bool:
+        """Update call status: 'Not Started' | 'In Progress' | 'Completed' | 'Failed'"""
+        from bson import ObjectId
+        try:
+            result = await self.patients.update_one(
+                {"_id": ObjectId(patient_id)},
+                {"$set": {
+                    "call_status": status,
+                    "updated_at": datetime.utcnow().isoformat()
+                }}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating call status: {e}")
+            return False
     
     async def find_patients_pending_auth(self) -> List[dict]:
         """Find all patients with pending authorization"""

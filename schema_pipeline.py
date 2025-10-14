@@ -9,7 +9,8 @@ from pipecat.frames.frames import (
     LLMMessagesUpdateFrame,
     TranscriptionFrame,
     FunctionCallResultFrame,
-    FunctionCallInProgressFrame
+    FunctionCallInProgressFrame,
+    EndFrame
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -204,7 +205,7 @@ class SchemaBasedPipeline:
         tts_config = self.services_config['services']['tts']
         if tts_config['provider'] == 'elevenlabs':
             self.tts = ElevenLabsTTSService(
-                api_key=tts_config['api_key'],  # ✅ Already substituted in app.py
+                api_key=tts_config['api_key'],
                 voice_id=tts_config['voice_id'],
                 model=tts_config['model'],
                 stability=tts_config['stability']
@@ -234,21 +235,15 @@ class SchemaBasedPipeline:
             logger.info(f"{i}. {proc.__class__.__name__}")
         
         logger.info("✅ Schema pipeline created successfully")
-    
+
     def _setup_transcript_handler(self):
-        """
-        Setup transcript event handler with state transition detection.
-        
-        This uses the standard Pipecat approach of monitoring transcripts
-        via event handlers, as documented in the context management guide.
-        """
+        """Monitor transcripts for state transitions and completion"""
+        logger.info("🔧 Setting up transcript handler...")
         
         @self.transcript_processor.event_handler("on_transcript_update")
         async def handle_transcript_update(processor, frame):
-            """Monitor user transcripts and trigger state transitions"""
-            
+            logger.info(f"🎤 Transcript handler called with {len(frame.messages)} messages")
             for message in frame.messages:
-                # Store transcript
                 transcript_entry = {
                     "role": message.role,
                     "content": message.content,
@@ -258,9 +253,10 @@ class SchemaBasedPipeline:
                 self.transcripts.append(transcript_entry)
                 logger.info(f"[TRANSCRIPT] {transcript_entry['role']}: {transcript_entry['content']}")
                 
-                # Only check user messages for state transitions
                 if message.role == "user":
                     await self._check_state_transition(message.content)
+                elif message.role == "assistant":
+                    await self._check_for_call_completion()
 
     def _setup_function_call_handler(self):
         """Setup handler for LLM function calls"""
@@ -331,6 +327,38 @@ class SchemaBasedPipeline:
             )
         else:
             logger.debug(f"No transition rule matched for current state: {current_state}")
+
+    async def _check_for_call_completion(self):
+        """Check if closing state + goodbye said → terminate pipeline"""
+        if self.conversation_context.current_state != "closing":
+            return
+        
+        assistant_messages = [t for t in self.transcripts if t["role"] == "assistant"]
+        if not assistant_messages:
+            return
+        
+        last_msg = assistant_messages[-1]["content"].lower()
+        goodbye_phrases = ["goodbye", "have a great day", "thank you so much"]
+        
+        if any(phrase in last_msg for phrase in goodbye_phrases):
+            logger.info("🏁 Closing complete - initiating termination")
+            
+            # Update DB to Completed
+            from models import get_async_patient_db
+            await get_async_patient_db().update_call_status(self.patient_id, "Completed")
+            logger.info("✅ Call status: Completed")
+            
+            emit_event(
+                session_id=self.session_id,
+                category="CALL",
+                event="call_completed",
+                metadata={"patient_id": self.patient_id, "final_state": "closing"}
+            )
+            
+            # Queue EndFrame for graceful shutdown
+            if self.task:
+                await self.task.queue_frames([EndFrame()])
+                logger.info("📤 EndFrame queued - shutdown initiated")
     
     async def _transition_to_state(self, new_state: str, reason: str):
         """
@@ -455,6 +483,11 @@ class SchemaBasedPipeline:
         async def on_dialout_error(transport, data):
             logger.error(f"=== EVENT: on_dialout_error (Session: {self.session_id}) ===")
             logger.error(f"Dialout error: {json.dumps(data, indent=2)}")
+            
+            # Update DB to Failed
+            from models import get_async_patient_db
+            await get_async_patient_db().update_call_status(self.patient_id, "Failed")
+            logger.error("❌ Call status: Failed")
             
             emit_event(
                 session_id=self.session_id,

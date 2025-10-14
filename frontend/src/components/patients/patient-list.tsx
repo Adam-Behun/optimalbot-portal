@@ -6,6 +6,7 @@ import { createColumns } from './columns';
 import { PatientDetailSheet } from './patient-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Phone, Trash2, RefreshCw } from 'lucide-react';
+import { toast } from "sonner";  // ✅ Added
 
 export default function PatientList() {
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -14,7 +15,6 @@ export default function PatientList() {
   const [selectedPatients, setSelectedPatients] = useState<Patient[]>([]);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   
-  // Sheet state
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -41,6 +41,19 @@ export default function PatientList() {
     loadPatients();
   }, []);
 
+  // ✅ Auto-refresh when calls are active
+  useEffect(() => {
+    const hasActiveCalls = patients.some(p => p.call_status === "In Progress");
+    
+    if (hasActiveCalls) {
+      const interval = setInterval(() => {
+        loadPatients();
+      }, 3000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [patients, loadPatients]);
+
   const handleRowClick = useCallback((patient: Patient) => {
     setSelectedPatient(patient);
     setSheetOpen(true);
@@ -56,7 +69,7 @@ export default function PatientList() {
     );
 
     if (eligiblePatients.length === 0) {
-      alert('No eligible patients selected. Only patients with "Not Started" status and valid phone numbers can have calls initiated.');
+      toast.warning("No eligible patients selected");  // ✅ Changed
       return;
     }
 
@@ -66,7 +79,7 @@ export default function PatientList() {
 
     if (missingPhone.length > 0) {
       const proceed = window.confirm(
-        `${missingPhone.length} patient(s) are missing phone numbers and will be skipped. Continue with ${eligiblePatients.length} patient(s)?`
+        `${missingPhone.length} patient(s) missing phone numbers. Continue with ${eligiblePatients.length}?`
       );
       if (!proceed) return;
     }
@@ -94,19 +107,17 @@ export default function PatientList() {
     setBulkActionLoading(false);
     await loadPatients();
     
-    alert(
-      `Bulk call initiation complete.\nSuccess: ${successCount}\nFailed: ${failCount}`
-    );
+    toast.success(`Calls started: ${successCount} success, ${failCount} failed`);  // ✅ Changed
   };
 
   const handleBulkDelete = async () => {
     if (selectedPatients.length === 0) {
-      alert('No patients selected.');
+      toast.warning("No patients selected");  // ✅ Changed
       return;
     }
 
     const confirmed = window.confirm(
-      `Are you sure you want to delete ${selectedPatients.length} patient(s)? This action cannot be undone.`
+      `Delete ${selectedPatients.length} patient(s)? This cannot be undone.`
     );
     
     if (!confirmed) return;
@@ -128,9 +139,7 @@ export default function PatientList() {
     setBulkActionLoading(false);
     await loadPatients();
     
-    alert(
-      `Bulk delete complete.\nSuccess: ${successCount}\nFailed: ${failCount}`
-    );
+    toast.success(`Deleted: ${successCount} success, ${failCount} failed`);  // ✅ Changed
   };
 
   if (loading) {
@@ -154,12 +163,11 @@ export default function PatientList() {
 
   return (
     <div className="container mx-auto py-8 space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Patients</h1>
           <p className="text-muted-foreground mt-1">
-            {patients.length} patient(s) with pending authorization
+            {patients.length} patient(s)
           </p>
         </div>
         <Button onClick={loadPatients} variant="outline" size="sm">
@@ -168,11 +176,10 @@ export default function PatientList() {
         </Button>
       </div>
 
-      {/* Bulk Actions Bar */}
       {selectedPatients.length > 0 && (
         <div className="flex items-center gap-2 p-4 bg-muted rounded-lg">
           <span className="text-sm font-medium">
-            {selectedPatients.length} patient(s) selected
+            {selectedPatients.length} selected
           </span>
           <div className="flex gap-2 ml-auto">
             <Button
@@ -197,10 +204,9 @@ export default function PatientList() {
         </div>
       )}
 
-      {/* Data Table */}
       {patients.length === 0 ? (
         <div className="text-center py-12 border rounded-lg bg-card">
-          <p className="text-muted-foreground">No patients with pending authorization</p>
+          <p className="text-muted-foreground">No patients found</p>
         </div>
       ) : (
         <DataTable
@@ -211,7 +217,6 @@ export default function PatientList() {
         />
       )}
 
-      {/* Patient Detail Sheet */}
       <PatientDetailSheet
         patient={selectedPatient}
         open={sheetOpen}

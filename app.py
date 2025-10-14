@@ -405,12 +405,14 @@ async def list_active_calls():
 
 @app.get("/patients")
 async def list_patients(skip: int = 0, limit: int = 50):
-    """Get all patients pending prior authorization"""
+    """Get all patients"""
     try:
-        pending_patients = await patient_db.find_patients_pending_auth()
+        # Get all patients (not just pending)
+        cursor = patient_db.patients.find()
+        all_patients = await cursor.to_list(length=None)
         
         # Convert ObjectIds to strings
-        patients = [convert_objectid(p) for p in pending_patients]
+        patients = [convert_objectid(p) for p in all_patients]
         
         # Apply pagination
         total_count = len(patients)
