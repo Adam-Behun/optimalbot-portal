@@ -18,8 +18,16 @@ services:
     max_tokens: 100  # Maximum tokens in response; limits output length to prevent long delays in generation.
     top_p: 0.85  # Nucleus sampling (0-1); considers top probability mass for diversity; lower focuses on likely tokens for consistency.
     frequency_penalty: 0.5  # Penalty for repeating tokens ( -2 to 2); positive values reduce repetition for more natural dialogue.
-    presence_penalty: 0.3  # ✅ NEW: Encourages staying on topic
-    seed: 42  # ✅ NEW: Deterministic outputs for consistency
+    presence_penalty: 0.3  # Encourages staying on topic
+    seed: 42  # Deterministic outputs for consistency
+
+  # Classifier LLM for voicemail detection (cheaper model for binary classification)
+  classifier_llm:
+    provider: openai  # Same provider as main LLM
+    model: gpt-4o-mini  # Cheaper model (~10x cost savings) for simple voicemail/conversation classification
+    temperature: 0.2  # Lower temperature for more deterministic binary classification
+    api_key: ${OPENAI_API_KEY}  # API authentication key
+    max_tokens: 10  # Very low - only needs to output "CONVERSATION" or "VOICEMAIL"
 
   tts:
     provider: elevenlabs  # The TTS provider (e.g., elevenlabs, playht).

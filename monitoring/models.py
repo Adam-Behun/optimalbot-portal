@@ -15,7 +15,7 @@ class MonitoringEvent(BaseModel):
     id: str = Field(default_factory=lambda: f"evt_{uuid4().hex[:12]}")
     session_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    category: Literal["CALL", "INTENT", "TRANSITION", "PROMPT", "LLM", "TRANSCRIPT", "LATENCY", "ERROR"]
+    category: Literal["CALL", "INTENT", "TRANSITION", "PROMPT", "LLM", "TRANSCRIPT", "LATENCY", "ERROR", "DETECTION"]
     event: str
     severity: Literal["debug", "info", "warning", "error"] = "info"
     metadata: Dict[str, Any] = Field(default_factory=dict)

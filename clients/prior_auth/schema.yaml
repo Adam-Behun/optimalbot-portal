@@ -1,10 +1,10 @@
 # Conversation metadata
 conversation:
   name: "Healthcare Prior Authorization"
-  version: "2.0.0"
+  version: "2.1.0"
   client_id: "prior_auth"
 
-# ✅ NEW: Global behavioral constraints
+# Global behavioral constraints
 guardrails:
   language:
     allowed: ["en", "en-US"]
@@ -83,11 +83,35 @@ data_schema:
 
 # State machine
 states:
-  initial_state: "greeting"
+  initial_state: "connection"  # Start with connection state (before classification)
   
   definitions:
+    # Connection state - waiting for other party to speak first
+    - name: "connection"
+      description: "Call connected - waiting for other party to speak first"
+      prompts_ref: "connection"
+      entry_point: true
+    
+    # Voicemail detected - leave message and end call
+    - name: "voicemail_detected"
+      description: "Voicemail system detected - leave message and end call"
+      prompts_ref: "voicemail_detected"
+      terminal: true
+    
+    # IVR navigation in progress
+    - name: "ivr_navigation"
+      description: "Navigating IVR system to reach human representative"
+      prompts_ref: "ivr_navigation"
+    
+    # IVR navigation stuck - cannot proceed
+    - name: "ivr_stuck"
+      description: "IVR navigation failed - unable to reach human"
+      prompts_ref: "ivr_stuck"
+      terminal: true
+    
+    # Greeting now happens AFTER classification (human answered or IVR complete)
     - name: "greeting"
-      description: "Initial greeting after insurance rep answers"
+      description: "Initial greeting after reaching human representative"
       prompts_ref: "greeting"
     
     - name: "patient_verification"
@@ -99,6 +123,7 @@ states:
         - insurance_member_id
         - cpt_code
         - provider_npi
+    
     - name: "insurance_verification"
       description: "Verify insurance coverage and get authorization details"
       prompts_ref: "insurance_verification"
@@ -108,14 +133,67 @@ states:
         - patient_name
       functions:
         - update_prior_auth_status
+    
     - name: "closing"
       description: "Close the call politely"
       prompts_ref: "closing"
 
-
-# Transition rules - Configure conversation flow here without touching Python!
+# Transition rules - Event-driven for detection, keyword-based for conversation flow
 transitions:
-  # Transition 1: greeting → patient_verification
+  # ============================================================================
+  # EVENT-DRIVEN TRANSITIONS (IVR/Voicemail/Human Classification)
+  # ============================================================================
+  
+  # Transition 1: connection → voicemail_detected (via event handler)
+  - from_state: "connection"
+    to_state: "voicemail_detected"
+    trigger:
+      type: "event"
+      event_name: "on_voicemail_detected"
+    reason: "voicemail_system_detected"
+    description: "VoicemailDetector classified call as voicemail system"
+  
+  # Transition 2: connection → ivr_navigation (via event handler)
+  - from_state: "connection"
+    to_state: "ivr_navigation"
+    trigger:
+      type: "event"
+      event_name: "on_ivr_status_changed:DETECTED"
+    reason: "ivr_system_detected"
+    description: "IVRNavigator detected IVR system requiring navigation"
+  
+  # Transition 3: connection → greeting (via event handler - human answered)
+  - from_state: "connection"
+    to_state: "greeting"
+    trigger:
+      type: "event"
+      event_name: "on_conversation_detected"
+    reason: "human_answered_directly"
+    description: "Human answered call directly (no IVR system)"
+  
+  # Transition 4: ivr_navigation → greeting (via event handler - IVR complete)
+  - from_state: "ivr_navigation"
+    to_state: "greeting"
+    trigger:
+      type: "event"
+      event_name: "on_ivr_status_changed:COMPLETED"
+    reason: "ivr_navigation_complete"
+    description: "Successfully navigated IVR to reach human"
+  
+  # Transition 5: ivr_navigation → ivr_stuck (via event handler - IVR stuck)
+  - from_state: "ivr_navigation"
+    to_state: "ivr_stuck"
+    trigger:
+      type: "event"
+      event_name: "on_ivr_status_changed:STUCK"
+    reason: "ivr_navigation_failed"
+    description: "IVR navigation failed - unable to proceed"
+  
+  # ============================================================================
+  # KEYWORD-BASED TRANSITIONS (Conversation Flow)
+  # ============================================================================
+  
+  # Transition 6: greeting → patient_verification
   - from_state: "greeting"
     to_state: "patient_verification"
     trigger:
@@ -138,6 +216,8 @@ transitions:
       match_mode: "any"
     reason: "rep_asked_for_patient_info"
     description: "Insurance rep is asking for patient information"
+  
+  # Transition 7: patient_verification → insurance_verification
   - from_state: "patient_verification"
     to_state: "insurance_verification"
     trigger:
@@ -154,6 +234,8 @@ transitions:
       match_mode: "any"
     reason: "patient_info_provided"
     description: "Patient info provided, now asking about coverage"
+  
+  # Transition 8: insurance_verification → closing
   - from_state: "insurance_verification"
     to_state: "closing"
     trigger:

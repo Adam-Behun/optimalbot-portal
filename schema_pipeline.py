@@ -10,7 +10,10 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     FunctionCallResultFrame,
     FunctionCallInProgressFrame,
-    EndFrame
+    EndFrame,
+    TTSSpeakFrame,
+    EndTaskFrame,
+    VADParamsUpdateFrame
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -23,10 +26,14 @@ from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.transports.services.daily import DailyTransport, DailyParams
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext 
+from pipecat.extensions.voicemail.voicemail_detector import VoicemailDetector
+from pipecat.extensions.ivr.ivr_navigator import IVRNavigator, IVRStatus
+
 from deepgram import LiveOptions
 
 # Local imports
 from functions import PATIENT_TOOLS, update_prior_auth_status_handler
+from models import get_async_patient_db
 from audio_processors import AudioResampler, DropEmptyAudio
 from engine import ConversationContext
 from monitoring import emit_event
@@ -91,8 +98,10 @@ class SchemaBasedPipeline:
         self.pipeline = None
         self.runner = None
         self.llm = None
-        self.task = None  # ✅ Store task reference for queue_frames
+        self.task = None
         self.conversation_context = None
+        self.voicemail_detector = None
+        self.ivr_navigator = None
         
         # Transcript tracking
         self.transcripts = []
@@ -162,10 +171,32 @@ class SchemaBasedPipeline:
         stt_config = self.services_config['services']['stt']
         if stt_config['provider'] == 'deepgram':
             self.stt = DeepgramSTTService(
-                api_key=stt_config['api_key'],  # ✅ Already substituted in app.py
+                api_key=stt_config['api_key'],
                 model=stt_config['model'],
                 options=LiveOptions(endpointing=stt_config['endpointing'])
             )
+
+        # Classifier LLM for voicemail detection
+        logger.info("Creating Classifier LLM for voicemail detection...")
+        classifier_config = self.services_config['services']['classifier_llm']
+        classifier_llm = OpenAILLMService(
+            api_key=classifier_config['api_key'],
+            model=classifier_config['model'],
+            temperature=classifier_config['temperature']
+        )
+        
+        # VoicemailDetector
+        logger.info("Creating VoicemailDetector...")
+        self.voicemail_detector = VoicemailDetector(
+            llm=classifier_llm,
+            voicemail_response_delay=2.0
+        )
+
+        logger.info(f"✅ VoicemailDetector initialized:")
+        logger.info(f"   - Classifier LLM: {classifier_config['model']}")
+        logger.info(f"   - Temperature: {classifier_config['temperature']}")
+        logger.info(f"   - Response delay: 2.0s")
+        logger.info(f"   - Detector instance: {id(self.voicemail_detector)}")
         
         # Conversation Context
         logger.info("=== INITIALIZING CONVERSATION CONTEXT ===")
@@ -177,26 +208,49 @@ class SchemaBasedPipeline:
         logger.info(f"Context initialized - Initial state: {self.conversation_context.current_state}")
         
         # LLM with initial context
-        logger.info("Creating LLM...")
+        logger.info("Creating main LLM...")
         llm_config = self.services_config['services']['llm']
-        initial_prompt = self.conversation_context.render_prompt()
 
         if llm_config['provider'] == 'openai':
-            self.llm = OpenAILLMService(
+            main_llm = OpenAILLMService(
                 api_key=llm_config['api_key'],
                 model=llm_config['model'],
                 temperature=llm_config['temperature']
             )
 
-        self.llm.register_function(
+        # Register functions on the main LLM
+        main_llm.register_function(
             "update_prior_auth_status",
             update_prior_auth_status_handler
         )
 
-        # ✅ Create context with tools (documented approach)
+        # IVRNavigator wraps the main LLM (adds IVR detection + navigation)
+        logger.info("Creating IVRNavigator (wraps main LLM)...")
+        ivr_goal = "Navigate to a human representative for eligibility and benefits verification"
+        ivr_vad_params = VADParams(stop_secs=2.0)
+
+        self.ivr_navigator = IVRNavigator(
+            llm=main_llm,  # Pass the main LLM - IVRNavigator wraps it
+            ivr_prompt=ivr_goal,
+            ivr_vad_params=ivr_vad_params
+        )
+
+        logger.info(f"✅ IVRNavigator initialized:")
+        logger.info(f"   - Main LLM: {llm_config['model']}")
+        logger.info(f"   - IVR Goal: {ivr_goal}")
+        logger.info(f"   - IVR VAD stop_secs: {ivr_vad_params.stop_secs}s")
+        logger.info(f"   - Navigator instance: {id(self.ivr_navigator)}")
+
+        # Store LLM reference (for context aggregators)
+        self.llm = main_llm
+
+        # Get initial prompt from conversation context
+        initial_prompt = self.conversation_context.render_prompt()
+
+        # Create context with tools (uses self.llm)
         llm_context = OpenAILLMContext(
             messages=[{"role": "system", "content": initial_prompt}],
-            tools=PATIENT_TOOLS  # ✅ Pass tools to context, not LLM service
+            tools=PATIENT_TOOLS
         )
         self.context_aggregators = self.llm.create_context_aggregator(llm_context)
         
@@ -213,6 +267,8 @@ class SchemaBasedPipeline:
         
         # Setup transcript handler (monitors conversation for state transitions)
         self._setup_transcript_handler()
+        self._setup_voicemail_handlers()
+        self._setup_ivr_handlers() 
 
         logger.info("=== BUILDING PIPELINE ===")
         # ✅ Standard Pipecat pipeline order (documented approach)
@@ -221,10 +277,12 @@ class SchemaBasedPipeline:
             AudioResampler(target_sample_rate=16000),
             DropEmptyAudio(),
             self.stt,
+            self.voicemail_detector.detector(),
             self.transcript_processor.user(),
             self.context_aggregators.user(),
-            self.llm,
+            self.ivr_navigator,
             self.tts,
+            self.voicemail_detector.gate(),
             self.transcript_processor.assistant(),
             self.context_aggregators.assistant(),
             self.transport.output()
@@ -233,6 +291,28 @@ class SchemaBasedPipeline:
         logger.info(f"Pipeline components ({len(self.pipeline.processors)}):")
         for i, proc in enumerate(self.pipeline.processors, 1):
             logger.info(f"{i}. {proc.__class__.__name__}")
+
+        logger.info("=== DETECTOR POSITIONS IN PIPELINE ===")
+        detector_pos = None
+        gate_pos = None
+        ivr_pos = None
+
+        for i, proc in enumerate(self.pipeline.processors):
+            if 'VoicemailDetector' in proc.__class__.__name__:
+                detector_pos = i
+            elif 'TTSGate' in proc.__class__.__name__ or 'Gate' in proc.__class__.__name__:
+                gate_pos = i
+            elif 'IVRNavigator' in proc.__class__.__name__:
+                ivr_pos = i
+
+        logger.info(f"VoicemailDetector.detector() position: {detector_pos}")
+        logger.info(f"IVRNavigator position: {ivr_pos}")
+        logger.info(f"VoicemailDetector.gate() position: {gate_pos}")
+
+        if detector_pos and gate_pos:
+            logger.info(f"✅ Gate is {gate_pos - detector_pos} positions after detector (correct)")
+        else:
+            logger.error("❌ Could not verify detector/gate positions!")
         
         logger.info("✅ Schema pipeline created successfully")
 
@@ -258,6 +338,215 @@ class SchemaBasedPipeline:
                 elif message.role == "assistant":
                     await self._check_for_call_completion()
 
+    def _setup_voicemail_handlers(self):
+        """Setup VoicemailDetector event handlers"""
+        logger.info("🔧 Setting up voicemail handlers...")
+        
+        @self.voicemail_detector.event_handler("on_voicemail_detected")
+        async def handle_voicemail(processor):
+            # ✅ ADD ENTRY LOG WITH TIMESTAMP
+            start_time = datetime.now()
+            logger.info("=" * 60)
+            logger.info(f"📞 [VOICEMAIL DETECTED] Event fired at {start_time.isoformat()}")
+            logger.info(f"   Current state: {self.conversation_context.current_state}")
+            logger.info(f"   Session: {self.session_id}")
+            logger.info(f"   Processor type: {type(processor).__name__}")
+            logger.info("=" * 60)
+            
+            emit_event(
+                session_id=self.session_id,
+                category="DETECTION",
+                event="voicemail_detected",
+                metadata={"phone_number": self.phone_number}
+            )
+            
+            # Transition to voicemail state
+            logger.info("📞 [STEP 1/4] Transitioning to voicemail_detected state...")
+            await self._transition_to_state("voicemail_detected", "voicemail_system_detected")
+            logger.info("✅ [STEP 1/4] State transition complete")
+            
+            # Get voicemail message with robust error handling
+            logger.info("📞 [STEP 2/4] Extracting voicemail message from schema...")
+            message = "Hello, this was Alexandra trying to reach out regarding eligibility and benefits verification. Thank you."
+            
+            try:
+                if hasattr(self.conversation_schema, 'prompts'):
+                    logger.debug(f"   Schema has prompts attribute: {type(self.conversation_schema.prompts)}")
+                    voicemail_prompt = self.conversation_schema.prompts.get("voicemail_detected", {})
+                    logger.debug(f"   Voicemail prompt keys: {list(voicemail_prompt.keys())}")
+                    
+                    extracted_message = voicemail_prompt.get("message", "")
+                    logger.info(f"   Extracted message length: {len(extracted_message)} chars")
+                    
+                    if extracted_message:
+                        if hasattr(self.data_formatter, 'render_template'):
+                            logger.debug("   Rendering message template...")
+                            message = self.data_formatter.render_template(extracted_message, self.patient_data)
+                            logger.info("✅ [STEP 2/4] Using rendered message from schema")
+                        else:
+                            message = extracted_message
+                            logger.info("✅ [STEP 2/4] Using raw message from schema (no template rendering)")
+                    else:
+                        logger.warning("⚠️ [STEP 2/4] No message in schema, using default")
+                else:
+                    logger.warning(f"⚠️ Schema has no 'prompts' attribute (type: {type(self.conversation_schema)})")
+            except Exception as e:
+                logger.error(f"❌ [STEP 2/4] Error extracting voicemail message: {e}")
+                logger.error(traceback.format_exc())
+            
+            logger.info(f"📞 Final voicemail message: '{message}'")
+            
+            logger.info("📞 [STEP 3/4] Queuing TTS frame...")
+            await processor.push_frame(TTSSpeakFrame(message))
+            logger.info("✅ [STEP 3/4] TTSSpeakFrame queued")
+            
+            # Update DB to Failed (voicemail = unsuccessful call)
+            logger.info("📞 [STEP 4/4] Updating database and ending call...")
+            await get_async_patient_db().update_call_status(self.patient_id, "Failed")
+            logger.info("✅ Call status updated: Failed (voicemail)")
+            
+            # End the call
+            if self.task:
+                await self.task.queue_frames([EndTaskFrame()])
+                logger.info("✅ EndTaskFrame queued - call will end")
+            else:
+                logger.error("❌ Cannot queue EndTaskFrame: task not initialized")
+            
+            # ✅ ADD EXIT LOG WITH DURATION
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            logger.info("=" * 60)
+            logger.info(f"📞 [VOICEMAIL HANDLER COMPLETE] Duration: {duration:.3f}s")
+            logger.info("=" * 60)
+            
+    def _setup_ivr_handlers(self):
+        """Setup IVRNavigator event handlers"""
+        logger.info("🔧 Setting up IVR handlers...")
+        
+        @self.ivr_navigator.event_handler("on_conversation_detected")
+        async def handle_conversation_detected(processor, conversation_history):
+            # ✅ ADD DETAILED ENTRY LOG
+            logger.info("=" * 60)
+            logger.info(f"👤 [CONVERSATION DETECTED] Human answered directly")
+            logger.info(f"   Current state: {self.conversation_context.current_state}")
+            logger.info(f"   Conversation history length: {len(conversation_history) if conversation_history else 0}")
+            if conversation_history:
+                logger.debug(f"   History preview: {conversation_history[:2]}")
+            logger.info("=" * 60)
+            
+            emit_event(
+                session_id=self.session_id,
+                category="DETECTION",
+                event="conversation_detected",
+                metadata={"phone_number": self.phone_number}
+            )
+            
+            # Adjust VAD for natural conversation
+            logger.info("👤 [STEP 1/2] Adjusting VAD parameters for conversation...")
+            if self.task:
+                await self.task.queue_frames([
+                    VADParamsUpdateFrame(VADParams(stop_secs=0.8))
+                ])
+                logger.info("✅ VAD updated: stop_secs=0.8 (conversation mode)")
+            else:
+                logger.error("❌ Cannot update VAD: task not initialized")
+            
+            # Transition to greeting state
+            logger.info("👤 [STEP 2/2] Transitioning to greeting state...")
+            await self._transition_to_state("greeting", "human_answered_directly")
+            logger.info("✅ [CONVERSATION DETECTED] Handler complete")
+        
+        @self.ivr_navigator.event_handler("on_ivr_status_changed")
+        async def handle_ivr_status(processor, status):
+            # ✅ ADD DETAILED STATUS LOGGING
+            logger.info("=" * 60)
+            logger.info(f"🤖 [IVR STATUS CHANGE] {status}")
+            logger.info(f"   Previous state: {self.conversation_context.current_state}")
+            logger.info(f"   Status type: {type(status)}")
+            logger.info(f"   Status value: {status.value if hasattr(status, 'value') else status}")
+            logger.info("=" * 60)
+            
+            emit_event(
+                session_id=self.session_id,
+                category="DETECTION",
+                event="ivr_status_changed",
+                metadata={"status": str(status), "phone_number": self.phone_number}
+            )
+            
+            if status == IVRStatus.DETECTED:
+                logger.info("🤖 [IVR DETECTED] IVR system detected - beginning navigation")
+                logger.info(f"   IVR goal: Navigate to human for eligibility verification")
+                await self._transition_to_state("ivr_navigation", "ivr_system_detected")
+                logger.info("✅ Transitioned to ivr_navigation state")
+            
+            elif status == IVRStatus.COMPLETED:
+                logger.info("✅ [IVR COMPLETED] Successfully navigated to human")
+                
+                # Adjust VAD for conversation
+                logger.info("   Adjusting VAD for conversation mode...")
+                if self.task:
+                    await self.task.queue_frames([
+                        VADParamsUpdateFrame(VADParams(stop_secs=0.8))
+                    ])
+                    logger.info("✅ VAD updated: stop_secs=0.8 (conversation mode)")
+                else:
+                    logger.error("❌ Cannot update VAD: task not initialized")
+                
+                # Transition to greeting
+                await self._transition_to_state("greeting", "ivr_navigation_complete")
+                logger.info("✅ Transitioned to greeting state")
+            
+            elif status == IVRStatus.STUCK:
+                logger.warning("=" * 60)
+                logger.warning("⚠️ [IVR STUCK] Navigation failed - ending call")
+                logger.warning(f"   Current IVR state when stuck: {self.conversation_context.current_state}")
+                logger.warning("=" * 60)
+                
+                # Transition to stuck state
+                await self._transition_to_state("ivr_stuck", "ivr_navigation_failed")
+                
+                # Get IVR stuck message from prompts.yaml
+                logger.info("   Extracting IVR stuck message from schema...")
+                message = "I apologize, but I'm unable to navigate to the appropriate department at this time. We will try reaching out again later. Thank you."
+                
+                try:
+                    if hasattr(self.conversation_schema, 'prompts'):
+                        ivr_stuck_prompt = self.conversation_schema.prompts.get("ivr_stuck", {})
+                        extracted_message = ivr_stuck_prompt.get("message", "")
+                        
+                        if extracted_message:
+                            if hasattr(self.data_formatter, 'render_template'):
+                                message = self.data_formatter.render_template(extracted_message, self.patient_data)
+                                logger.info("✅ Using rendered message from schema")
+                            else:
+                                message = extracted_message
+                                logger.info("✅ Using raw message from schema")
+                        else:
+                            logger.warning("⚠️ No message in schema, using default")
+                except Exception as e:
+                    logger.error(f"❌ Error extracting IVR stuck message: {e}")
+                    logger.error(traceback.format_exc())
+                
+                logger.info(f"⚠️ Final IVR stuck message: '{message}'")
+                
+                await processor.push_frame(TTSSpeakFrame(message))
+                logger.info("✅ TTSSpeakFrame queued")
+                
+                # Update DB to Failed
+                await get_async_patient_db().update_call_status(self.patient_id, "Failed")
+                logger.error("❌ Call status: Failed (IVR stuck)")
+                
+                # End the call
+                if self.task:
+                    await self.task.queue_frames([EndTaskFrame()])
+                    logger.info("✅ EndTaskFrame queued - call will end")
+                else:
+                    logger.error("❌ Cannot queue EndTaskFrame: task not initialized")
+            
+            else:
+                # ✅ ADD LOG FOR UNEXPECTED STATUS
+                logger.warning(f"⚠️ [IVR STATUS] Unexpected status: {status}")
+                
     def _setup_function_call_handler(self):
         """Setup handler for LLM function calls"""
         
@@ -368,34 +657,61 @@ class SchemaBasedPipeline:
         https://docs.pipecat.ai/guides/learn/context-management
         """
         
+        # ✅ ADD TIMING
+        start_time = datetime.now()
+        
         if not self.task:
             logger.error("❌ Cannot transition: task not available yet")
+            logger.error(f"   Attempted transition: {self.conversation_context.current_state} → {new_state}")
+            logger.error(f"   Reason: {reason}")
             return
         
         old_state = self.conversation_context.current_state
-        logger.info(f"🚀 [TRANSITION] {old_state} → {new_state} (reason: {reason})")
+        logger.info("=" * 80)
+        logger.info(f"🚀 [STATE TRANSITION] {old_state} → {new_state}")
+        logger.info(f"   Reason: {reason}")
+        logger.info(f"   Session: {self.session_id}")
+        logger.info(f"   Task available: {self.task is not None}")
+        
+        # Handle terminal states
+        if new_state in ["connection", "voicemail_detected", "ivr_stuck"]:
+            self.conversation_context.transition_to(new_state, reason=reason)
+            logger.info(f"✅ Terminal/Special state - no LLM update needed")
+            logger.info(f"   State type: {'Terminal' if new_state in ['voicemail_detected', 'ivr_stuck'] else 'Connection'}")
+            logger.info("=" * 80)
+            return
+        
+        # ✅ ADD LOG BEFORE TRANSITION
+        logger.info(f"   Updating conversation context...")
         
         # Update context state
         self.conversation_context.transition_to(new_state, reason=reason)
+        logger.info(f"✅ Context updated to: {self.conversation_context.current_state}")
         
-        # ✅ Render new prompt FIRST (this line must come before any logging)
+        # Render new prompt
+        logger.info(f"   Rendering new prompt for state: {new_state}...")
         new_prompt = self.conversation_context.render_prompt()
         
-        # ✅ Add patient_id to prompt for insurance_verification state
+        # Add patient_id to prompt for insurance_verification state
         if new_state == "insurance_verification":
             new_prompt += f"\n\nIMPORTANT: The patient_id for function calls is: {self.patient_id}"
+            logger.info(f"✅ Added patient_id to prompt for insurance_verification")
         
-        # Now we can safely log (new_prompt is defined)
-        logger.info(f"📄 [PROMPT] New prompt length: {len(new_prompt)} chars")
-        logger.info(f"📄 [PROMPT] Preview: {new_prompt[:200]}...")
+        logger.info(f"📄 [PROMPT] Length: {len(new_prompt)} chars")
+        logger.info(f"📄 [PROMPT] Preview: {new_prompt[:150]}...")
         
-        # Get current context (includes all user/assistant messages)
+        # Get current context
         current_context = self.context_aggregators.user().context
         current_messages = current_context.messages if current_context else []
         
-        # Build new message array:
-        # - New system message at the start
-        # - Preserve all user/assistant conversation history
+        # ✅ ADD CONTEXT PRESERVATION LOGGING
+        logger.info(f"📄 [CONTEXT] Current message count: {len(current_messages)}")
+        user_msgs = [m for m in current_messages if m.get("role") == "user"]
+        assistant_msgs = [m for m in current_messages if m.get("role") == "assistant"]
+        system_msgs = [m for m in current_messages if m.get("role") == "system"]
+        logger.info(f"📄 [CONTEXT] Messages - User: {len(user_msgs)}, Assistant: {len(assistant_msgs)}, System: {len(system_msgs)}")
+        
+        # Build new message array
         new_messages = [{"role": "system", "content": new_prompt}]
         
         # Add all non-system messages from current context
@@ -403,22 +719,36 @@ class SchemaBasedPipeline:
             if msg.get("role") != "system":
                 new_messages.append(msg)
         
-        logger.info(f"📄 [CONTEXT] Rebuilding context with {len(new_messages)} messages")
+        logger.info(f"📄 [CONTEXT] New message array built: {len(new_messages)} total messages")
         logger.info(f"📄 [CONTEXT] Message roles: {[m['role'] for m in new_messages]}")
         
         try:
-            # ✅ Use LLMMessagesUpdateFrame to replace entire context
+            # ✅ ADD LOG BEFORE QUEUE
+            logger.info(f"   Queueing LLMMessagesUpdateFrame...")
+            
             await self.task.queue_frames([
                 LLMMessagesUpdateFrame(
                     messages=new_messages,
-                    run_llm=False  # Don't trigger immediate response
+                    run_llm=False
                 )
             ])
+            
+            # ✅ ADD TIMING LOG
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
             logger.info(f"✅ State transition complete: {old_state} → {new_state}")
+            logger.info(f"   Duration: {duration:.3f}s")
+            logger.info(f"   Conversation history preserved: {len(new_messages) - 1} messages")
+            logger.info("=" * 80)
         except Exception as e:
-            logger.error(f"❌ Failed to update context: {e}")
+            logger.error("=" * 80)
+            logger.error(f"❌ TRANSITION FAILED: {old_state} → {new_state}")
+            logger.error(f"   Error: {e}")
+            logger.error(f"   Error type: {type(e).__name__}")
             logger.error(traceback.format_exc())
-    
+            logger.error("=" * 80)
+            
     def _setup_dialout_handlers(self):
         """Setup Daily dial-out event handlers"""
         logger.info("Setting up dialout event handlers...")
