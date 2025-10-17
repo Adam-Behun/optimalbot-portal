@@ -295,8 +295,6 @@ prompts:
     task: |
       Thank the insurance representative and close the call politely.
       
-      Say: "Thank you so much for your help with this verification. Have a great day!"
-      
-      If they try to continue the conversation or go off-topic, politely end: "I appreciate your time today. Have a great day!"
+      Say: "Thank you for your help today. Have a great day!"
       
       Keep it brief and professional.

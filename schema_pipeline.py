@@ -908,6 +908,30 @@ class SchemaBasedPipeline:
                 event="dialout_stopped",
                 metadata={"phone_number": self.phone_number, "data": data}
             )
+
+        @self.transport.event_handler("on_participant_left")
+        async def on_participant_left(transport, participant):
+            """Handle when remote participant hangs up"""
+            logger.info(f"=== EVENT: on_participant_left (Session: {self.session_id}) ===")
+            logger.info(f"Participant left: {participant}")
+            
+            emit_event(
+                session_id=self.session_id,
+                category="CALL",
+                event="participant_left",
+                metadata={"participant": participant}
+            )
+            
+            # Update DB status if not already completed
+            current_status = await get_async_patient_db().get_call_status(self.patient_id)
+            if current_status not in ["Completed", "Completed - Left VM", "Failed"]:
+                await get_async_patient_db().update_call_status(self.patient_id, "Completed")
+                logger.info("✅ Call status: Completed (user hung up)")
+            
+            # Terminate pipeline immediately
+            if self.task:
+                await self.task.queue_frames([EndFrame()])
+                logger.info("📤 EndFrame queued - user hung up, terminating pipeline")
         
         @self.transport.event_handler("on_dialout_error")
         async def on_dialout_error(transport, data):
