@@ -53,7 +53,7 @@ class AsyncPatientRecord:
         patient_id: str, 
         status: str
     ) -> bool:
-        """Update call status: 'Not Started' | 'In Progress' | 'Completed' | 'Failed'"""
+        """Update call status: 'Not Started' | 'In Progress' | 'Completed' | 'Failed' | 'Completed - Left VM'"""
         from bson import ObjectId
         try:
             result = await self.patients.update_one(

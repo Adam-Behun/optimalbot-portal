@@ -127,7 +127,7 @@ class SchemaBasedPipeline:
         )
     
     def create_pipeline(self, url: str, token: str, room_name: str):
-        """Create the Pipecat pipeline with schema-driven components"""
+        """Create the Pipecat pipeline following documented approach"""
         logger.info(f"=== CREATING SCHEMA PIPELINE ===")
         logger.info(f"Room: {room_name}")
         
@@ -184,19 +184,31 @@ class SchemaBasedPipeline:
             model=classifier_config['model'],
             temperature=classifier_config['temperature']
         )
-        
-        # VoicemailDetector
-        logger.info("Creating VoicemailDetector...")
+
+        # Load voicemail prompt from schema
+        voicemail_prompt = None
+        if hasattr(self.conversation_schema, 'prompts'):
+            prompts_dict = self.conversation_schema.prompts.get("prompts", {})
+            voicemail_config = prompts_dict.get("voicemail_detection", {})
+            voicemail_prompt = voicemail_config.get("system")
+            
+            if voicemail_prompt:
+                logger.info(f"✅ Loaded voicemail prompt ({len(voicemail_prompt)} chars)")
+            else:
+                logger.warning("⚠️ Could not load voicemail prompt from schema")
+        else:
+            logger.warning("⚠️ Schema has no 'prompts' attribute")
+
         self.voicemail_detector = VoicemailDetector(
             llm=classifier_llm,
-            voicemail_response_delay=2.0
+            voicemail_response_delay=0.8,
+            custom_system_prompt=voicemail_prompt
         )
 
         logger.info(f"✅ VoicemailDetector initialized:")
         logger.info(f"   - Classifier LLM: {classifier_config['model']}")
         logger.info(f"   - Temperature: {classifier_config['temperature']}")
-        logger.info(f"   - Response delay: 2.0s")
-        logger.info(f"   - Detector instance: {id(self.voicemail_detector)}")
+        logger.info(f"   - Response delay: 0.8s")
         
         # Conversation Context
         logger.info("=== INITIALIZING CONVERSATION CONTEXT ===")
@@ -207,7 +219,7 @@ class SchemaBasedPipeline:
         )
         logger.info(f"Context initialized - Initial state: {self.conversation_context.current_state}")
         
-        # LLM with initial context
+        # Main LLM (will be wrapped by IVRNavigator)
         logger.info("Creating main LLM...")
         llm_config = self.services_config['services']['llm']
 
@@ -219,19 +231,31 @@ class SchemaBasedPipeline:
             )
 
         # Register functions on the main LLM
+        # These functions will only be available during conversation, not during IVR navigation
         main_llm.register_function(
             "update_prior_auth_status",
             update_prior_auth_status_handler
         )
+        logger.info("✅ Registered update_prior_auth_status function on main LLM")
 
-        # IVRNavigator wraps the main LLM (adds IVR detection + navigation)
+        # IVRNavigator wraps the main LLM (per documentation)
         logger.info("Creating IVRNavigator (wraps main LLM)...")
         ivr_goal = "Navigate to a human representative for eligibility and benefits verification"
         ivr_vad_params = VADParams(stop_secs=2.0)
 
+        ivr_goal = "Navigate to provider services for eligibility verification"
+        if hasattr(self.conversation_schema, 'prompts'):
+            prompts_dict = self.conversation_schema.prompts.get("prompts", {})
+            ivr_config = prompts_dict.get("ivr_navigation", {})
+            
+            # Extract the task section which describes the goal
+            ivr_task = ivr_config.get("task", "")
+            if ivr_task and hasattr(self.data_formatter, 'render_template'):
+                ivr_goal = self.data_formatter.render_template(ivr_task, self.patient_data)
+
         self.ivr_navigator = IVRNavigator(
-            llm=main_llm,  # Pass the main LLM - IVRNavigator wraps it
-            ivr_prompt=ivr_goal,
+            llm=main_llm,
+            ivr_prompt=ivr_goal,  # This gets inserted into the base template
             ivr_vad_params=ivr_vad_params
         )
 
@@ -239,15 +263,14 @@ class SchemaBasedPipeline:
         logger.info(f"   - Main LLM: {llm_config['model']}")
         logger.info(f"   - IVR Goal: {ivr_goal}")
         logger.info(f"   - IVR VAD stop_secs: {ivr_vad_params.stop_secs}s")
-        logger.info(f"   - Navigator instance: {id(self.ivr_navigator)}")
 
         # Store LLM reference (for context aggregators)
         self.llm = main_llm
 
-        # Get initial prompt from conversation context
+        # Get initial prompt from conversation context (connection state)
         initial_prompt = self.conversation_context.render_prompt()
 
-        # Create context with tools (uses self.llm)
+        # Create context with tools
         llm_context = OpenAILLMContext(
             messages=[{"role": "system", "content": initial_prompt}],
             tools=PATIENT_TOOLS
@@ -265,13 +288,13 @@ class SchemaBasedPipeline:
                 stability=tts_config['stability']
             )
         
-        # Setup transcript handler (monitors conversation for state transitions)
+        # Setup event handlers
         self._setup_transcript_handler()
         self._setup_voicemail_handlers()
         self._setup_ivr_handlers() 
 
         logger.info("=== BUILDING PIPELINE ===")
-        # ✅ Standard Pipecat pipeline order (documented approach)
+        # IVRNavigator REPLACES the LLM in the pipeline (per documentation)
         self.pipeline = Pipeline([
             self.transport.input(),
             AudioResampler(target_sample_rate=16000),
@@ -280,7 +303,7 @@ class SchemaBasedPipeline:
             self.voicemail_detector.detector(),
             self.transcript_processor.user(),
             self.context_aggregators.user(),
-            self.ivr_navigator,
+            self.ivr_navigator,  # Navigator here (not self.llm)
             self.tts,
             self.voicemail_detector.gate(),
             self.transcript_processor.assistant(),
@@ -292,7 +315,7 @@ class SchemaBasedPipeline:
         for i, proc in enumerate(self.pipeline.processors, 1):
             logger.info(f"{i}. {proc.__class__.__name__}")
 
-        logger.info("=== DETECTOR POSITIONS IN PIPELINE ===")
+        logger.info("=== COMPONENT POSITIONS IN PIPELINE ===")
         detector_pos = None
         gate_pos = None
         ivr_pos = None
@@ -402,15 +425,15 @@ class SchemaBasedPipeline:
             
             # Update DB to Failed (voicemail = unsuccessful call)
             logger.info("📞 [STEP 4/4] Updating database and ending call...")
-            await get_async_patient_db().update_call_status(self.patient_id, "Failed")
-            logger.info("✅ Call status updated: Failed (voicemail)")
+            await get_async_patient_db().update_call_status(self.patient_id, "Completed - Left VM")
+            logger.info("✅ Call status updated: Completed - Left VM")
             
             # End the call
             if self.task:
-                await self.task.queue_frames([EndTaskFrame()])
-                logger.info("✅ EndTaskFrame queued - call will end")
+                await self.task.queue_frames([EndFrame()])
+                logger.info("✅ EndFrame queued - call will end")
             else:
-                logger.error("❌ Cannot queue EndTaskFrame: task not initialized")
+                logger.error("❌ Cannot queue EndFrame: task not initialized")
             
             # ✅ ADD EXIT LOG WITH DURATION
             end_time = datetime.now()
@@ -420,19 +443,22 @@ class SchemaBasedPipeline:
             logger.info("=" * 60)
             
     def _setup_ivr_handlers(self):
-        """Setup IVRNavigator event handlers"""
+        """Setup IVRNavigator event handlers per Pipecat documentation"""
         logger.info("🔧 Setting up IVR handlers...")
         
         @self.ivr_navigator.event_handler("on_conversation_detected")
-        async def handle_conversation_detected(processor, conversation_history):
-            # ✅ ADD DETAILED ENTRY LOG
-            logger.info("=" * 60)
+        async def on_conversation_detected(processor, conversation_history):
+            """
+            Handle when a human answers directly (no IVR system).
+            Per docs: Use LLMMessagesUpdateFrame with run_llm=True to start conversation.
+            """
+            logger.info("=" * 80)
             logger.info(f"👤 [CONVERSATION DETECTED] Human answered directly")
             logger.info(f"   Current state: {self.conversation_context.current_state}")
-            logger.info(f"   Conversation history length: {len(conversation_history) if conversation_history else 0}")
+            logger.info(f"   Conversation history: {len(conversation_history) if conversation_history else 0} messages")
             if conversation_history:
                 logger.debug(f"   History preview: {conversation_history[:2]}")
-            logger.info("=" * 60)
+            logger.info("=" * 80)
             
             emit_event(
                 session_id=self.session_id,
@@ -441,30 +467,51 @@ class SchemaBasedPipeline:
                 metadata={"phone_number": self.phone_number}
             )
             
-            # Adjust VAD for natural conversation
-            logger.info("👤 [STEP 1/2] Adjusting VAD parameters for conversation...")
+            # Transition to greeting state
+            logger.info("👤 [STEP 1/3] Transitioning to greeting state...")
+            await self._transition_to_state("greeting", "human_answered_directly")
+            
+            # Get greeting prompt from schema
+            logger.info("👤 [STEP 2/3] Building conversation context...")
+            greeting_prompt = self.conversation_context.render_prompt()
+            
+            # Build messages array with system prompt + conversation history
+            messages = [{"role": "system", "content": greeting_prompt}]
+            
+            # Preserve conversation history if available
+            if conversation_history:
+                messages.extend(conversation_history)
+                logger.info(f"   Preserved {len(conversation_history)} conversation messages")
+            
+            # Update context and trigger LLM to start conversation (per docs)
+            logger.info("👤 [STEP 3/3] Updating LLM context with run_llm=True...")
             if self.task:
                 await self.task.queue_frames([
+                    LLMMessagesUpdateFrame(messages=messages, run_llm=True),
                     VADParamsUpdateFrame(VADParams(stop_secs=0.8))
                 ])
+                logger.info("✅ LLM context updated - conversation mode active")
                 logger.info("✅ VAD updated: stop_secs=0.8 (conversation mode)")
             else:
-                logger.error("❌ Cannot update VAD: task not initialized")
+                logger.error("❌ Cannot update context: task not initialized")
             
-            # Transition to greeting state
-            logger.info("👤 [STEP 2/2] Transitioning to greeting state...")
-            await self._transition_to_state("greeting", "human_answered_directly")
+            logger.info("=" * 80)
             logger.info("✅ [CONVERSATION DETECTED] Handler complete")
+            logger.info("=" * 80)
         
         @self.ivr_navigator.event_handler("on_ivr_status_changed")
-        async def handle_ivr_status(processor, status):
-            # ✅ ADD DETAILED STATUS LOGGING
-            logger.info("=" * 60)
+        async def on_ivr_status_changed(processor, status):
+            """
+            Handle IVR navigation status changes.
+            Per docs: DETECTED and COMPLETED transitions are automatic,
+            but we handle them for state management and logging.
+            """
+            logger.info("=" * 80)
             logger.info(f"🤖 [IVR STATUS CHANGE] {status}")
-            logger.info(f"   Previous state: {self.conversation_context.current_state}")
-            logger.info(f"   Status type: {type(status)}")
+            logger.info(f"   Current state: {self.conversation_context.current_state}")
+            logger.info(f"   Status type: {type(status).__name__}")
             logger.info(f"   Status value: {status.value if hasattr(status, 'value') else status}")
-            logger.info("=" * 60)
+            logger.info("=" * 80)
             
             emit_event(
                 session_id=self.session_id,
@@ -474,49 +521,97 @@ class SchemaBasedPipeline:
             )
             
             if status == IVRStatus.DETECTED:
+                """
+                IVR system detected - navigator will automatically handle navigation.
+                We just update our state tracking and optionally the context.
+                """
                 logger.info("🤖 [IVR DETECTED] IVR system detected - beginning navigation")
-                logger.info(f"   IVR goal: Navigate to human for eligibility verification")
+                logger.info(f"   Navigation goal: Reach human for eligibility verification")
+                logger.info(f"   Navigator will automatically use IVR prompt and VAD params")
+                
+                # Update our state tracking
                 await self._transition_to_state("ivr_navigation", "ivr_system_detected")
-                logger.info("✅ Transitioned to ivr_navigation state")
+                
+                # Optional: Update context with IVR navigation prompt from schema
+                # The navigator already has its own IVR prompt, but we can sync our state
+                logger.info("   Syncing IVR navigation prompt with schema...")
+                ivr_prompt = self.conversation_context.render_prompt()
+                
+                if self.task:
+                    # Update context but don't run LLM (navigator handles that)
+                    await self.task.queue_frames([
+                        LLMMessagesUpdateFrame(
+                            messages=[{"role": "system", "content": ivr_prompt}],
+                            run_llm=False
+                        )
+                    ])
+                    logger.info("✅ Context synced with ivr_navigation state")
+                
+                logger.info("✅ [IVR DETECTED] Transition complete - navigator is in control")
             
             elif status == IVRStatus.COMPLETED:
-                logger.info("✅ [IVR COMPLETED] Successfully navigated to human")
+                """
+                IVR navigation completed successfully - reached target department.
+                Per docs: Update context with conversation prompt and trigger LLM.
+                """
+                logger.info("✅ [IVR COMPLETED] Successfully navigated to human representative")
                 
-                # Adjust VAD for conversation
-                logger.info("   Adjusting VAD for conversation mode...")
+                # Transition to greeting state
+                logger.info("   [STEP 1/3] Transitioning to greeting state...")
+                await self._transition_to_state("greeting", "ivr_navigation_complete")
+                
+                # Get greeting prompt from schema
+                logger.info("   [STEP 2/3] Building conversation context...")
+                greeting_prompt = self.conversation_context.render_prompt()
+                
+                # Build messages for conversation
+                messages = [{"role": "system", "content": greeting_prompt}]
+                
+                # Update context and trigger LLM to start conversation (per docs)
+                logger.info("   [STEP 3/3] Updating LLM context with run_llm=True...")
                 if self.task:
                     await self.task.queue_frames([
+                        LLMMessagesUpdateFrame(messages=messages, run_llm=True),
                         VADParamsUpdateFrame(VADParams(stop_secs=0.8))
                     ])
+                    logger.info("✅ LLM context updated - conversation mode active")
                     logger.info("✅ VAD updated: stop_secs=0.8 (conversation mode)")
                 else:
-                    logger.error("❌ Cannot update VAD: task not initialized")
+                    logger.error("❌ Cannot update context: task not initialized")
                 
-                # Transition to greeting
-                await self._transition_to_state("greeting", "ivr_navigation_complete")
-                logger.info("✅ Transitioned to greeting state")
+                logger.info("=" * 80)
+                logger.info("✅ [IVR COMPLETED] Ready for conversation")
+                logger.info("=" * 80)
             
             elif status == IVRStatus.STUCK:
-                logger.warning("=" * 60)
+                """
+                IVR navigation failed - cannot find path forward.
+                Per docs: Log the issue, speak error message, and terminate.
+                """
+                logger.warning("=" * 80)
                 logger.warning("⚠️ [IVR STUCK] Navigation failed - ending call")
-                logger.warning(f"   Current IVR state when stuck: {self.conversation_context.current_state}")
-                logger.warning("=" * 60)
+                logger.warning(f"   State when stuck: {self.conversation_context.current_state}")
+                logger.warning("=" * 80)
                 
                 # Transition to stuck state
                 await self._transition_to_state("ivr_stuck", "ivr_navigation_failed")
                 
-                # Get IVR stuck message from prompts.yaml
+                # Get stuck message from schema
                 logger.info("   Extracting IVR stuck message from schema...")
                 message = "I apologize, but I'm unable to navigate to the appropriate department at this time. We will try reaching out again later. Thank you."
                 
                 try:
                     if hasattr(self.conversation_schema, 'prompts'):
-                        ivr_stuck_prompt = self.conversation_schema.prompts.get("ivr_stuck", {})
-                        extracted_message = ivr_stuck_prompt.get("message", "")
+                        prompts_dict = self.conversation_schema.prompts.get("prompts", {})
+                        ivr_stuck_config = prompts_dict.get("ivr_stuck", {})
+                        extracted_message = ivr_stuck_config.get("message", "")
                         
                         if extracted_message:
                             if hasattr(self.data_formatter, 'render_template'):
-                                message = self.data_formatter.render_template(extracted_message, self.patient_data)
+                                message = self.data_formatter.render_template(
+                                    extracted_message, 
+                                    self.patient_data
+                                )
                                 logger.info("✅ Using rendered message from schema")
                             else:
                                 message = extracted_message
@@ -527,25 +622,30 @@ class SchemaBasedPipeline:
                     logger.error(f"❌ Error extracting IVR stuck message: {e}")
                     logger.error(traceback.format_exc())
                 
-                logger.info(f"⚠️ Final IVR stuck message: '{message}'")
+                logger.info(f"   Final stuck message: '{message}'")
                 
-                await processor.push_frame(TTSSpeakFrame(message))
-                logger.info("✅ TTSSpeakFrame queued")
-                
-                # Update DB to Failed
-                await get_async_patient_db().update_call_status(self.patient_id, "Failed")
-                logger.error("❌ Call status: Failed (IVR stuck)")
-                
-                # End the call
+                # Speak error message and end call
                 if self.task:
-                    await self.task.queue_frames([EndTaskFrame()])
-                    logger.info("✅ EndTaskFrame queued - call will end")
+                    await self.task.queue_frames([
+                        TTSSpeakFrame(message),
+                        EndFrame()
+                    ])
+                    logger.info("✅ Stuck message queued - call will end")
                 else:
-                    logger.error("❌ Cannot queue EndTaskFrame: task not initialized")
+                    logger.error("❌ Cannot queue frames: task not initialized")
+                
+                # Update database
+                await get_async_patient_db().update_call_status(self.patient_id, "Failed")
+                logger.error("❌ Call status: Failed (IVR navigation stuck)")
+                
+                logger.warning("=" * 80)
+                logger.warning("⚠️ [IVR STUCK] Handler complete - call terminating")
+                logger.warning("=" * 80)
             
             else:
-                # ✅ ADD LOG FOR UNEXPECTED STATUS
+                # Unexpected status
                 logger.warning(f"⚠️ [IVR STATUS] Unexpected status: {status}")
+                logger.warning(f"   This may indicate a new IVR status type or version mismatch")
                 
     def _setup_function_call_handler(self):
         """Setup handler for LLM function calls"""

@@ -85,9 +85,13 @@ export const createColumns = (config: ColumnsConfig): ColumnDef<Patient>[] => [
         "Not Started": { variant: "secondary", label: "Not Started" },
         "In Progress": { variant: "default", label: "In Progress" },
         "Completed": { variant: "outline", label: "Completed" },
+        "Completed - Left VM": { variant: "outline", label: "Completed - Left VM" },
       } as const
 
-      const config = statusConfig[status]
+      const config = statusConfig[status] || { 
+        variant: "secondary" as const, 
+        label: status || "Unknown" 
+      }
 
       return (
         <Badge variant={config.variant as "default" | "secondary" | "outline"}>

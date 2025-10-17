@@ -25,9 +25,9 @@ services:
   classifier_llm:
     provider: openai  # Same provider as main LLM
     model: gpt-4o-mini  # Cheaper model (~10x cost savings) for simple voicemail/conversation classification
-    temperature: 0.2  # Lower temperature for more deterministic binary classification
+    temperature: 0.1  # Lower temperature for more deterministic binary classification
     api_key: ${OPENAI_API_KEY}  # API authentication key
-    max_tokens: 10  # Very low - only needs to output "CONVERSATION" or "VOICEMAIL"
+    max_tokens: 5  # Very low - only needs to output "CONVERSATION" or "VOICEMAIL"
 
   tts:
     provider: elevenlabs  # The TTS provider (e.g., elevenlabs, playht).

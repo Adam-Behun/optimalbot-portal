@@ -16,7 +16,7 @@ export interface Patient {
   [key: string]: any;
   
   // Call-related fields
-  call_status: 'Not Started' | 'In Progress' | 'Completed';
+  call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Completed - Left VM';
   call_transcript?: string; // JSON string of transcript array
   
   // Timestamps
