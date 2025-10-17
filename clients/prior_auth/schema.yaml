@@ -1,7 +1,7 @@
 # Conversation metadata
 conversation:
   name: "Healthcare Prior Authorization"
-  version: "2.1.0"
+  version: "2.1.1"
   client_id: "prior_auth"
 
 # Global behavioral constraints
@@ -25,7 +25,7 @@ guardrails:
     source: "database_only"
     hallucination_prevention: true
     guidelines:
-      - "Only provide patient information that is explicitly present in the PATIENT INFORMATION/CONTEXT section"
+      - "Only provide patient information that is explicitly present in the PATIENT INFORMATION section"
       - "Never guess, estimate, or fabricate any patient details"
       - "If information is not provided, say 'I don't have that information available' rather than making it up"
   
@@ -55,7 +55,7 @@ voice:
     max_words_per_response: 30
     consistency: "strict" 
 
-# Data schema
+# Data schema - ALL fields available in ALL states
 data_schema:
   entity_name: "Patient"
   
@@ -63,82 +63,179 @@ data_schema:
     - patient_id
     - patient_name
     - date_of_birth
+    - facility
+    - insurance_company
     - insurance_member_id
+    - insurance_phone
     - cpt_code
     - provider_npi
+    - provider_name
+    - appointment_time
+  
+  global_access: true  # All fields accessible from any state
   
   preformat_rules:
     date_of_birth:
       format: "natural_speech"
+      example: "March 15th, 1985"
     
     insurance_member_id:
       format: "spell_out"
+      example: "A-S-D-4-8-9-R-T-Y-B-B-B"
     
     cpt_code:
       format: "individual_digits"
+      example: "9-9-2-1-3"
     
     provider_npi:
       format: "grouped_digits"
       grouping: [3, 3, 4]
+      example: "157-894-3251-6478"
+    
+    appointment_time:
+      format: "natural_speech"
+      example: "October 22nd, 2025 at 3:30 PM"
 
 # State machine
 states:
-  initial_state: "connection"  # Start with connection state (before classification)
+  initial_state: "connection"
   
   definitions:
-    # Connection state - waiting for other party to speak first
+    # Event-driven states - DO NOT MODIFY BEHAVIOR
     - name: "connection"
       description: "Call connected - waiting for other party to speak first"
       prompts_ref: "connection"
       entry_point: true
+      allowed_transitions: []
+      llm_directed: false
+      data_access:
+        - patient_id
+        - patient_name
+        - date_of_birth
+        - facility
+        - insurance_company
+        - insurance_member_id
+        - insurance_phone
+        - cpt_code
+        - provider_npi
+        - provider_name
+        - appointment_time
     
-    # Voicemail detected - leave message and end call
     - name: "voicemail_detected"
       description: "Voicemail system detected - leave message and end call"
       prompts_ref: "voicemail_detected"
       terminal: true
+      allowed_transitions: []
+      llm_directed: false
+      data_access:
+        - patient_id
+        - patient_name
+        - date_of_birth
+        - facility
+        - insurance_company
+        - insurance_member_id
+        - insurance_phone
+        - cpt_code
+        - provider_npi
+        - provider_name
+        - appointment_time
     
-    # IVR navigation in progress
     - name: "ivr_navigation"
       description: "Navigating IVR system to reach human representative"
       prompts_ref: "ivr_navigation"
+      allowed_transitions: []
+      llm_directed: false
+      data_access:
+        - patient_id
+        - patient_name
+        - date_of_birth
+        - facility
+        - insurance_company
+        - insurance_member_id
+        - insurance_phone
+        - cpt_code
+        - provider_npi
+        - provider_name
+        - appointment_time
     
-    # IVR navigation stuck - cannot proceed
     - name: "ivr_stuck"
       description: "IVR navigation failed - unable to reach human"
       prompts_ref: "ivr_stuck"
       terminal: true
+      allowed_transitions: []
+      llm_directed: false
+      data_access:
+        - patient_id
+        - patient_name
+        - date_of_birth
+        - facility
+        - insurance_company
+        - insurance_member_id
+        - insurance_phone
+        - cpt_code
+        - provider_npi
+        - provider_name
+        - appointment_time
     
-    # Greeting now happens AFTER classification (human answered or IVR complete)
+    # Conversation states - ENABLE LLM DIRECTION
     - name: "greeting"
       description: "Initial greeting after reaching human representative"
       prompts_ref: "greeting"
+      allowed_transitions: ["patient_verification"]
+      llm_directed: false  # Keep keyword-based transition
+      data_access:
+        - patient_id
+        - patient_name
+        - date_of_birth
+        - facility
+        - insurance_company
+        - insurance_member_id
+        - insurance_phone
+        - cpt_code
+        - provider_npi
+        - provider_name
+        - appointment_time
     
-    - name: "patient_verification"
-      description: "Provide patient information when requested"
-      prompts_ref: "patient_verification"
+    - name: "verification"
+      description: "Provide patient information and verify insurance coverage"
+      prompts_ref: "verification"
       data_access:
         - patient_name
         - date_of_birth
         - insurance_member_id
         - cpt_code
         - provider_npi
-    
-    - name: "insurance_verification"
-      description: "Verify insurance coverage and get authorization details"
-      prompts_ref: "insurance_verification"
-      data_access:
         - patient_id
-        - cpt_code
-        - patient_name
+        - provider_name
+        - facility
+        - insurance_company
+        - appointment_time
       functions:
         - update_prior_auth_status
+      allowed_transitions: ["closing", "greeting"]
+      llm_directed: true
+      required_before_closing: true
     
     - name: "closing"
       description: "Close the call politely"
       prompts_ref: "closing"
+      terminal: true
+      allowed_transitions: []
+      llm_directed: false
+      data_access:
+        - patient_id
+        - patient_name
+        - date_of_birth
+        - facility
+        - insurance_company
+        - insurance_member_id
+        - insurance_phone
+        - cpt_code
+        - provider_npi
+        - provider_name
+        - appointment_time
 
-# Transition rules - Event-driven for detection, keyword-based for conversation flow
+# Transition rules
 transitions:
   # ============================================================================
   # EVENT-DRIVEN TRANSITIONS (IVR/Voicemail/Human Classification)
@@ -190,63 +287,14 @@ transitions:
     description: "IVR navigation failed - unable to proceed"
   
   # ============================================================================
-  # KEYWORD-BASED TRANSITIONS (Conversation Flow)
+  # AUTO TRANSITION
   # ============================================================================
   
-  # Transition 6: greeting → patient_verification
+  # Transition 6: greeting → verification
   - from_state: "greeting"
-    to_state: "patient_verification"
+    to_state: "verification"
     trigger:
-      type: "keyword_detection"
-      keywords:
-        - "patient"
-        - "name"
-        - "member"
-        - "birthday"
-        - "dob"
-        - "date of birth"
-        - "id"
-        - "social"
-        - "policy"
-        - "subscriber"
-        - "information"
-        - "verify"
-        - "eligibility"
-        - "benefits"
-      match_mode: "any"
-    reason: "rep_asked_for_patient_info"
-    description: "Insurance rep is asking for patient information"
-  
-  # Transition 7: patient_verification → insurance_verification
-  - from_state: "patient_verification"
-    to_state: "insurance_verification"
-    trigger:
-      type: "keyword_detection"
-      keywords:
-        - "coverage"
-        - "covered"
-        - "authorization"
-        - "approved"
-        - "verify"
-        - "procedure"
-        - "anything else"
-        - "what else"
-      match_mode: "any"
-    reason: "patient_info_provided"
-    description: "Patient info provided, now asking about coverage"
-  
-  # Transition 8: insurance_verification → closing
-  - from_state: "insurance_verification"
-    to_state: "closing"
-    trigger:
-      type: "keyword_detection"
-      keywords:
-        - "anything else"
-        - "that's all"
-        - "all set"
-        - "that should do it"
-        - "thank you"
-        - "goodbye"
-      match_mode: "any"
-    reason: "authorization_complete"
-    description: "Authorization details provided, ready to close the call"
+      type: "auto"  # Triggers on ANY user response
+      delay: 0
+    reason: "greeting delivered"
+    description: "Greeting delivered - ready for verification conversation"

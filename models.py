@@ -16,11 +16,36 @@ class AsyncPatientRecord:
         self.patients = self.db.patients
     
     async def find_patient_by_id(self, patient_id: str) -> Optional[dict]:
-        """Find patient by MongoDB ObjectId"""
+        """Find patient by MongoDB ObjectId and map to schema format"""
         from bson import ObjectId
         try:
-            return await self.patients.find_one({"_id": ObjectId(patient_id)})
-        except:
+            patient = await self.patients.find_one({"_id": ObjectId(patient_id)})
+            if not patient:
+                return None
+            
+            # ✅ Map database fields to schema fields
+            mapped_patient = {
+                "_id": patient["_id"],
+                "name": patient.get("patient_name", ""),  # patient_name → name
+                "patient_name": patient.get("patient_name", ""),  # Keep original too
+                "date_of_birth": patient.get("date_of_birth", ""),
+                "insurance_member_id": patient.get("insurance_member_id", ""),
+                "insurance_company": patient.get("insurance_company_name", ""),  # insurance_company_name → insurance_company
+                "insurance_company_name": patient.get("insurance_company_name", ""),  # Keep original
+                "insurance_phone": patient.get("insurance_phone", ""),
+                "facility": patient.get("facility_name", ""),  # facility_name → facility
+                "facility_name": patient.get("facility_name", ""),  # Keep original
+                "cpt_code": patient.get("cpt_code", ""),
+                "provider_npi": patient.get("provider_npi", ""),
+                "provider_name": patient.get("provider_name", ""),
+                "appointment_time": patient.get("appointment_time", ""),
+                "call_status": patient.get("call_status", ""),
+                "prior_auth_status": patient.get("prior_auth_status", ""),
+            }
+            
+            return mapped_patient
+        except Exception as e:
+            logger.error(f"Error finding patient: {e}")
             return None
     
     async def get_complete_patient_record(self, patient_id: str) -> Optional[dict]:

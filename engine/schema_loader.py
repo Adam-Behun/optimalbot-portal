@@ -47,6 +47,12 @@ class StateDefinition(BaseModel):
     description: str
     prompts_ref: str
     data_access: List[str] = []
+    allowed_transitions: List[str] = []  # NEW
+    llm_directed: bool = False  # NEW
+    entry_point: bool = False  # Add this if not present
+    terminal: bool = False  # Add this if not present
+    functions: List[str] = []  # Add this if not present
+    required_before_closing: bool = False  # Add this if not present
 
 
 class StatesConfig(BaseModel):
@@ -55,9 +61,10 @@ class StatesConfig(BaseModel):
 
 
 class TransitionTrigger(BaseModel):
-    type: str  # e.g., "keyword_detection", "function_call", "timeout"
+    type: str  # e.g., "keyword_detection", "auto", "function_call", "timeout"
     keywords: Optional[List[str]] = None
     match_mode: str = "any"  # "any" or "all"
+    delay: float = 0.0 
 
 
 class TransitionRule(BaseModel):
@@ -138,6 +145,10 @@ class ConversationSchema(BaseModel):
         possible_transitions = self.get_transitions_from_state(current_state)
         
         message_lower = user_message.lower()
+
+        for transition in possible_transitions:
+            if transition.trigger.type == "auto":
+                return transition
         
         for transition in possible_transitions:
             if transition.trigger.type == "keyword_detection":
@@ -154,3 +165,34 @@ class ConversationSchema(BaseModel):
                         return transition
         
         return None
+
+    def get_allowed_transitions(self, from_state: str) -> list:
+        """
+        Get list of allowed target states from the given state.
+        Returns empty list if state not found or has no allowed transitions.
+        """
+        state_def = next(
+            (s for s in self.states.definitions if s.name == from_state),
+            None
+        )
+        
+        if not state_def:
+            logger.warning(f"State definition not found: {from_state}")
+            return []
+        
+        return state_def.allowed_transitions
+
+    def is_llm_directed(self, state_name: str) -> bool:
+        """
+        Check if the given state uses LLM-directed transitions.
+        Returns False if state not found or llm_directed not specified.
+        """
+        state_def = next(
+            (s for s in self.states.definitions if s.name == state_name),
+            None
+        )
+        
+        if not state_def:
+            return False
+        
+        return state_def.llm_directed

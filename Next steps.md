@@ -14,9 +14,11 @@
 - Robust pipeline termination
   - Once caller hangs up, terminate
   - Once Closing state, terminate
+- Transition is automatic from greeting to verification
+- Transition is llm based from verification to closing (llm decides we have all done, status and reference number inserted --> close call)
 
 # 10.18.2025
-- 
+ 
 Implement cost per minute of call tracking
 Provide full transcipt after a call, setup for full recording
 Fix call status visibility, Patient Details - Back to list button

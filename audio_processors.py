@@ -1,8 +1,9 @@
 from pipecat.processors.frame_processor import FrameProcessor
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import AudioRawFrame, Frame, TextFrame
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.audio.utils import create_stream_resampler
 import audioop
+import re
 
 class AudioResampler(FrameProcessor):
     def __init__(self, target_sample_rate: int = 16000, target_channels: int = 1, **kwargs):
@@ -48,4 +49,23 @@ class DropEmptyAudio(FrameProcessor):
         await super().process_frame(frame, direction)
         if isinstance(frame, AudioRawFrame) and len(frame.audio) == 0:
             return
+        await self.push_frame(frame, direction)
+
+class StateTagStripper(FrameProcessor):
+    """Strips <next_state> tags from LLM responses before TTS"""
+    
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        if isinstance(frame, TextFrame):
+            cleaned_text = re.sub(
+                r'<next_state>\w+</next_state>', 
+                '', 
+                frame.text, 
+                flags=re.IGNORECASE
+            ).strip()
+            
+            if cleaned_text != frame.text:
+                frame = TextFrame(cleaned_text)
+        
         await self.push_frame(frame, direction)

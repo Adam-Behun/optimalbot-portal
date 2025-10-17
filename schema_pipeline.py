@@ -34,7 +34,7 @@ from deepgram import LiveOptions
 # Local imports
 from functions import PATIENT_TOOLS, update_prior_auth_status_handler
 from models import get_async_patient_db
-from audio_processors import AudioResampler, DropEmptyAudio
+from audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper
 from engine import ConversationContext
 from monitoring import emit_event
 
@@ -304,6 +304,7 @@ class SchemaBasedPipeline:
             self.transcript_processor.user(),
             self.context_aggregators.user(),
             self.ivr_navigator,  # Navigator here (not self.llm)
+            StateTagStripper(),
             self.tts,
             self.voicemail_detector.gate(),
             self.transcript_processor.assistant(),
@@ -357,8 +358,9 @@ class SchemaBasedPipeline:
                 logger.info(f"[TRANSCRIPT] {transcript_entry['role']}: {transcript_entry['content']}")
                 
                 if message.role == "user":
-                    await self._check_state_transition(message.content)
+                    await self._check_state_transition(message.content)  # Keep existing keyword-based
                 elif message.role == "assistant":
+                    await self._check_assistant_state_transition(message.content)  # NEW: LLM-directed
                     await self._check_for_call_completion()
 
     def _setup_voicemail_handlers(self):
@@ -717,6 +719,76 @@ class SchemaBasedPipeline:
         else:
             logger.debug(f"No transition rule matched for current state: {current_state}")
 
+    async def _check_assistant_state_transition(self, assistant_message: str):
+        """
+        Parse assistant's response for LLM-directed state transition requests.
+        Validates transitions against allowed_transitions for compliance.
+        
+        Format expected: <next_state>STATE_NAME</next_state>
+        """
+        import re
+        
+        # Extract <next_state> tag
+        match = re.search(r'<next_state>(\w+)</next_state>', assistant_message, re.IGNORECASE)
+        
+        if not match:
+            # No transition requested - normal behavior
+            return
+        
+        requested_state = match.group(1).lower()
+        current_state = self.conversation_context.current_state
+        
+        logger.info("=" * 80)
+        logger.info(f"🤖 [LLM TRANSITION REQUEST]")
+        logger.info(f"   Current state: {current_state}")
+        logger.info(f"   Requested state: {requested_state}")
+        logger.info(f"   Assistant message: {assistant_message[:150]}...")
+        
+        # Check if current state allows LLM direction
+        if not self.conversation_schema.is_llm_directed(current_state):
+            logger.debug(f"   State {current_state} is not LLM-directed - ignoring request")
+            logger.info("=" * 80)
+            return
+        
+        # Get allowed transitions from schema
+        allowed_transitions = self.conversation_schema.get_allowed_transitions(current_state)
+        logger.info(f"   Allowed transitions: {allowed_transitions}")
+        
+        # Validate transition
+        if requested_state in allowed_transitions:
+            logger.info(f"✅ Transition ALLOWED - executing")
+            await self._transition_to_state(requested_state, "llm_directed")
+            
+            emit_event(
+                session_id=self.session_id,
+                category="STATE",
+                event="llm_directed_transition",
+                metadata={
+                    "from_state": current_state,
+                    "to_state": requested_state,
+                    "allowed_transitions": allowed_transitions,
+                    "assistant_message_preview": assistant_message[:200]
+                }
+            )
+            logger.info("=" * 80)
+        else:
+            logger.warning(f"⚠️ Transition BLOCKED - {requested_state} not in allowed list")
+            logger.warning(f"   LLM will remain in {current_state}")
+            
+            emit_event(
+                session_id=self.session_id,
+                category="STATE",
+                event="llm_transition_blocked",
+                severity="warning",
+                metadata={
+                    "from_state": current_state,
+                    "requested_state": requested_state,
+                    "allowed_transitions": allowed_transitions,
+                    "assistant_message": assistant_message[:300]
+                }
+            )
+            logger.info("=" * 80)
+
     async def _check_for_call_completion(self):
         """Check if closing state + goodbye said → terminate pipeline"""
         if self.conversation_context.current_state != "closing":
@@ -910,27 +982,35 @@ class SchemaBasedPipeline:
             )
 
         @self.transport.event_handler("on_participant_left")
-        async def on_participant_left(transport, participant):
+        async def on_participant_left(transport, participant, data):  # ✅ Add 'participant' parameter
             """Handle when remote participant hangs up"""
             logger.info(f"=== EVENT: on_participant_left (Session: {self.session_id}) ===")
-            logger.info(f"Participant left: {participant}")
+            logger.info(f"Participant ID: {participant}")
+            logger.info(f"Participant data: {data}")
             
             emit_event(
                 session_id=self.session_id,
                 category="CALL",
                 event="participant_left",
-                metadata={"participant": participant}
+                metadata={
+                    "participant_id": participant,
+                    "participant_data": data
+                }
             )
             
-            # Update DB status if not already completed
-            current_status = await get_async_patient_db().get_call_status(self.patient_id)
-            if current_status not in ["Completed", "Completed - Left VM", "Failed"]:
-                await get_async_patient_db().update_call_status(self.patient_id, "Completed")
-                logger.info("✅ Call status: Completed (user hung up)")
+            try:
+                patient = await get_async_patient_db().find_patient_by_id(self.patient_id)
+                current_status = patient.get("call_status") if patient else None
+                
+                if current_status not in ["Completed", "Completed - Left VM", "Failed"]:
+                    await get_async_patient_db().update_call_status(self.patient_id, "Completed")
+                    logger.info("✅ Call status: Completed (user hung up)")
+            except Exception as e:
+                logger.error(f"Error updating call status on participant left: {e}")
             
             # Terminate pipeline immediately
             if self.task:
-                await self.task.queue_frames([EndFrame()])
+                await self.task.cancel()
                 logger.info("📤 EndFrame queued - user hung up, terminating pipeline")
         
         @self.transport.event_handler("on_dialout_error")
