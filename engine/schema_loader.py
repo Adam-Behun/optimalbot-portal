@@ -1,3 +1,4 @@
+# Loads and parses YAML files into Python objects (Pydantic models)
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import yaml
@@ -93,20 +94,16 @@ class ConversationSchema(BaseModel):
         start_time = time.perf_counter()
         base_path = Path(schema_path)
         
-        # Load schema.yaml
         with open(base_path / 'schema.yaml', 'r') as f:
             schema_data = yaml.safe_load(f)
         
-        # Load prompts.yaml
         with open(base_path / 'prompts.yaml', 'r') as f:
             prompts = yaml.safe_load(f)
         
         schema = cls(base_path=base_path, prompts=prompts, **schema_data)
         
         load_time_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(f"✓ Schema loaded in {load_time_ms:.1f}ms")
-        logger.info(f"  - States: {len(schema.states.definitions)}")
-        logger.info(f"  - Transitions: {len(schema.transitions)}")
+        logger.info(f"Schema loaded ({load_time_ms:.1f}ms)")
         
         return schema
     
