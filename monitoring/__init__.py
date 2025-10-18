@@ -12,9 +12,11 @@ from .models import (
     TranscriptEvent,
     LatencyEvent,
     ErrorEvent,
+    ConversationTurnEvent,
     CallMetrics,
     LatencyMetrics,
-    IntentMetrics
+    IntentMetrics,
+    LatencyThresholds
 )
 
 from .collector import (
@@ -42,9 +44,11 @@ __all__ = [
     "TranscriptEvent",
     "LatencyEvent",
     "ErrorEvent",
+    "ConversationTurnEvent",
     "CallMetrics",
     "LatencyMetrics",
     "IntentMetrics",
+    "LatencyThresholds",
     
     # Collector
     "MonitoringCollector",

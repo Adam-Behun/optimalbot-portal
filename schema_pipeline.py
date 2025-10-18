@@ -1,7 +1,3 @@
-"""
-Schema-Based Pipeline - Correct implementation using task.queue_frames()
-Uses documented Pipecat context management approaches
-"""
 
 from pipecat.frames.frames import (
     Frame, 
@@ -36,7 +32,7 @@ from functions import PATIENT_TOOLS, update_prior_auth_status_handler
 from models import get_async_patient_db
 from audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper
 from engine import ConversationContext
-from monitoring import emit_event
+from monitoring import emit_event, get_collector
 
 import os
 import sys
@@ -45,6 +41,7 @@ import logging
 import traceback
 from typing import Dict, Any, Optional
 from datetime import datetime
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -125,6 +122,27 @@ class SchemaBasedPipeline:
                 "schema_version": conversation_schema.conversation.version
             }
         )
+
+    async def _print_transcript_async(self):
+        """Print transcript in background without blocking pipeline shutdown"""
+        try:
+            # Small delay to ensure all events are collected
+            await asyncio.sleep(0.1)
+            
+            # Run synchronous print in executor to not block event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                get_collector().print_full_transcript,
+                self.session_id
+            )
+            await loop.run_in_executor(
+                None,
+                get_collector().print_latency_waterfall,
+                self.session_id
+            )
+        except Exception as e:
+            logger.debug(f"Failed to print transcript: {e}")
     
     def create_pipeline(self, url: str, token: str, room_name: str):
         """Create the Pipecat pipeline following documented approach"""
@@ -356,11 +374,21 @@ class SchemaBasedPipeline:
                 }
                 self.transcripts.append(transcript_entry)
                 logger.info(f"[TRANSCRIPT] {transcript_entry['role']}: {transcript_entry['content']}")
+
+                emit_event(
+                    session_id=self.session_id,
+                    category="TRANSCRIPT",
+                    event="message",
+                    metadata={
+                        "role": message.role,
+                        "content": message.content[:200]  # Truncate for logging
+                    }
+                )
                 
                 if message.role == "user":
-                    await self._check_state_transition(message.content)  # Keep existing keyword-based
+                    await self._check_state_transition(message.content)
                 elif message.role == "assistant":
-                    await self._check_assistant_state_transition(message.content)  # NEW: LLM-directed
+                    await self._check_assistant_state_transition(message.content)
                     await self._check_for_call_completion()
 
     def _setup_voicemail_handlers(self):
@@ -369,7 +397,6 @@ class SchemaBasedPipeline:
         
         @self.voicemail_detector.event_handler("on_voicemail_detected")
         async def handle_voicemail(processor):
-            # ✅ ADD ENTRY LOG WITH TIMESTAMP
             start_time = datetime.now()
             logger.info("=" * 60)
             logger.info(f"📞 [VOICEMAIL DETECTED] Event fired at {start_time.isoformat()}")
@@ -829,7 +856,6 @@ class SchemaBasedPipeline:
         https://docs.pipecat.ai/guides/learn/context-management
         """
         
-        # ✅ ADD TIMING
         start_time = datetime.now()
         
         if not self.task:
@@ -913,6 +939,52 @@ class SchemaBasedPipeline:
             logger.info(f"   Duration: {duration:.3f}s")
             logger.info(f"   Conversation history preserved: {len(new_messages) - 1} messages")
             logger.info("=" * 80)
+            
+            # ============================================================
+            # 📝 MONITORING: Capture conversation turn for post-call review
+            # ============================================================
+            try:
+                # Only capture turns for conversation states (not terminal/connection states)
+                if new_state not in ["connection", "voicemail_detected", "ivr_stuck"]:
+                    # Get last user and assistant messages from transcripts
+                    user_messages = [t for t in self.transcripts if t.get("role") == "user"]
+                    assistant_messages = [t for t in self.transcripts if t.get("role") == "assistant"]
+                    
+                    # Only capture if we have a complete exchange
+                    if user_messages and assistant_messages:
+                        turn_number = len(user_messages)
+                        
+                        # Build full prompt context (system + user message)
+                        user_prompt = new_prompt
+                        if user_messages:
+                            user_prompt += f"\n\nUser: {user_messages[-1]['content']}"
+                        
+                        get_collector().emit_conversation_turn(
+                            session_id=self.session_id,
+                            turn_number=turn_number,
+                            user_message=user_messages[-1]["content"],
+                            system_prompt=new_prompt,
+                            user_prompt=user_prompt,
+                            llm_response=assistant_messages[-1]["content"],
+                            current_state=new_state,
+                            transition_triggered=f"{old_state} → {new_state}" if old_state != new_state else None
+                        )
+                        
+                        emit_event(
+                            session_id=self.session_id,
+                            category="TRANSITION",
+                            event="state_changed",
+                            metadata={
+                                "from_state": old_state,
+                                "to_state": new_state,
+                                "trigger": reason,
+                                "duration_in_state_ms": duration * 1000
+                            },
+                            latency_ms=duration * 1000
+                        )
+            except Exception as e:
+                logger.debug(f"Failed to capture conversation turn: {e}")
+            
         except Exception as e:
             logger.error("=" * 80)
             logger.error(f"❌ TRANSITION FAILED: {old_state} → {new_state}")
@@ -920,6 +992,7 @@ class SchemaBasedPipeline:
             logger.error(f"   Error type: {type(e).__name__}")
             logger.error(traceback.format_exc())
             logger.error("=" * 80)
+        
             
     def _setup_dialout_handlers(self):
         """Setup Daily dial-out event handlers"""
@@ -980,9 +1053,10 @@ class SchemaBasedPipeline:
                 event="dialout_stopped",
                 metadata={"phone_number": self.phone_number, "data": data}
             )
+            asyncio.create_task(self._print_transcript_async())
 
         @self.transport.event_handler("on_participant_left")
-        async def on_participant_left(transport, participant, data):  # ✅ Add 'participant' parameter
+        async def on_participant_left(transport, participant, data):
             """Handle when remote participant hangs up"""
             logger.info(f"=== EVENT: on_participant_left (Session: {self.session_id}) ===")
             logger.info(f"Participant ID: {participant}")

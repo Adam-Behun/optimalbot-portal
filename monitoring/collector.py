@@ -14,7 +14,9 @@ from .models import (
     MonitoringEvent,
     CallMetrics,
     LatencyMetrics,
-    IntentMetrics
+    IntentMetrics,
+    LatencyThresholds,
+    ConversationTurnEvent
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,8 @@ class MonitoringCollector:
         self,
         max_events_per_session: int = 1000,
         retention_seconds: int = 300,
-        enable_console_logging: bool = True
+        enable_console_logging: bool = True,
+        latency_thresholds: Optional[LatencyThresholds] = None
     ):
         """
         Initialize monitoring collector.
@@ -39,10 +42,12 @@ class MonitoringCollector:
             max_events_per_session: Max events to keep per session (circular buffer)
             retention_seconds: How long to keep events after call ends
             enable_console_logging: Log events to console
+            latency_thresholds: Custom latency thresholds
         """
         self.max_events_per_session = max_events_per_session
         self.retention_seconds = retention_seconds
         self.enable_console_logging = enable_console_logging
+        self.latency_thresholds = latency_thresholds or LatencyThresholds()
         
         # Event storage: session_id -> deque of events (circular buffer)
         self._events: Dict[str, deque] = defaultdict(
@@ -64,6 +69,19 @@ class MonitoringCollector:
         Args:
             event: MonitoringEvent to emit
         """
+        # Auto-determine severity based on latency thresholds
+        if event.latency_ms and event.severity == "info":
+            if event.category == "LATENCY":
+                stage = event.metadata.get("stage", "")
+                event.severity = self.latency_thresholds.get_severity(stage, event.latency_ms)
+            elif event.category == "INTENT":
+                event.severity = self.latency_thresholds.get_severity("intent", event.latency_ms)
+            elif event.category == "LLM":
+                if event.event == "llm_response_started" and event.latency_ms:
+                    event.severity = self.latency_thresholds.get_severity("llm_ttft", event.latency_ms)
+                elif event.event == "llm_response_completed" and event.latency_ms:
+                    event.severity = self.latency_thresholds.get_severity("llm_total", event.latency_ms)
+        
         # Store event
         self._events[event.session_id].append(event)
         
@@ -86,40 +104,109 @@ class MonitoringCollector:
         if self.enable_console_logging:
             self._log_to_console(event)
     
+    def _format_latency(self, ms: float, severity: str = "info") -> str:
+        """Format latency with color coding based on severity."""
+        severity_colors = {
+            "info": "\033[92m",     # Green
+            "warning": "\033[93m",  # Yellow
+            "error": "\033[91m",    # Red
+        }
+        
+        color = severity_colors.get(severity, "")
+        reset = "\033[0m"
+        
+        # Format based on magnitude
+        if ms < 100:
+            formatted = f"{ms:.1f}ms"
+        elif ms < 1000:
+            formatted = f"{ms:.0f}ms"
+        else:
+            formatted = f"{ms/1000:.2f}s"
+        
+        return f"{color}{formatted}{reset}"
+    
     def _log_to_console(self, event: MonitoringEvent) -> None:
-        """Format and log event to console."""
-        # Color codes for terminal
-        colors = {
+        """Format and log event to console with enhanced formatting."""
+        # Category colors
+        category_colors = {
             "CALL": "\033[95m",        # Magenta
             "INTENT": "\033[94m",      # Blue
             "TRANSITION": "\033[92m",  # Green
             "PROMPT": "\033[96m",      # Cyan
             "LLM": "\033[93m",         # Yellow
             "TRANSCRIPT": "\033[97m",  # White
-            "LATENCY": "\033[91m",     # Red
+            "LATENCY": "\033[96m",     # Cyan
             "ERROR": "\033[91m",       # Red
+            "CONVERSATION": "\033[95m", # Magenta
         }
         
-        color = colors.get(event.category, "")
+        # Severity emojis
+        severity_emojis = {
+            "info": "✅",
+            "warning": "⚠️ ",
+            "error": "🔴",
+            "debug": "🔍"
+        }
+        
+        color = category_colors.get(event.category, "")
         reset = "\033[0m"
+        emoji = severity_emojis.get(event.severity, "•")
         
         # Format message based on category
         if event.category == "INTENT":
-            msg = f"{color}[INTENT]{reset} {event.metadata.get('intent')} ({event.latency_ms:.1f}ms) | \"{event.metadata.get('message', '')[:60]}...\""
+            latency_str = self._format_latency(event.latency_ms, event.severity) if event.latency_ms else ""
+            message_preview = event.metadata.get('message', '')[:60]
+            msg = f"{emoji} {color}[INTENT]{reset} {event.metadata.get('intent')} {latency_str} | \"{message_preview}...\""
         
         elif event.category == "TRANSITION":
-            msg = f"{color}[TRANSITION]{reset} {event.metadata.get('from_state')} → {event.metadata.get('to_state')} | Trigger: {event.metadata.get('trigger')}"
+            msg = f"{emoji} {color}[TRANSITION]{reset} {event.metadata.get('from_state')} → {event.metadata.get('to_state')} | Trigger: {event.metadata.get('trigger')}"
         
         elif event.category == "LATENCY":
-            msg = f"{color}[LATENCY]{reset} {event.metadata.get('stage')}: {event.latency_ms:.1f}ms"
+            stage = event.metadata.get('stage', '').upper()
+            latency_str = self._format_latency(event.latency_ms, event.severity) if event.latency_ms else ""
+            msg = f"{emoji} {color}[LATENCY]{reset} {stage:15} {latency_str}"
+            
+            # Add threshold breach info
+            if event.severity == "warning":
+                msg += " ⚠️  SLOW"
+            elif event.severity == "error":
+                msg += " 🔴 CRITICAL"
+            
+            # Add cumulative if available
+            if cumulative := event.metadata.get('cumulative_ms'):
+                cumulative_str = self._format_latency(cumulative, "info")
+                msg += f" (cumulative: {cumulative_str})"
+        
+        elif event.category == "LLM":
+            latency_str = self._format_latency(event.latency_ms, event.severity) if event.latency_ms else ""
+            model = event.metadata.get('model', 'unknown')
+            if event.event == "llm_response_started":
+                msg = f"{emoji} {color}[LLM TTFT]{reset} {model} {latency_str}"
+            elif event.event == "llm_response_completed":
+                tokens = event.metadata.get('completion_tokens', '')
+                msg = f"{emoji} {color}[LLM TOTAL]{reset} {model} {latency_str} ({tokens} tokens)"
+            else:
+                msg = f"{emoji} {color}[LLM]{reset} {event.event} {latency_str}"
         
         elif event.category == "ERROR":
-            msg = f"{color}[ERROR]{reset} {event.metadata.get('error_type')}: {event.metadata.get('error_message')}"
+            msg = f"{emoji} {color}[ERROR]{reset} {event.metadata.get('error_type')}: {event.metadata.get('error_message')}"
+        
+        elif event.category == "TRANSCRIPT":
+            role = event.metadata.get('role', 'unknown')
+            content = event.metadata.get('content', '')[:80]
+            role_emoji = "👤" if role == "user" else "🤖"
+            msg = f"{role_emoji} {color}[{role.upper()}]{reset} {content}..."
+        
+        elif event.category == "CONVERSATION":
+            turn = event.metadata.get('turn_number', '?')
+            state = event.metadata.get('current_state', 'unknown')
+            msg = f"{emoji} {color}[TURN {turn}]{reset} State: {state}"
         
         else:
-            msg = f"{color}[{event.category}]{reset} {event.event}"
+            msg = f"{emoji} {color}[{event.category}]{reset} {event.event}"
             if event.latency_ms:
-                msg += f" ({event.latency_ms:.1f}ms)"
+                latency_str = self._format_latency(event.latency_ms, event.severity)
+                msg += f" {latency_str}"
         
         # Log at appropriate level
         if event.severity == "error":
@@ -128,6 +215,45 @@ class MonitoringCollector:
             logger.warning(msg)
         else:
             logger.info(msg)
+    
+    def emit_conversation_turn(
+        self,
+        session_id: str,
+        turn_number: int,
+        user_message: str,
+        system_prompt: str,
+        user_prompt: str,
+        llm_response: str,
+        current_state: str,
+        **kwargs
+    ) -> None:
+        """
+        Emit a complete conversation turn for later replay.
+        
+        Args:
+            session_id: Session ID
+            turn_number: Turn number in conversation
+            user_message: What the user said
+            system_prompt: System prompt used
+            user_prompt: Full rendered prompt with context
+            llm_response: LLM's response
+            current_state: Current state machine state
+            **kwargs: Additional metadata (intent, transition_triggered, etc.)
+        """
+        event = ConversationTurnEvent(
+            session_id=session_id,
+            event="conversation_turn",
+            metadata={
+                "turn_number": turn_number,
+                "user_message": user_message,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "llm_response": llm_response,
+                "current_state": current_state,
+                **kwargs
+            }
+        )
+        self.emit(event)
     
     def get_events(
         self,
@@ -175,6 +301,207 @@ class MonitoringCollector:
     def get_session_metadata(self, session_id: str) -> Optional[Dict]:
         """Get metadata for a session."""
         return self._sessions.get(session_id)
+    
+    def get_full_transcript(self, session_id: str) -> Dict:
+        """
+        Get complete conversation transcript with all prompts and responses.
+        Ready for display in terminal or export to frontend.
+        
+        Args:
+            session_id: Session to get transcript for
+            
+        Returns:
+            Dict with turns, events_timeline, and metadata
+        """
+        if session_id not in self._events:
+            return {
+                "session_id": session_id,
+                "metadata": {},
+                "turns": [],
+                "events_timeline": []
+            }
+        
+        events = list(self._events[session_id])
+        
+        transcript = {
+            "session_id": session_id,
+            "metadata": self._sessions.get(session_id, {}),
+            "turns": [],
+            "events_timeline": []
+        }
+        
+        # Get conversation turns
+        conversation_events = [e for e in events if e.category == "CONVERSATION"]
+        transcript["turns"] = [
+            {
+                "turn": e.metadata.get("turn_number"),
+                "timestamp": e.timestamp.isoformat(),
+                "state": e.metadata.get("current_state"),
+                "user_message": e.metadata.get("user_message"),
+                "intent": e.metadata.get("intent"),
+                "system_prompt": e.metadata.get("system_prompt"),
+                "user_prompt": e.metadata.get("user_prompt"),
+                "llm_response": e.metadata.get("llm_response"),
+                "transition_triggered": e.metadata.get("transition_triggered"),
+                "tokens_used": e.metadata.get("tokens_used"),
+            }
+            for e in conversation_events
+        ]
+        
+        # Get all events for timeline
+        transcript["events_timeline"] = [
+            {
+                "timestamp": e.timestamp.isoformat(),
+                "category": e.category,
+                "event": e.event,
+                "latency_ms": e.latency_ms,
+                "severity": e.severity,
+                "metadata": e.metadata
+            }
+            for e in events
+        ]
+        
+        return transcript
+    
+    def print_full_transcript(self, session_id: str) -> None:
+        """Print beautiful conversation transcript to terminal."""
+        transcript = self.get_full_transcript(session_id)
+        
+        print("\n" + "="*80)
+        print(f"📞 CALL TRANSCRIPT - Session: {session_id[:16]}...")
+        
+        metadata = transcript['metadata']
+        if started_at := metadata.get('started_at'):
+            print(f"Started: {started_at}")
+        if ended_at := metadata.get('ended_at'):
+            duration = (ended_at - metadata.get('started_at')).total_seconds()
+            print(f"Ended: {ended_at} (Duration: {duration:.1f}s)")
+        
+        print("="*80)
+        
+        if not transcript["turns"]:
+            print("\n⚠️  No conversation turns recorded for this session.")
+            print("   Make sure you're using collector.emit_conversation_turn() to capture full turns.")
+            return
+        
+        for turn in transcript["turns"]:
+            print(f"\n{'─'*80}")
+            print(f"🔄 Turn {turn['turn']} | {turn['timestamp']} | State: {turn['state']}")
+            print(f"{'─'*80}")
+            
+            # User message
+            print(f"\n👤 USER:")
+            print(f"   {turn['user_message']}")
+            
+            # Intent
+            if intent := turn.get('intent'):
+                print(f"   💡 Intent: {intent}")
+            
+            # State transition
+            if transition := turn.get('transition_triggered'):
+                print(f"   🔀 Triggered: {transition}")
+            
+            # System prompt (truncated)
+            print(f"\n🔧 SYSTEM PROMPT ({len(turn.get('system_prompt', ''))} chars):")
+            system_preview = turn.get('system_prompt', '')[:150]
+            print(f"   {system_preview}...")
+            
+            # Full user prompt to LLM (truncated)
+            print(f"\n📝 FULL PROMPT TO LLM ({len(turn.get('user_prompt', ''))} chars):")
+            prompt_preview = turn.get('user_prompt', '')[:200]
+            print(f"   {prompt_preview}...")
+            
+            # LLM response
+            print(f"\n🤖 ASSISTANT:")
+            print(f"   {turn.get('llm_response', '')}")
+            
+            # Tokens
+            if tokens := turn.get('tokens_used'):
+                print(f"   📊 Tokens: {tokens}")
+        
+        print(f"\n{'='*80}")
+        print(f"✅ Total turns: {len(transcript['turns'])}")
+        print(f"{'='*80}\n")
+    
+    def get_latency_waterfall(self, session_id: str) -> List[Dict]:
+        """
+        Get latency breakdown as waterfall for visualization.
+        Shows where time is spent in the pipeline.
+        
+        Args:
+            session_id: Session to analyze
+            
+        Returns:
+            List of cycles with stage breakdowns
+        """
+        if session_id not in self._events:
+            return []
+        
+        events = list(self._events[session_id])
+        
+        # Group by request/response cycle
+        waterfall = []
+        current_cycle = None
+        
+        for event in events:
+            # Start new cycle on user message
+            if event.category == "TRANSCRIPT" and event.metadata.get("role") == "user":
+                current_cycle = {
+                    "user_message": event.metadata.get("content", ""),
+                    "timestamp": event.timestamp.isoformat(),
+                    "stages": [],
+                    "total_ms": 0
+                }
+                waterfall.append(current_cycle)
+            
+            # Add latency stages to current cycle
+            if current_cycle and event.latency_ms:
+                stage_name = event.metadata.get("stage") or event.category.lower()
+                current_cycle["stages"].append({
+                    "name": stage_name,
+                    "latency_ms": event.latency_ms,
+                    "severity": event.severity,
+                    "timestamp": event.timestamp.isoformat()
+                })
+                current_cycle["total_ms"] += event.latency_ms
+        
+        return waterfall
+    
+    def print_latency_waterfall(self, session_id: str) -> None:
+        """Print beautiful waterfall visualization to terminal."""
+        waterfall = self.get_latency_waterfall(session_id)
+        
+        if not waterfall:
+            print("\n⚠️  No latency waterfall data available for this session.")
+            return
+        
+        print("\n" + "="*80)
+        print("📊 LATENCY WATERFALL")
+        print("="*80)
+        
+        for i, cycle in enumerate(waterfall, 1):
+            print(f"\n🔄 Cycle {i}: \"{cycle['user_message'][:50]}...\"")
+            print(f"   Total: {self._format_latency(cycle['total_ms'], 'info')}")
+            print("   " + "-"*70)
+            
+            for stage in cycle['stages']:
+                # Calculate bar length (scale for visualization)
+                bar_length = int(stage['latency_ms'] / 50)
+                bar = "█" * min(bar_length, 60)
+                
+                # Severity emoji
+                severity_emoji = {
+                    "info": "✅",
+                    "warning": "⚠️ ",
+                    "error": "🔴"
+                }
+                
+                latency_str = self._format_latency(stage['latency_ms'], stage['severity'])
+                emoji = severity_emoji.get(stage['severity'], '•')
+                
+                print(f"   {emoji} {stage['name']:20} {latency_str:>15} {bar}")
+        
+        print("\n" + "="*80 + "\n")
     
     def get_call_metrics(self, session_id: str) -> Optional[CallMetrics]:
         """

@@ -10,7 +10,6 @@
 - IVR navigation
 
 # 10.17.2025
-- Detailed latency monitoring + improve system latency
 - Robust pipeline termination
   - Once caller hangs up, terminate
   - Once Closing state, terminate
@@ -18,13 +17,28 @@
 - Transition is llm based from verification to closing (llm decides we have all done, status and reference number inserted --> close call)
 
 # 10.18.2025
- 
+- Today's topic is observability, monitoring, and evaluations of the main coversation flow
+
+Goals:
+1. Imrpove the attached latency monitoring to pinpoint latency issues (setup thresholds, add colors, format numbers)
+2. Implement post-call full transcription, including prompts passed, responses generated, user messages into terminal, simply the whole conversation with everything spoken / passed to llm
+  - If simple, prepare to push this whole monitoring into frontend (React, Vite, shadcn/ui), so that every call can be reviewed after completion with time stamps, prompts, responses
+Details about my implementation are below:
+1. I use pipecat, OpenAI, Daily for telephony, Elevenlabs, deepgram, i have multiple states per the conversation with custom prompts being passed into the llm, then there are function calls to update the db. 
+2. I have a monitoring setup that I'd like improved. See how it works attached:
+
+
+
+# 10.19.2025
+- Provide full transcipt after a call
+
+# 10.20.2025
+- Encrypt data in transit and in storage
+
 Implement cost per minute of call tracking
-Provide full transcipt after a call, setup for full recording
 Fix call status visibility, Patient Details - Back to list button
 Start mulitple calls at the same time
 Add sign in / log in buttons with mfa
-Encrypt data in transit and in storage
 Change theme, include navigation menu component
 
 https://ui.shadcn.com/blocks/signup

@@ -9,13 +9,35 @@ from datetime import datetime
 from uuid import uuid4
 
 
+class LatencyThresholds(BaseModel):
+    """Configurable latency thresholds per stage (in milliseconds)."""
+    stt: Dict[str, float] = Field(default_factory=lambda: {"warn": 200, "error": 500})
+    intent: Dict[str, float] = Field(default_factory=lambda: {"warn": 100, "error": 300})
+    llm_ttft: Dict[str, float] = Field(default_factory=lambda: {"warn": 500, "error": 1500})
+    llm_total: Dict[str, float] = Field(default_factory=lambda: {"warn": 2000, "error": 5000})
+    tts: Dict[str, float] = Field(default_factory=lambda: {"warn": 300, "error": 800})
+    e2e: Dict[str, float] = Field(default_factory=lambda: {"warn": 3000, "error": 6000})
+    
+    def get_severity(self, stage: str, latency_ms: float) -> str:
+        """Determine severity based on latency thresholds."""
+        thresholds = getattr(self, stage.replace("_ms", ""), None)
+        if thresholds is None:
+            return "info"
+        
+        if latency_ms >= thresholds.get("error", float('inf')):
+            return "error"
+        elif latency_ms >= thresholds.get("warn", float('inf')):
+            return "warning"
+        return "info"
+
+
 class MonitoringEvent(BaseModel):
     """Base event model - all events inherit from this."""
     
     id: str = Field(default_factory=lambda: f"evt_{uuid4().hex[:12]}")
     session_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    category: Literal["CALL", "INTENT", "TRANSITION", "PROMPT", "LLM", "TRANSCRIPT", "LATENCY", "ERROR", "DETECTION"]
+    category: Literal["CALL", "INTENT", "TRANSITION", "PROMPT", "LLM", "TRANSCRIPT", "LATENCY", "ERROR", "DETECTION", "CONVERSATION"]
     event: str
     severity: Literal["debug", "info", "warning", "error"] = "info"
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -114,6 +136,22 @@ class ErrorEvent(MonitoringEvent):
         error_message: str
         stack_trace: Optional[str] = None
         recoverable: bool = False
+
+
+class ConversationTurnEvent(MonitoringEvent):
+    """Complete conversation turn with all context for replay."""
+    category: Literal["CONVERSATION"] = "CONVERSATION"
+    
+    class Metadata(BaseModel):
+        turn_number: int
+        user_message: str
+        system_prompt: str
+        user_prompt: str  # Full rendered prompt with context
+        llm_response: str
+        current_state: str
+        intent: Optional[str] = None
+        transition_triggered: Optional[str] = None
+        tokens_used: Optional[int] = None
 
 
 class CallMetrics(BaseModel):

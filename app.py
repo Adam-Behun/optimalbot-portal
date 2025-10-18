@@ -57,9 +57,9 @@ if os.path.exists("frontend/build/assets"):
     logger.info("✅ Mounted /assets from frontend/build/assets")
 
 # Legacy static mount (keep for backwards compatibility if needed)
-if os.path.exists("frontend/build/static"):
-    app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
-    logger.info("✅ Mounted /static from frontend/build/static")
+#if os.path.exists("frontend/build/static"):
+#    app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+#    logger.info("✅ Mounted /static from frontend/build/static")
 
 # Serve other static files from build root (manifest.json, robots.txt, etc.)
 if os.path.exists("frontend/build"):
