@@ -21,11 +21,11 @@ from bson import ObjectId
 from pathlib import Path
 
 # Engine imports
-from engine import ConversationSchema, DataFormatter, PromptRenderer, ConversationContext
-from models import get_async_patient_db
+from core import ConversationSchema, DataFormatter, PromptRenderer, ConversationContext
+from backend.models import get_async_patient_db
 from schema_pipeline import SchemaBasedPipeline
 from monitoring import get_collector, emit_event
-from patient_validator import validate_patient_data
+from utils.validator import validate_patient_data
 
 # Load environment variables
 load_dotenv()

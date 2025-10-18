@@ -5,7 +5,7 @@ from .schema_loader import (
 )
 from .data_formatter import DataFormatter
 from .prompt_renderer import PromptRenderer
-from .conversation_context import ConversationContext
+from .context import ConversationContext
 from .state_manager import StateManager
 
 __all__ = [

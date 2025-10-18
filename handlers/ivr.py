@@ -2,7 +2,7 @@ from loguru import logger
 from pipecat.frames.frames import LLMMessagesUpdateFrame, VADParamsUpdateFrame, TTSSpeakFrame, EndFrame
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
-from models import get_async_patient_db
+from backend.models import get_async_patient_db
 from monitoring import emit_event
 
 def setup_ivr_handlers(pipeline, ivr_navigator):

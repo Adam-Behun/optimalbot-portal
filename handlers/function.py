@@ -1,7 +1,7 @@
 """LLM function call execution"""
 
 from loguru import logger
-from functions import update_prior_auth_status_handler
+from backend.functions import update_prior_auth_status_handler
 from monitoring import emit_event
 
 

@@ -3,7 +3,7 @@ from typing import Optional
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
-from models import get_async_patient_db
+from backend.models import get_async_patient_db
 
 logger = logging.getLogger(__name__)
 patient_db = get_async_patient_db()

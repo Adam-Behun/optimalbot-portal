@@ -1,7 +1,7 @@
 """Daily.co transport event handlers"""
 
 from loguru import logger
-from models import get_async_patient_db
+from backend.models import get_async_patient_db
 from monitoring import emit_event
 
 

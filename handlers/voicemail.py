@@ -2,7 +2,7 @@
 
 from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame, EndFrame
-from models import get_async_patient_db
+from backend.models import get_async_patient_db
 from monitoring import emit_event
 
 
