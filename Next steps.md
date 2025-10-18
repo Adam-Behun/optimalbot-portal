@@ -34,3 +34,11 @@ https://ui.shadcn.com/docs/components/empty
 https://ui.shadcn.com/docs/components/sheet
 https://ui.shadcn.com/docs/components/pagination#
 https://ui.shadcn.com/docs/components/data-table
+
+
+Flow:
+
+App startup (app.py) → Load schema + initialize system
+Schema loading (schema_loader.py) → Parse YAML files
+Prompt compilation (prompt_renderer.py) → Precompile Jinja2 templates
+Per-call pipeline creation (schema_pipeline.py) → Build pipeline for each call

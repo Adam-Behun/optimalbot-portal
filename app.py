@@ -56,11 +56,6 @@ if os.path.exists("frontend/build/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/build/assets"), name="assets")
     logger.info("✅ Mounted /assets from frontend/build/assets")
 
-# Legacy static mount (keep for backwards compatibility if needed)
-if os.path.exists("frontend/build/static"):
-    app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
-    logger.info("✅ Mounted /static from frontend/build/static")
-
 # Serve other static files from build root (manifest.json, robots.txt, etc.)
 if os.path.exists("frontend/build"):
     @app.get("/manifest.json")
@@ -99,93 +94,22 @@ def convert_objectid(doc: dict) -> dict:
         doc["patient_id"] = doc["_id"]
     return doc
 
-# ============================================================================
-# GLOBAL SCHEMA SYSTEM (Loaded once at startup, shared across all calls)
-# ============================================================================
+def substitute_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace ${ENV_VAR} placeholders with environment variables."""
+    for key, value in config.items():
+        if isinstance(value, dict):
+            config[key] = substitute_env_vars(value)
+        elif isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+            env_key = value[2:-1]
+            config[key] = os.getenv(env_key)
+    return config
 
-conversation_schema: ConversationSchema = None
-prompt_renderer: PromptRenderer = None
-data_formatter: DataFormatter = None
-
-# Performance metrics
-startup_metrics = {
-    "schema_load_ms": 0.0,
-    "renderer_init_ms": 0.0,
-    "classifier_init_ms": 0.0,
-    "total_init_ms": 0.0
-}
 
 @app.on_event("startup")
-async def initialize_schema_system():
-    """
-    Load and initialize the schema system once at startup
-    """
-    try:
-        schema_path = os.getenv("CONVERSATION_SCHEMA", "clients/prior_auth")
-        logger.info(f"🔧 Initializing schema system from: {schema_path}")
-        
-        start_time = time.perf_counter()
-        global conversation_schema
-        conversation_schema = ConversationSchema.load(schema_path)
-        load_time_ms = (time.perf_counter() - start_time) * 1000
-        startup_metrics["schema_load_ms"] = load_time_ms
-        
-        # Load services.yaml
-        services_path = Path(schema_path) / 'services.yaml'
-        with open(services_path, 'r') as f:
-            global services_config
-            services_config = yaml.safe_load(f)
-        
-        # Define and apply substitute_env_vars
-        def substitute_env_vars(config):
-            for key, value in config.items():
-                if isinstance(value, dict):
-                    config[key] = substitute_env_vars(value)
-                elif isinstance(value, str) and value.startswith('${') and value.endswith('}'):
-                    env_key = value[2:-1]
-                    config[key] = os.getenv(env_key)
-            return config
-        
-        services_config = substitute_env_vars(services_config)
-        logger.info(f"API keys loaded: {bool(services_config['services']['transport']['api_key'])}")
-
-
-        
-        # Initialize renderer
-        start_time = time.perf_counter()
-        global prompt_renderer
-        prompt_renderer = PromptRenderer(conversation_schema)
-        renderer_time_ms = (time.perf_counter() - start_time) * 1000
-        startup_metrics["renderer_init_ms"] = renderer_time_ms
-        
-        # Initialize data formatter
-        global data_formatter
-        data_formatter = DataFormatter(conversation_schema)
-        
-        # Total init time
-        startup_metrics["total_init_ms"] = (
-            startup_metrics["schema_load_ms"] +
-            startup_metrics["renderer_init_ms"]
-        )
-        
-        logger.info(f"✅ Schema system initialized:\n"
-                    f"   Name: {conversation_schema.conversation.name} v{conversation_schema.conversation.version}\n"
-                    f"   Schema load: {startup_metrics['schema_load_ms']:.1f}ms\n"
-                    f"   Template compile: {startup_metrics['renderer_init_ms']:.1f}ms\n"
-                    f"   Total: {startup_metrics['total_init_ms']:.1f}ms\n"
-                    f"   States: {len(conversation_schema.states.definitions)}\n"
-                    f"   Templates cached: {len(prompt_renderer._template_cache)}"
-                    )
-            
-        # Warn if slow
-        if startup_metrics["total_init_ms"] > 500:
-            logger.warning(
-                f"⚠️  Schema init took {startup_metrics['total_init_ms']:.1f}ms (target: <500ms)"
-            )
-    except Exception as e:
-        logger.error(f"❌ Schema system initialization failed: {e}")
-        logger.error(traceback.format_exc())
-        raise RuntimeError("Cannot start without schema system")
+async def initialize_application():
+    """Initialize application-level resources only."""
+    logger.info("🚀 Application starting...")
+    logger.info("✅ Application ready")
 
 # ============================================================================
 # GLOBAL INSTANCES
@@ -280,6 +204,19 @@ async def start_call(request: CallRequest):
         token = token_response.json()["token"]
         logger.info("Meeting token created with owner privileges")
         
+        # Load client-specific configuration
+        schema_path = "clients/prior_auth"
+        logger.info(f"Loading schema from: {schema_path}")
+        conversation_schema = ConversationSchema.load(schema_path)
+        data_formatter = DataFormatter(conversation_schema)
+        prompt_renderer = PromptRenderer(conversation_schema)
+        logger.info(f"✅ Schema loaded: {conversation_schema.conversation.name} v{conversation_schema.conversation.version}")
+
+        # Load services config
+        services_path = Path(schema_path) / 'services.yaml'
+        with open(services_path, 'r') as f:
+            services_config = substitute_env_vars(yaml.safe_load(f))
+
         # Create schema-based pipeline
         logger.info("Creating schema-based pipeline...")
         pipeline = SchemaBasedPipeline(
@@ -288,8 +225,9 @@ async def start_call(request: CallRequest):
             patient_data=patient,
             conversation_schema=conversation_schema,
             data_formatter=data_formatter,
+            prompt_renderer=prompt_renderer,  # NEW PARAMETER
             phone_number=phone_number,
-            services_config=services_config,  # ✅ Pass services_config
+            services_config=services_config,
             debug_mode=os.getenv("DEBUG", "false").lower() == "true"
         )
         
@@ -601,7 +539,7 @@ async def get_schema_info():
         "performance": startup_metrics,
         "health": {
             "schema_loaded": True,
-            "templates_cached": len(prompt_renderer._template_cache),
+            "templates_cached": len(prompt_renderer._cache),
             "init_time_ok": startup_metrics["total_init_ms"] < 500
         }
     }
@@ -677,7 +615,7 @@ async def health_check():
         "schema_system": {
             "status": schema_health,
             "init_time_ms": startup_metrics.get("total_init_ms", 0),
-            "templates_cached": len(prompt_renderer._template_cache) if prompt_renderer else 0
+            "templates_cached": len(prompt_renderer._cache) if prompt_renderer else 0
         }
     }
 
