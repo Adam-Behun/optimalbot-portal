@@ -22,7 +22,7 @@ from handlers import (
     setup_voicemail_handlers,
     setup_ivr_handlers,
     setup_function_call_handler,
-    save_transcript_to_db
+    save_transcript_to_db_async
 )
 from monitoring import emit_event, get_collector
 
@@ -159,12 +159,10 @@ class ConversationPipeline:
             await self.runner.run(self.task)
             logger.info("Pipeline completed successfully")
             
-            # Save transcript in background
-            threading.Thread(
-                target=save_transcript_to_db,
-                args=(self.session_id, self.patient_id),
-                daemon=False
-            ).start()
+            # Save transcript as background task (no threading needed!)
+            asyncio.create_task(
+                save_transcript_to_db_async(self.session_id, self.patient_id)
+            )
             
             emit_event(
                 session_id=self.session_id,

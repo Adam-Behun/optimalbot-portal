@@ -1,16 +1,14 @@
 import logging
-from typing import Optional
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
 from backend.models import get_async_patient_db
 
 logger = logging.getLogger(__name__)
-patient_db = get_async_patient_db()
 
 
 def convert_spoken_to_numeric(text: str) -> str:
-    """Convert spoken numbers to digits while preserving letters."""
+    """Convert spoken numbers to digits (e.g., 'one two three' -> '123')"""
     if not text:
         return text
     
@@ -21,17 +19,13 @@ def convert_spoken_to_numeric(text: str) -> str:
     }
     
     parts = text.lower().split()
-    result = []
+    converted = [word_to_digit.get(part.strip('.,!?;:-'), part) for part in parts]
     
-    for part in parts:
-        clean_part = part.strip('.,!?;:-')
-        result.append(word_to_digit.get(clean_part, part))
-    
-    return ''.join(result)
+    return ''.join(converted)
 
 
 async def update_prior_auth_status_handler(params: FunctionCallParams):
-    """Handler for updating prior authorization status."""
+    """Handler for updating prior authorization status via LLM function call"""
     
     patient_id = params.arguments.get("patient_id")
     status = params.arguments.get("status")
@@ -42,12 +36,13 @@ async def update_prior_auth_status_handler(params: FunctionCallParams):
         original = reference_number
         reference_number = convert_spoken_to_numeric(reference_number)
         if original != reference_number:
-            logger.info(f"Converted: '{original}' → '{reference_number}'")
+            logger.info(f"Converted reference number: '{original}' → '{reference_number}'")
     
     logger.info(f"Updating patient {patient_id}: status={status}, ref={reference_number}")
     
     # Update database
-    success = await patient_db.update_prior_auth_status(patient_id, status, reference_number)
+    patient_db = get_async_patient_db()
+    success = await patient_db.update_prior_auth(patient_id, status, reference_number)
     
     result = {
         "success": success,
@@ -57,12 +52,14 @@ async def update_prior_auth_status_handler(params: FunctionCallParams):
     
     if not success:
         result["error"] = "Database update failed"
+        logger.error(f"Failed to update patient {patient_id}")
+    else:
+        logger.info(f"✅ Successfully updated patient {patient_id}")
     
     await params.result_callback(result)
-    logger.info(f"✅ Update {'succeeded' if success else 'failed'}")
 
 
-# Function schema
+# Function schema for LLM
 update_prior_auth_function = FunctionSchema(
     name="update_prior_auth_status",
     description="Update prior authorization status and reference number from insurance company",

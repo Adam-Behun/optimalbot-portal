@@ -572,7 +572,7 @@ async def health_check():
     """Health check with schema system status"""
     try:
         db_status = "connected"
-        patient_count = len(await patient_db.find_patients_pending_auth())
+        patient_count = len(await patient_db.find_patients_by_status("Pending"))
     except Exception as e:
         db_status = f"error: {str(e)}"
         patient_count = 0

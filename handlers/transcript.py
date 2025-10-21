@@ -27,44 +27,23 @@ def setup_transcript_handler(pipeline):
         
         await pipeline.state_manager.check_completion(pipeline.transcripts)
 
-def save_transcript_to_db(session_id: str, patient_id: str):
-    """
-    Save transcript to database after call completes.
-    Runs in background thread, safe to fire-and-forget.
-    """
-    import time
-    
-    # Small delay to ensure all events collected
-    time.sleep(0.5)
-    
+
+async def save_transcript_to_db_async(session_id: str, patient_id: str):
+    """Save transcript to database - async version (no threading needed)"""
     try:
-        # Get full transcript from collector
+        await asyncio.sleep(0.5)  # Small delay
+        
         collector = get_collector()
         transcript = collector.get_full_transcript(session_id)
-        
-        # Print to console
         collector.print_full_transcript(session_id)
         collector.print_latency_waterfall(session_id)
         
-        # Save to database - create fresh event loop in this thread
-        async def save_async():
-            patient_db = get_async_patient_db()
-            return await patient_db.save_call_transcript(patient_id, session_id, transcript)
+        patient_db = get_async_patient_db()
+        success = await patient_db.save_call_transcript(patient_id, session_id, transcript)
         
-        # Run async function in new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            success = loop.run_until_complete(save_async())
-            
-            if success:
-                logger.info(f"✅ Transcript saved to database for patient {patient_id}")
-            else:
-                logger.error(f"❌ Failed to save transcript for patient {patient_id}")
-                
-        finally:
-            loop.close()
-        
+        if success:
+            logger.info(f"✅ Transcript saved for patient {patient_id}")
+        else:
+            logger.error(f"❌ Failed to save transcript for patient {patient_id}")
     except Exception as e:
-        logger.error(f"Failed to save transcript: {e}")
+        logger.error(f"Error saving transcript: {e}")
