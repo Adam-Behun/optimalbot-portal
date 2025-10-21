@@ -1,4 +1,4 @@
-from .schema_loader import (
+from .schema_parser import (
     ConversationSchema,
     TransitionRule,
     TransitionTrigger

@@ -54,6 +54,9 @@ class DropEmptyAudio(FrameProcessor):
 class StateTagStripper(FrameProcessor):
     """Strips <next_state> tags from LLM responses before TTS"""
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         

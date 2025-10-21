@@ -21,9 +21,10 @@ from bson import ObjectId
 from pathlib import Path
 
 # Engine imports
-from core import ConversationSchema, DataFormatter, PromptRenderer, ConversationContext
+from core import ConversationSchema, DataFormatter, PromptRenderer
+from core.client_loader import ClientLoader
 from backend.models import get_async_patient_db
-from schema_pipeline import SchemaBasedPipeline
+from pipeline.runner import ConversationPipeline
 from monitoring import get_collector, emit_event
 from utils.validator import validate_patient_data
 
@@ -72,6 +73,7 @@ if os.path.exists("frontend/build"):
 
 class CallRequest(BaseModel):
     patient_id: str
+    client_name: str = "prior_auth"  # Default to prior_auth for now
     phone_number: Optional[str] = None
 
 class CallResponse(BaseModel):
@@ -93,17 +95,6 @@ def convert_objectid(doc: dict) -> dict:
         doc["_id"] = str(doc["_id"])
         doc["patient_id"] = doc["_id"]
     return doc
-
-def substitute_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Replace ${ENV_VAR} placeholders with environment variables."""
-    for key, value in config.items():
-        if isinstance(value, dict):
-            config[key] = substitute_env_vars(value)
-        elif isinstance(value, str) and value.startswith('${') and value.endswith('}'):
-            env_key = value[2:-1]
-            config[key] = os.getenv(env_key)
-    return config
-
 
 @app.on_event("startup")
 async def initialize_application():
@@ -204,30 +195,14 @@ async def start_call(request: CallRequest):
         token = token_response.json()["token"]
         logger.info("Meeting token created with owner privileges")
         
-        # Load client-specific configuration
-        schema_path = "clients/prior_auth"
-        logger.info(f"Loading schema from: {schema_path}")
-        conversation_schema = ConversationSchema.load(schema_path)
-        data_formatter = DataFormatter(conversation_schema)
-        prompt_renderer = PromptRenderer(conversation_schema)
-        logger.info(f"✅ Schema loaded: {conversation_schema.conversation.name} v{conversation_schema.conversation.version}")
-
-        # Load services config
-        services_path = Path(schema_path) / 'services.yaml'
-        with open(services_path, 'r') as f:
-            services_config = substitute_env_vars(yaml.safe_load(f))
-
-        # Create schema-based pipeline
-        logger.info("Creating schema-based pipeline...")
-        pipeline = SchemaBasedPipeline(
+        # Create conversation pipeline (NEW - client-agnostic)
+        logger.info("Creating conversation pipeline...")
+        pipeline = ConversationPipeline(
+            client_name=request.client_name,
             session_id=session_id,
             patient_id=request.patient_id,
             patient_data=patient,
-            conversation_schema=conversation_schema,
-            data_formatter=data_formatter,
-            prompt_renderer=prompt_renderer,  # NEW PARAMETER
             phone_number=phone_number,
-            services_config=services_config,
             debug_mode=os.getenv("DEBUG", "false").lower() == "true"
         )
         

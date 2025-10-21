@@ -3,8 +3,10 @@ from typing import Optional, List
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 class AsyncPatientRecord:
@@ -157,6 +159,57 @@ class AsyncPatientRecord:
         except Exception as e:
             print(f"Error updating call info: {e}")
             return False
+
+    async def save_call_transcript(
+        self, 
+        patient_id: str, 
+        session_id: str,
+        transcript_data: dict
+    ) -> bool:
+        """
+        Save complete call transcript with all turns and metrics.
+        
+        Args:
+            patient_id: Patient MongoDB ObjectId
+            session_id: Call session ID
+            transcript_data: Full transcript from MonitoringCollector
+        """
+        from bson import ObjectId
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            update_doc = {
+                "last_call_session_id": session_id,
+                "last_call_timestamp": datetime.utcnow().isoformat(),
+                "call_transcript": transcript_data,
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            
+            result = await self.patients.update_one(
+                {"_id": ObjectId(patient_id)},
+                {"$set": update_doc}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Error saving transcript: {e}")
+            return False
+
+    async def get_call_transcript(self, patient_id: str) -> Optional[dict]:
+        """Get the last call transcript for a patient."""
+        from bson import ObjectId
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            patient = await self.patients.find_one(
+                {"_id": ObjectId(patient_id)},
+                {"call_transcript": 1, "last_call_timestamp": 1, "last_call_session_id": 1}
+            )
+            return patient if patient else None
+        except Exception as e:
+            logger.error(f"Error getting transcript: {e}")
+            return None
 
 def get_async_db_client():
     """Get asynchronous MongoDB client"""
