@@ -3,7 +3,8 @@ from pipecat.frames.frames import LLMMessagesUpdateFrame, VADParamsUpdateFrame, 
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
 from backend.models import get_async_patient_db
-from monitoring import emit_event
+from monitoring import add_span_attributes
+
 
 def setup_ivr_handlers(pipeline, ivr_navigator):
     """Setup IVRNavigator event handlers"""
@@ -13,11 +14,13 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
     async def on_conversation_detected(processor, conversation_history):
         logger.info(f"👤 Human answered - Session: {pipeline.session_id}")
         
-        emit_event(
-            session_id=pipeline.session_id,
-            category="DETECTION",
-            event="conversation_detected",
-            metadata={"phone_number": pipeline.phone_number}
+        # Add span attributes for conversation detection
+        add_span_attributes(
+            **{
+                "detection.type": "conversation",
+                "detection.phone_number": pipeline.phone_number,
+                "conversation.state": "greeting",
+            }
         )
         
         # Transition state to get proper greeting prompt
@@ -44,19 +47,23 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
     async def on_ivr_status_changed(processor, status):
         logger.info(f"🤖 IVR Status: {status}")
         
-        emit_event(
-            session_id=pipeline.session_id,
-            category="DETECTION",
-            event="ivr_status_changed",
-            metadata={"status": str(status), "phone_number": pipeline.phone_number}
+        # Add span attributes for IVR status changes
+        add_span_attributes(
+            **{
+                "ivr.status": str(status),
+                "ivr.phone_number": pipeline.phone_number,
+            }
         )
         
         if status == IVRStatus.DETECTED:
             logger.info("✅ IVR system detected - navigation beginning automatically")
+            add_span_attributes(**{"conversation.state": "ivr_detected"})
             # IVR Navigator handles this automatically - no action needed
         
         elif status == IVRStatus.COMPLETED:
             logger.info("✅ IVR navigation completed")
+            
+            add_span_attributes(**{"conversation.state": "greeting"})
             
             # Transition to greeting state
             pipeline.conversation_context.transition_to("greeting", "ivr_navigation_complete")
@@ -75,6 +82,13 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
         
         elif status == IVRStatus.STUCK:
             logger.warning("⚠️ IVR navigation stuck - terminating call")
+            
+            add_span_attributes(
+                **{
+                    "conversation.state": "ivr_stuck",
+                    "error.type": "ivr_navigation_failed",
+                }
+            )
             
             pipeline.conversation_context.transition_to("ivr_stuck", "ivr_navigation_failed")
             

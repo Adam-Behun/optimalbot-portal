@@ -63,51 +63,51 @@ POST /start_call {patient_id: "123", client_name: "prior_auth"}
     ↓
 app.py receives request
     ↓
-┌─────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────┐
 │ STEP 1: Load Client Configuration                          │
 │ core/client_loader.py → Reads clients/prior_auth/*.yaml    │
 │   - schema.yaml (conversation flow rules)                  │
 │   - prompts.yaml (what AI says at each state)              │
 │   - services.yaml (which STT/TTS/LLM to use)               │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
     ↓
-┌─────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────┐
 │ STEP 2: Create Pipeline Runner                             │
-│ pipeline/runner.py → ConversationPipeline instance          │
+│ pipeline/runner.py → ConversationPipeline instance         │
 │   - Stores client config                                   │
 │   - Stores session data (patient info, phone number)       │
 │   - NOT running yet, just prepared                         │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
     ↓
-┌─────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────┐
 │ STEP 3: Build Pipeline (when .run() called)                │
 │ pipeline/pipeline_factory.py → Assembles components:       │
-│                                                             │
+│                                                            │
 │ A. Instantiate Services (services/service_factory.py)      │
 │    - Deepgram STT (speech recognition)                     │
 │    - ElevenLabs TTS (voice synthesis)                      │
 │    - OpenAI LLM (conversation AI)                          │
 │    - Daily.co Transport (telephony)                        │
-│                                                             │
+│                                                            │
 │ B. Create Conversation Components                          │
 │    - ConversationContext (tracks current state)            │
 │    - StateManager (handles transitions)                    │
 │    - PromptRenderer (fills in templates)                   │
-│                                                             │
+│                                                            │
 │ C. Create Event Handlers (handlers/*.py)                   │
 │    - TranscriptHandler → logs conversation                 │
 │    - VoicemailHandler → detects/handles voicemail          │
 │    - IVRHandler → navigates phone menus                    │
 │    - TransportHandler → manages dial-out events            │
-│                                                             │
+│                                                            │
 │ D. Wire Everything Into Pipeline                           │
-│    Transport → Audio → STT → Voicemail → IVR → LLM →      │
+│    Transport → Audio → STT → Voicemail → IVR → LLM →       │
 │    TTS → Audio → Transport                                 │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
     ↓
-┌─────────────────────────────────────────────────────────────┐
-│ STEP 4: Execute Call                                        │
-│ pipeline/runner.py → Runs PipelineTask                      │
+┌────────────────────────────────────────────────────────────┐
+│ STEP 4: Execute Call                                       │
+│ pipeline/runner.py → Runs PipelineTask                     │
 │   1. Bot joins Daily.co room                               │
 │   2. Dials patient phone number                            │
 │   3. Listens for answer/voicemail/IVR                      │
@@ -115,7 +115,7 @@ app.py receives request
 │   5. Transitions through states (greeting → verification)  │
 │   6. Calls functions when needed (update_prior_auth)       │
 │   7. Ends gracefully when done                             │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
     ↓
 Call Complete → Pipeline destroyed
 
@@ -146,3 +146,4 @@ clients/appointment_reminder/
 │ 11. Voice Synthesis   → ElevenLabs speaks responses         │
 │ 12. Transcript Logging→ Records what was said               │
 └─────────────────────────────────────────────────────────────┘
+

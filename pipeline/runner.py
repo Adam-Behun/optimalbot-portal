@@ -5,14 +5,10 @@ Orchestrates loading client config, building pipeline, and running calls.
 
 import sys
 import logging
-import threading
-import asyncio
 from typing import Dict, Any
 
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
-
-from backend.models import get_async_patient_db
 
 from core.client_loader import ClientLoader
 from pipeline.pipeline_factory import PipelineFactory
@@ -22,9 +18,10 @@ from handlers import (
     setup_voicemail_handlers,
     setup_ivr_handlers,
     setup_function_call_handler,
-    save_transcript_to_db_async
 )
-from monitoring import emit_event, get_collector
+from monitoring.otel_setup import initialize_otel_tracing, add_span_attributes
+from opentelemetry.trace import Status, StatusCode
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +64,7 @@ class ConversationPipeline:
         # Load client configuration
         loader = ClientLoader(client_name)
         self.client_config = loader.load_all()
+        self.conversation_schema = self.client_config.schema
         
         # Pipeline components (initialized in run())
         self.pipeline = None
@@ -81,28 +79,8 @@ class ConversationPipeline:
         
         # Transcript tracking
         self.transcripts = []
-        
-        emit_event(
-            session_id=session_id,
-            category="CALL",
-            event="call_started",
-            metadata={
-                "client": client_name,
-                "patient_id": patient_id,
-                "phone_number": phone_number,
-                "schema_version": self.client_config.schema.conversation.version
-            }
-        )
-    
+
     async def run(self, room_url: str, room_token: str, room_name: str):
-        """
-        Build and run the pipeline.
-        
-        Args:
-            room_url: Daily.co room URL
-            room_token: Daily.co authentication token
-            room_name: Room name for the call
-        """
         logger.info(
             f"Starting pipeline - Client: {self.client_name}, "
             f"Session: {self.session_id}, Phone: {self.phone_number}"
@@ -142,14 +120,25 @@ class ConversationPipeline:
         setup_ivr_handlers(self, components['ivr_navigator'])
         setup_function_call_handler(self)
         
-        # Create and run task
+        # Create task with OpenTelemetry enabled
         self.task = PipelineTask(
             self.pipeline,
             params=PipelineParams(
                 allow_interruptions=True,
                 enable_metrics=True,
+                enable_tracing=True,  # Enable Pipecat's built-in OTel support
             ),
             conversation_id=self.session_id
+        )
+        
+        # Add conversation metadata as span attributes
+        add_span_attributes(
+            **{
+                "conversation.id": self.session_id,
+                "patient.id": self.patient_id,
+                "phone.number": self.phone_number,
+                "client.name": self.client_name,
+            }
         )
         
         self.state_manager.set_task(self.task)
@@ -159,29 +148,8 @@ class ConversationPipeline:
             await self.runner.run(self.task)
             logger.info("Pipeline completed successfully")
             
-            # Save transcript as background task (no threading needed!)
-            asyncio.create_task(
-                save_transcript_to_db_async(self.session_id, self.patient_id)
-            )
-            
-            emit_event(
-                session_id=self.session_id,
-                category="CALL",
-                event="call_ended",
-                metadata={"status": "completed"}
-            )
-            
         except Exception as e:
             logger.error(f"Pipeline error: {e}")
-            
-            emit_event(
-                session_id=self.session_id,
-                category="CALL",
-                event="call_failed",
-                severity="error",
-                metadata={"error": str(e)}
-            )
-            
             raise
     
     def get_conversation_state(self) -> Dict[str, Any]:

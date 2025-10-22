@@ -25,8 +25,8 @@ from core import ConversationSchema, DataFormatter, PromptRenderer
 from core.client_loader import ClientLoader
 from backend.models import get_async_patient_db
 from pipeline.runner import ConversationPipeline
-from monitoring import get_collector, emit_event
 from utils.validator import validate_patient_data
+from monitoring import initialize_otel_tracing
 
 # Load environment variables
 load_dotenv()
@@ -100,6 +100,11 @@ def convert_objectid(doc: dict) -> dict:
 async def initialize_application():
     """Initialize application-level resources only."""
     logger.info("🚀 Application starting...")
+    
+    # Initialize OpenTelemetry tracing
+    console_debug = os.getenv("DEBUG", "false").lower() == "true"
+    initialize_otel_tracing(console_debug=console_debug)
+    
     logger.info("✅ Application ready")
 
 # ============================================================================
@@ -214,17 +219,6 @@ async def start_call(request: CallRequest):
         logger.info("Starting pipeline task...")
         asyncio.create_task(pipeline.run(room_url, token, room_name))
         
-        # Emit event
-        emit_event(
-            session_id=session_id,
-            category="CALL",
-            event="call_started",
-            metadata={
-                "patient_id": request.patient_id,
-                "phone_number": phone_number
-            }
-        )
-        
         return CallResponse(
             status="initiated",
             session_id=session_id,
@@ -317,29 +311,28 @@ async def list_active_calls():
 # ============================================================================
 
 @app.get("/patients")
-async def list_patients(skip: int = 0, limit: int = 50):
+async def list_patients():
     """Get all patients"""
     try:
-        # Get all patients (not just pending)
-        cursor = patient_db.patients.find()
+        logger.info(f"📋 Fetching all patients")
+        
+        # Sort by created_at descending (newest first)
+        cursor = patient_db.patients.find().sort("created_at", -1)
         all_patients = await cursor.to_list(length=None)
         
-        # Convert ObjectIds to strings
+        logger.info(f"🔍 Found {len(all_patients)} patients in database")
+        
         patients = [convert_objectid(p) for p in all_patients]
         
-        # Apply pagination
-        total_count = len(patients)
-        paginated = patients[skip:skip+limit]
+        logger.info(f"✅ Returning all {len(patients)} patients")
         
         return {
-            "patients": paginated,
-            "total_count": total_count,
-            "skip": skip,
-            "limit": limit
+            "patients": patients,
+            "total_count": len(patients)
         }
         
     except Exception as e:
-        logger.error(f"Error fetching patients: {str(e)}")
+        logger.error(f"❌ Error fetching patients: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -523,45 +516,7 @@ async def get_schema_info():
 # MONITORING API ENDPOINTS
 # ============================================================================
 
-@app.get("/api/monitor/calls/active")
-async def get_active_calls_monitoring():
-    """Get all active calls with current state and metrics"""
-    collector = get_collector()
-    active_sessions = collector.get_active_sessions()
-    
-    calls = []
-    for session_id in active_sessions:
-        metrics = collector.get_call_metrics(session_id)
-        session_meta = collector.get_session_metadata(session_id)
-        
-        if metrics:
-            calls.append({
-                "session_id": session_id,
-                "current_state": metrics.current_state,
-                "duration_seconds": metrics.total_duration_seconds,
-                "started_at": session_meta.get("started_at").isoformat() if session_meta.get("started_at") else None
-            })
-    
-    return {"calls": calls, "count": len(calls)}
 
-@app.get("/api/monitor/calls/{session_id}")
-async def get_call_details_monitoring(session_id: str):
-    """Get detailed call timeline and metrics"""
-    collector = get_collector()
-    
-    metrics = collector.get_call_metrics(session_id)
-    if not metrics:
-        raise HTTPException(status_code=404, detail="Call not found")
-    
-    events = collector.get_events(session_id, limit=100)
-    latency_metrics = collector.get_latency_metrics(session_id)
-    
-    return {
-        "session_id": session_id,
-        "metrics": metrics.dict(),
-        "latency": latency_metrics.dict() if latency_metrics else None,
-        "timeline": [e.dict() for e in events]
-    }
 
 # ============================================================================
 # HEALTH & STATUS ENDPOINTS

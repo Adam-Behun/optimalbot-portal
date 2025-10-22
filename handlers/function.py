@@ -2,7 +2,13 @@
 
 from loguru import logger
 from backend.functions import update_prior_auth_status_handler
-from monitoring import emit_event
+from monitoring import add_span_attributes
+
+
+# Function registry
+FUNCTION_REGISTRY = {
+    "update_prior_auth_status": update_prior_auth_status_handler,
+}
 
 
 def setup_function_call_handler(pipeline):
@@ -15,6 +21,13 @@ def setup_function_call_handler(pipeline):
         func = FUNCTION_REGISTRY.get(function_name)
         if not func:
             logger.error(f"Function not found: {function_name}")
+            add_span_attributes(
+                **{
+                    "function.name": function_name,
+                    "function.status": "not_found",
+                    "error.type": "function_not_found",
+                }
+            )
             return {"error": f"Function {function_name} not found"}
         
         # Add patient_id if missing
@@ -24,13 +37,11 @@ def setup_function_call_handler(pipeline):
         try:
             result = await func(**arguments)
             
-            emit_event(
-                session_id=pipeline.session_id,
-                category="FUNCTION",
-                event="function_executed",
-                metadata={
-                    "function_name": function_name,
-                    "result": result
+            add_span_attributes(
+                **{
+                    "function.name": function_name,
+                    "function.status": "success",
+                    "function.result": str(result),
                 }
             )
             
@@ -38,4 +49,12 @@ def setup_function_call_handler(pipeline):
             
         except Exception as e:
             logger.error(f"Function error ({function_name}): {e}")
+            add_span_attributes(
+                **{
+                    "function.name": function_name,
+                    "function.status": "error",
+                    "error.type": "function_execution_error",
+                    "error.message": str(e),
+                }
+            )
             return {"error": str(e)}

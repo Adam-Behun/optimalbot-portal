@@ -2,7 +2,7 @@
 
 from loguru import logger
 from backend.models import get_async_patient_db
-from monitoring import emit_event
+from monitoring import add_span_attributes
 
 
 def setup_dialout_handlers(pipeline):
@@ -14,40 +14,41 @@ def setup_dialout_handlers(pipeline):
         
         try:
             await transport.start_dialout({"phoneNumber": pipeline.phone_number})
-            emit_event(
-                session_id=pipeline.session_id,
-                category="CALL",
-                event="dialout_initiated",
-                metadata={"phone_number": pipeline.phone_number}
+            add_span_attributes(
+                **{
+                    "call.event": "dialout_initiated",
+                    "call.phone_number": pipeline.phone_number,
+                }
             )
         except Exception as e:
             logger.error(f"Dial-out failed: {e}")
-            emit_event(
-                session_id=pipeline.session_id,
-                category="CALL",
-                event="dialout_failed",
-                severity="error",
-                metadata={"phone_number": pipeline.phone_number, "error": str(e)}
+            add_span_attributes(
+                **{
+                    "call.event": "dialout_failed",
+                    "call.phone_number": pipeline.phone_number,
+                    "error.message": str(e),
+                    "error.type": "dialout_failed",
+                }
             )
     
     @pipeline.transport.event_handler("on_dialout_answered")
     async def on_dialout_answered(transport, data):
         logger.info(f"Call answered: {pipeline.phone_number}")
-        emit_event(
-            session_id=pipeline.session_id,
-            category="CALL",
-            event="dialout_answered",
-            metadata={"phone_number": pipeline.phone_number}
+        add_span_attributes(
+            **{
+                "call.event": "dialout_answered",
+                "call.phone_number": pipeline.phone_number,
+            }
         )
     
     @pipeline.transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
         logger.info("Call ended")
-        emit_event(
-            session_id=pipeline.session_id,
-            category="CALL",
-            event="dialout_stopped",
-            metadata={"phone_number": pipeline.phone_number}
+        add_span_attributes(
+            **{
+                "call.event": "dialout_stopped",
+                "call.phone_number": pipeline.phone_number,
+            }
         )
         
         # Terminate pipeline
@@ -58,11 +59,11 @@ def setup_dialout_handlers(pipeline):
     async def on_participant_left(transport, participant, data):
         logger.info(f"Participant left: {participant}")
         
-        emit_event(
-            session_id=pipeline.session_id,
-            category="CALL",
-            event="participant_left",
-            metadata={"participant_id": participant}
+        add_span_attributes(
+            **{
+                "call.event": "participant_left",
+                "call.participant_id": participant,
+            }
         )
         
         # Update call status if not already terminal
@@ -86,12 +87,13 @@ def setup_dialout_handlers(pipeline):
         
         await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
         
-        emit_event(
-            session_id=pipeline.session_id,
-            category="CALL",
-            event="dialout_error",
-            severity="error",
-            metadata={"phone_number": pipeline.phone_number, "error_data": data}
+        add_span_attributes(
+            **{
+                "call.event": "dialout_error",
+                "call.phone_number": pipeline.phone_number,
+                "error.message": str(data),
+                "error.type": "dialout_error",
+            }
         )
         
         # Terminate pipeline

@@ -3,7 +3,7 @@
 from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame, EndFrame
 from backend.models import get_async_patient_db
-from monitoring import emit_event
+from monitoring import add_span_attributes
 
 
 def setup_voicemail_handlers(pipeline, voicemail_detector):
@@ -14,11 +14,13 @@ def setup_voicemail_handlers(pipeline, voicemail_detector):
     async def handle_voicemail(processor):
         logger.info(f"📞 Voicemail detected - Session: {pipeline.session_id}")
         
-        emit_event(
-            session_id=pipeline.session_id,
-            category="DETECTION",
-            event="voicemail_detected",
-            metadata={"phone_number": pipeline.phone_number}
+        # Add span attributes for voicemail detection
+        add_span_attributes(
+            **{
+                "detection.type": "voicemail",
+                "detection.phone_number": pipeline.phone_number,
+                "conversation.state": "voicemail_detected",
+            }
         )
         
         # Transition to voicemail state

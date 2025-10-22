@@ -1,64 +1,9 @@
-"""
-Monitoring system for voice AI pipeline.
-"""
-
-from .models import (
-    MonitoringEvent,
-    CallEvent,
-    IntentEvent,
-    TransitionEvent,
-    PromptEvent,
-    LLMEvent,
-    TranscriptEvent,
-    LatencyEvent,
-    ErrorEvent,
-    ConversationTurnEvent,
-    CallMetrics,
-    LatencyMetrics,
-    IntentMetrics,
-    LatencyThresholds
-)
-
-from .collector import (
-    MonitoringCollector,
-    get_collector,
-    emit_event
-)
-
-from .emitter import (
-    MonitoringMixin,
-    LatencyTracker,
-    track_latency,
-    track_latency_async,
-    monitored
-)
+from .otel_setup import initialize_otel_tracing, add_span_attributes, get_tracer
+from .otel_processor import MongoDBSpanProcessor
 
 __all__ = [
-    # Models
-    "MonitoringEvent",
-    "CallEvent",
-    "IntentEvent",
-    "TransitionEvent",
-    "PromptEvent",
-    "LLMEvent",
-    "TranscriptEvent",
-    "LatencyEvent",
-    "ErrorEvent",
-    "ConversationTurnEvent",
-    "CallMetrics",
-    "LatencyMetrics",
-    "IntentMetrics",
-    "LatencyThresholds",
-    
-    # Collector
-    "MonitoringCollector",
-    "get_collector",
-    "emit_event",
-    
-    # Emitter
-    "MonitoringMixin",
-    "LatencyTracker",
-    "track_latency",
-    "track_latency_async",
-    "monitored",
+    "initialize_otel_tracing",
+    "add_span_attributes",
+    "get_tracer",
+    "MongoDBSpanProcessor",
 ]
