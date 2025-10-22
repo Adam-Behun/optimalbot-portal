@@ -1,13 +1,11 @@
 """
-OpenTelemetry setup with console logging and MongoDB persistence.
-Provides real-time span visibility during calls and post-call storage.
+OpenTelemetry setup for Pipecat with MongoDB persistence.
+Adds custom processors to Pipecat's existing TracerProvider.
 """
 
 import logging
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, BatchSpanProcessor
-from opentelemetry.sdk.resources import Resource
 
 from .otel_processor import MongoDBSpanProcessor
 
@@ -18,29 +16,34 @@ _otel_initialized = False
 
 def initialize_otel_tracing(console_debug: bool = False):
     """
-    Initialize OpenTelemetry with console + MongoDB exporters.
+    Add custom processors to Pipecat's existing TracerProvider.
+    Call this ONCE at application startup, AFTER setup_tracing().
     
-    Args:
-        console_debug: If True, prints spans to console for real-time debugging
-    
-    Call once at application startup.
+    Example:
+        # In FastAPI/Flask app startup
+        @app.on_event("startup")
+        async def startup():
+            setup_tracing(service_name="my-service", exporter=None)
+            initialize_otel_tracing(console_debug=True)
     """
     global _otel_initialized
     
     if _otel_initialized:
-        logger.debug("OpenTelemetry already initialized")
+        logger.debug("Custom OpenTelemetry processors already initialized")
         return
     
-    # Create resource with service info
-    resource = Resource.create({
-        "service.name": "voice-ai-pipeline",
-        "service.version": "1.0.0"
-    })
+    # Get the existing tracer provider (set by Pipecat's setup_tracing)
+    tracer_provider = trace.get_tracer_provider()
     
-    # Setup tracer provider
-    tracer_provider = TracerProvider(resource=resource)
+    # Verify we have a valid TracerProvider
+    if not hasattr(tracer_provider, 'add_span_processor'):
+        logger.error(
+            "❌ TracerProvider doesn't support add_span_processor. "
+            "Ensure setup_tracing() was called first."
+        )
+        return
     
-    # Add console exporter for real-time debugging
+    # Add console exporter for real-time debugging (optional)
     if console_debug:
         console_exporter = ConsoleSpanExporter()
         console_processor = BatchSpanProcessor(console_exporter)
@@ -52,25 +55,5 @@ def initialize_otel_tracing(console_debug: bool = False):
     tracer_provider.add_span_processor(mongo_processor)
     logger.info("✅ MongoDB span processor enabled")
     
-    # Set as global tracer
-    trace.set_tracer_provider(tracer_provider)
-    
     _otel_initialized = True
-    logger.info("✅ OpenTelemetry tracing initialized")
-
-
-def get_tracer(name: str = "voice-ai"):
-    """Get tracer instance for manual span creation"""
-    return trace.get_tracer(name)
-
-
-def add_span_attributes(**attributes):
-    """
-    Add custom attributes to current span.
-    Useful for tracking conversation state, patient data, etc.
-    """
-    span = trace.get_current_span()
-    if span and span.is_recording():
-        for key, value in attributes.items():
-            if value is not None:  # Skip None values
-                span.set_attribute(key, value)
+    logger.info("✅ Custom OpenTelemetry processors added to existing TracerProvider")

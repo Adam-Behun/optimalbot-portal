@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class MongoDBSpanProcessor(SpanProcessor):
     """
     Collects OpenTelemetry spans and saves complete conversations to MongoDB.
-    Optionally prints events to console for debugging.
+    Integrates with Pipecat's built-in tracing system.
     """
     
     def __init__(self, console_debug: bool = False):
@@ -39,11 +39,17 @@ class MongoDBSpanProcessor(SpanProcessor):
         if not conversation_id:
             return
         
-        # Initialize conversation data structure
+        # Initialize conversation data structure if first span
         if conversation_id not in self.conversations:
             self.conversations[conversation_id] = self._init_conversation(span)
         
         conv_data = self.conversations[conversation_id]
+        
+        # Extract patient_id from any span that has it (for MongoDB lookup)
+        if not conv_data.get("patient_id"):
+            patient_id = span.attributes.get("patient.id")
+            if patient_id:
+                conv_data["patient_id"] = patient_id
         
         # Route to appropriate handler based on span name
         handlers = {
@@ -64,18 +70,27 @@ class MongoDBSpanProcessor(SpanProcessor):
             self._handle_state(span, conv_data, state)
     
     def _init_conversation(self, span: ReadableSpan) -> Dict[str, Any]:
-        """Initialize conversation data structure"""
+        """
+        Initialize conversation data structure.
+        
+        Note: We only extract patient_id for MongoDB lookup.
+        All other metadata (phone, client, etc.) is stored in the 
+        transcript_data as context, not used for lookups.
+        """
         return {
             "conversation_id": span.attributes.get("conversation.id"),
-            "patient_id": span.attributes.get("patient.id"),
+            "patient_id": None,  # Will be set from first span that has patient.id
+            
+            # Context metadata (stored in transcript_data, not used for lookups)
             "phone_number": span.attributes.get("phone.number"),
             "client_name": span.attributes.get("client.name"),
+            
             "start_time": datetime.fromtimestamp(span.start_time / 1e9).isoformat(),
             "turns": [],
             "transcripts": [],
             "llm_interactions": [],
             "states": [],
-            "latency_metrics": {"tts": []},
+            "latency_metrics": {"tts": [], "stt": []},
             "token_usage": {"total_input_tokens": 0, "total_output_tokens": 0}
         }
     
@@ -98,20 +113,31 @@ class MongoDBSpanProcessor(SpanProcessor):
         if not transcript:
             return
         
+        ttfb = span.attributes.get("metrics.ttfb")
+        duration_ms = (span.end_time - span.start_time) / 1e6
+        
         user_msg = {
             "type": "user",
             "text": transcript,
             "is_final": span.attributes.get("is_final", True),
             "timestamp": datetime.fromtimestamp(span.start_time / 1e9).isoformat(),
-            "ttfb_seconds": span.attributes.get("metrics.ttfb"),
-            "duration_ms": (span.end_time - span.start_time) / 1e6,
+            "ttfb_seconds": ttfb,
+            "duration_ms": duration_ms,
             "service": span.attributes.get("gen_ai.system"),
             "model": span.attributes.get("gen_ai.request.model")
         }
         conv_data["transcripts"].append(user_msg)
         
+        # Add to STT latency metrics
+        if ttfb:
+            conv_data["latency_metrics"]["stt"].append({
+                "ttfb_seconds": ttfb,
+                "duration_ms": duration_ms,
+                "timestamp": user_msg["timestamp"],
+                "service": user_msg["service"]
+            })
+        
         if self.console_debug:
-            ttfb = user_msg['ttfb_seconds']
             print(f"👤 User: {transcript} (TTFB: {ttfb:.3f}s)" if ttfb else f"👤 User: {transcript}")
     
     def _handle_llm(self, span: ReadableSpan, conv_data: Dict) -> None:
@@ -120,13 +146,16 @@ class MongoDBSpanProcessor(SpanProcessor):
         if not output:
             return
         
+        ttfb = span.attributes.get("metrics.ttfb")
+        duration_ms = (span.end_time - span.start_time) / 1e6
+        
         # Add to transcripts (user-visible responses)
         bot_msg = {
             "type": "assistant",
             "text": output,
             "timestamp": datetime.fromtimestamp(span.start_time / 1e9).isoformat(),
-            "ttfb_seconds": span.attributes.get("metrics.ttfb"),
-            "duration_ms": (span.end_time - span.start_time) / 1e6,
+            "ttfb_seconds": ttfb,
+            "duration_ms": duration_ms,
             "service": span.attributes.get("gen_ai.system"),
             "model": span.attributes.get("gen_ai.request.model")
         }
@@ -145,8 +174,8 @@ class MongoDBSpanProcessor(SpanProcessor):
             "temperature": span.attributes.get("gen_ai.request.temperature"),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "ttfb_seconds": bot_msg["ttfb_seconds"],
-            "duration_ms": bot_msg["duration_ms"],
+            "ttfb_seconds": ttfb,
+            "duration_ms": duration_ms,
             "tools_available": span.attributes.get("tools.names")
         }
         conv_data["llm_interactions"].append(llm_data)
@@ -156,10 +185,10 @@ class MongoDBSpanProcessor(SpanProcessor):
         conv_data["token_usage"]["total_output_tokens"] += output_tokens
         
         if self.console_debug:
-            ttfb = bot_msg['ttfb_seconds']
             tokens = f"{input_tokens}→{output_tokens}"
             print(f"🤖 Bot: {output[:80]}{'...' if len(output) > 80 else ''}")
-            print(f"   ↳ Tokens: {tokens}, TTFB: {ttfb:.3f}s, Duration: {bot_msg['duration_ms']:.0f}ms")
+            if ttfb:
+                print(f"   ↳ Tokens: {tokens}, TTFB: {ttfb:.3f}s, Duration: {duration_ms:.0f}ms")
     
     def _handle_tts(self, span: ReadableSpan, conv_data: Dict) -> None:
         """Handle TTS span"""
@@ -213,7 +242,7 @@ class MongoDBSpanProcessor(SpanProcessor):
         turns = conv_data.get("turns", [])
         llm_interactions = conv_data.get("llm_interactions", [])
         tts_metrics = conv_data["latency_metrics"].get("tts", [])
-        stt_transcripts = [t for t in conv_data["transcripts"] if t["type"] == "user"]
+        stt_metrics = conv_data["latency_metrics"].get("stt", [])
         
         summary = {}
         
@@ -252,12 +281,12 @@ class MongoDBSpanProcessor(SpanProcessor):
                 }
         
         # STT metrics
-        if stt_transcripts:
-            ttfbs = [t["ttfb_seconds"] for t in stt_transcripts if t.get("ttfb_seconds")]
-            durations = [t["duration_ms"] for t in stt_transcripts if t.get("duration_ms")]
+        if stt_metrics:
+            ttfbs = [t["ttfb_seconds"] for t in stt_metrics if t.get("ttfb_seconds")]
+            durations = [t["duration_ms"] for t in stt_metrics if t.get("duration_ms")]
             if ttfbs:
                 summary["stt"] = {
-                    "count": len(stt_transcripts),
+                    "count": len(stt_metrics),
                     "avg_ttfb_seconds": sum(ttfbs) / len(ttfbs),
                     "avg_duration_ms": sum(durations) / len(durations) if durations else 0
                 }
@@ -269,6 +298,7 @@ class MongoDBSpanProcessor(SpanProcessor):
         print("\n" + "="*60)
         print(f"📊 CONVERSATION SUMMARY")
         print("="*60)
+        print(f"Patient ID: {conv_data.get('patient_id', 'N/A')}")
         print(f"Duration: {conv_data['total_duration_seconds']:.1f}s")
         print(f"Messages: {len(conv_data['transcripts'])}")
         print(f"Turns: {len(conv_data['turns'])}")
@@ -282,19 +312,30 @@ class MongoDBSpanProcessor(SpanProcessor):
         print("="*60 + "\n")
     
     async def _save_to_mongodb(self, conversation_id: str, conv_data: Dict) -> None:
-        """Save conversation data to MongoDB"""
+        """
+        Save conversation data to MongoDB.
+        
+        Only patient_id is used for the lookup/update.
+        All other data (phone_number, client_name, etc.) is stored 
+        in transcript_data as context.
+        """
         try:
             patient_id = conv_data.get("patient_id")
             if not patient_id:
-                logger.warning(f"No patient_id for conversation {conversation_id}")
+                logger.warning(
+                    f"❌ No patient_id for conversation {conversation_id}. "
+                    f"Ensure 'patient.id' is passed in additional_span_attributes. "
+                    f"Conversation will not be saved."
+                )
                 return
             
             db = get_async_patient_db()
             
+            # Only patient_id is used for lookup - everything else is just stored data
             success = await db.save_call_transcript(
-                patient_id=patient_id,
+                patient_id=patient_id,          # ← Only this matters for lookup
                 session_id=conversation_id,
-                transcript_data=conv_data
+                transcript_data=conv_data       # ← phone_number, client_name stored here as context
             )
             
             if success:

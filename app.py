@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from typing import Optional, Dict, Any
 from bson import ObjectId
 from pathlib import Path
+from pipecat.utils.tracing.setup import setup_tracing
 
 # Engine imports
 from core import ConversationSchema, DataFormatter, PromptRenderer
@@ -98,10 +99,17 @@ def convert_objectid(doc: dict) -> dict:
 
 @app.on_event("startup")
 async def initialize_application():
-    """Initialize application-level resources only."""
+    """Initialize application-level resources."""
     logger.info("🚀 Application starting...")
     
-    # Initialize OpenTelemetry tracing
+    # Step 1: Initialize Pipecat's tracing (creates TracerProvider)
+    setup_tracing(
+        service_name="voice-ai-pipeline",
+        exporter=None,  # No external exporter needed
+        console_export=False,  # Your custom function handles this
+    )
+    
+    # Step 2: Add your custom processors to the existing provider
     console_debug = os.getenv("DEBUG", "false").lower() == "true"
     initialize_otel_tracing(console_debug=console_debug)
     

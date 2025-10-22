@@ -19,9 +19,6 @@ from handlers import (
     setup_ivr_handlers,
     setup_function_call_handler,
 )
-from monitoring.otel_setup import initialize_otel_tracing, add_span_attributes
-from opentelemetry.trace import Status, StatusCode
-
 
 logger = logging.getLogger(__name__)
 
@@ -121,20 +118,18 @@ class ConversationPipeline:
         setup_function_call_handler(self)
         
         # Create task with OpenTelemetry enabled
+        # Pipecat will automatically create the conversation span and all child spans
         self.task = PipelineTask(
             self.pipeline,
             params=PipelineParams(
                 allow_interruptions=True,
                 enable_metrics=True,
-                enable_tracing=True,  # Enable Pipecat's built-in OTel support
+                enable_usage_metrics=True,  # ✅ ADDED: Required for token tracking
             ),
-            conversation_id=self.session_id
-        )
-        
-        # Add conversation metadata as span attributes
-        add_span_attributes(
-            **{
-                "conversation.id": self.session_id,
+            enable_tracing=True,  # Enable tracing for this task
+            enable_turn_tracking=True,  # Enable turn tracking
+            conversation_id=self.session_id,  # Use session_id as conversation_id
+            additional_span_attributes={
                 "patient.id": self.patient_id,
                 "phone.number": self.phone_number,
                 "client.name": self.client_name,
