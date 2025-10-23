@@ -4,6 +4,7 @@ Creates services, handlers, and wires them into a complete pipeline.
 """
 
 from typing import Dict, Any
+from openai._types import NOT_GIVEN
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.extensions.ivr.ivr_navigator import IVRNavigator
@@ -96,11 +97,14 @@ class PipelineFactory:
         # Create transcript processor
         transcript_processor = TranscriptProcessor()
         
-        # Create LLM context aggregator (no tools initially - classifier stays fast)
+        # Create LLM context aggregator
         initial_prompt = context.render_prompt()
         llm_context = OpenAILLMContext(
-            messages=[{"role": "system", "content": initial_prompt}]
+            messages=[{"role": "system", "content": initial_prompt}],
+            tools=PATIENT_TOOLS
         )
+        # Disable tools initially for fast IVR classification
+        llm_context.set_tools(NOT_GIVEN)
         context_aggregators = services['llm'].create_context_aggregator(llm_context)
         
         # Link state manager to context aggregators

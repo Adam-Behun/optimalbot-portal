@@ -7,7 +7,6 @@ from pipecat.frames.frames import (
 )
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from backend.models import get_async_patient_db
 from backend.functions import PATIENT_TOOLS
 
@@ -37,14 +36,14 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             pipeline.conversation_context.transition_to("verification", "human_answered")
             verification_prompt = pipeline.conversation_context.render_prompt()
 
-            # Build LLM context with tools for conversation
+            # Enable tools for function calling
+            context = pipeline.context_aggregators.user().context
+            context.set_tools(PATIENT_TOOLS)
+
+            # Build LLM messages
             messages = [{"role": "system", "content": verification_prompt}]
             if conversation_history:
                 messages.extend(conversation_history)
-
-            # Add tools to context for function calling
-            conversation_context = OpenAILLMContext(messages=messages, tools=PATIENT_TOOLS)
-            pipeline.context_aggregators.user()._context = conversation_context
 
             # CRITICAL: Queue frames in this order for optimal performance
             await pipeline.task.queue_frames([
@@ -76,11 +75,11 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                 pipeline.conversation_context.transition_to("verification", "ivr_complete")
                 verification_prompt = pipeline.conversation_context.render_prompt()
 
-                messages = [{"role": "system", "content": verification_prompt}]
+                # Enable tools for function calling
+                context = pipeline.context_aggregators.user().context
+                context.set_tools(PATIENT_TOOLS)
 
-                # Add tools to context for function calling
-                conversation_context = OpenAILLMContext(messages=messages, tools=PATIENT_TOOLS)
-                pipeline.context_aggregators.user()._context = conversation_context
+                messages = [{"role": "system", "content": verification_prompt}]
 
                 await pipeline.task.queue_frames([
                     VADParamsUpdateFrame(VADParams(stop_secs=0.8)),
