@@ -120,10 +120,7 @@ class PipelineFactory:
         ivr_navigator = IVRNavigator(
             llm=services['llm'],
             ivr_prompt=ivr_goal,
-            ivr_vad_params=VADParams(stop_secs=2.0),           # Longer for IVR menus
-            conversation_vad_params=VADParams(stop_secs=0.8),  # Faster for humans
-            on_conversation_detected=None,   # Handlers set in ivr.py
-            on_ivr_status_changed=None       # Handlers set in ivr.py
+            ivr_vad_params=VADParams(stop_secs=2.0)  # Longer wait for IVR menus
         )
         
         return {

@@ -44,7 +44,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             await pipeline.task.queue_frames([
                 VADParamsUpdateFrame(VADParams(stop_secs=0.8)),  # 1. Set faster VAD FIRST
                 TTSSpeakFrame(HUMAN_GREETING),                    # 2. Queue TTS directly (no LLM)
-                LLMMessagesUpdateFrame(messages=messages, run_llm=False)  # 3. Setup context (no immediate run)
+                LLMMessagesUpdateFrame(messages=messages, run_llm=False)  # 3. Setup context; don't run LLM yet - let human respond to greeting first
             ])
             
             logger.info("✅ Greeting queued successfully - <1s response achieved")
@@ -75,7 +75,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                 await pipeline.task.queue_frames([
                     VADParamsUpdateFrame(VADParams(stop_secs=0.8)),
                     TTSSpeakFrame(HUMAN_GREETING),
-                    LLMMessagesUpdateFrame(messages=messages, run_llm=False)
+                    LLMMessagesUpdateFrame(messages=messages, run_llm=False)  # Setup context; don't run LLM yet
                 ])
                 
                 logger.info("✅ Greeting queued after IVR - <1s response achieved")

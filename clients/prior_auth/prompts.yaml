@@ -137,10 +137,10 @@ prompts:
       
       **Scenario 4**: "For member services press 1, for claims press 2, for eligibility press 3"
       → Response: <dtmf>3</dtmf>
-      
-      **Scenario 5**: "Thank you for calling. Please hold while we..."
-      → Response: <ivr>completed</ivr>
-      
+
+      **Scenario 5**: "Thank you for calling. Please hold while we transfer you..."
+      → Response: Wait silently. (Navigation will auto-complete when human is detected)
+
       BE DECISIVE. You are a provider calling about eligibility verification. 
       Make selections confidently and quickly when you identify the right path.
 
@@ -152,10 +152,7 @@ prompts:
       {{ _global_instructions }}
     task: |
       IVR navigation failed - you were unable to reach a human representative.
-      Say this brief message:
-      "I apologize, but I'm unable to navigate to the appropriate department at this time. We will try reaching out again later. Thank you."
-      Keep it brief. The call will end after this message.
-      message: "I apologize, but I'm unable to navigate to the appropriate department at this time. We will try reaching out again later. Thank you."
+      Say this brief message:"I apologize, but I'm unable to navigate to the appropriate department at this time. We will try reaching out again later. Thank you."
 
   # Greeting - OPTIMIZED FOR <1 SECOND RESPONSE
   # The actual greeting is now hardcoded in ivr.py as HUMAN_GREETING constant

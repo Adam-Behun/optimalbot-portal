@@ -162,7 +162,7 @@ states:
     - name: "greeting"
       description: "Initial greeting after reaching human representative"
       prompts_ref: "greeting"
-      allowed_transitions: ["patient_verification"]
+      allowed_transitions: ["verification"]
       llm_directed: false  # Keep keyword-based transition
       data_access:
         - patient_id
