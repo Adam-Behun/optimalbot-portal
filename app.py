@@ -10,6 +10,7 @@ import yaml
 import requests
 import uvicorn
 import uuid
+import base64
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +21,7 @@ from typing import Optional, Dict, Any
 from bson import ObjectId
 from pathlib import Path
 from pipecat.utils.tracing.setup import setup_tracing
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
 # Engine imports
 from core import ConversationSchema, DataFormatter, PromptRenderer
@@ -27,7 +29,6 @@ from core.client_loader import ClientLoader
 from backend.models import get_async_patient_db
 from pipeline.runner import ConversationPipeline
 from utils.validator import validate_patient_data
-from monitoring import initialize_otel_tracing
 
 # Load environment variables
 load_dotenv()
@@ -102,17 +103,29 @@ async def initialize_application():
     """Initialize application-level resources."""
     logger.info("🚀 Application starting...")
     
-    # Step 1: Initialize Pipecat's tracing (creates TracerProvider)
-    setup_tracing(
-        service_name="voice-ai-pipeline",
-        exporter=None,  # No external exporter needed
-        console_export=False,  # Your custom function handles this
+    # Encode credentials for Basic Auth
+    public_key = os.getenv('LANGFUSE_PUBLIC_KEY')
+    secret_key = os.getenv('LANGFUSE_SECRET_KEY')
+    auth_string = f"{public_key}:{secret_key}"
+    encoded_auth = base64.b64encode(auth_string.encode()).decode()
+    
+    # Configure Langfuse OTLP exporter
+    langfuse_exporter = OTLPSpanExporter(
+        endpoint=f"{os.getenv('LANGFUSE_HOST')}/api/public/otel/v1/traces",
+        headers={
+            "Authorization": f"Basic {encoded_auth}"
+        }
     )
     
-    # Step 2: Add your custom processors to the existing provider
-    console_debug = os.getenv("DEBUG", "false").lower() == "true"
-    initialize_otel_tracing(console_debug=console_debug)
+    # Initialize Pipecat's tracing with Langfuse
+    console_export = os.getenv("OTEL_CONSOLE_EXPORT", "false").lower() == "true"
+    setup_tracing(
+        service_name="voice-ai-pipeline",
+        exporter=langfuse_exporter,
+        console_export=console_export
+    )
     
+    logger.info("✅ OpenTelemetry tracing configured with Langfuse")
     logger.info("✅ Application ready")
 
 # ============================================================================

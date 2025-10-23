@@ -71,34 +71,10 @@ class StateManager:
         if requested_state in allowed_transitions:
             logger.info(f"🤖 LLM transition: {current_state} → {requested_state}")
             await self.transition_to(requested_state, "llm_directed")
-            
-            from monitoring import emit_event
-            emit_event(
-                session_id=self.session_id,
-                category="STATE",
-                event="llm_directed_transition",
-                metadata={
-                    "from_state": current_state,
-                    "to_state": requested_state
-                }
-            )
         else:
             logger.warning(
                 f"⚠️ LLM transition blocked: {requested_state} "
                 f"not in {allowed_transitions}"
-            )
-            
-            from monitoring import emit_event
-            emit_event(
-                session_id=self.session_id,
-                category="STATE",
-                event="llm_transition_blocked",
-                severity="warning",
-                metadata={
-                    "from_state": current_state,
-                    "requested_state": requested_state,
-                    "allowed_transitions": allowed_transitions
-                }
             )
     
     async def check_completion(self, transcripts: List[Dict[str, Any]]):
@@ -120,14 +96,6 @@ class StateManager:
             await get_async_patient_db().update_call_status(
                 self.patient_id, 
                 "Completed"
-            )
-            
-            from monitoring import emit_event
-            emit_event(
-                session_id=self.session_id,
-                category="CALL",
-                event="call_completed",
-                metadata={"patient_id": self.patient_id}
             )
             
             if self.task:

@@ -2,7 +2,7 @@
 
 from loguru import logger
 from backend.models import get_async_patient_db
-from monitoring import add_span_attributes
+from handlers.transcript import save_transcript_to_db
 
 
 def setup_dialout_handlers(pipeline):
@@ -14,57 +14,25 @@ def setup_dialout_handlers(pipeline):
         
         try:
             await transport.start_dialout({"phoneNumber": pipeline.phone_number})
-            add_span_attributes(
-                **{
-                    "call.event": "dialout_initiated",
-                    "call.phone_number": pipeline.phone_number,
-                }
-            )
         except Exception as e:
             logger.error(f"Dial-out failed: {e}")
-            add_span_attributes(
-                **{
-                    "call.event": "dialout_failed",
-                    "call.phone_number": pipeline.phone_number,
-                    "error.message": str(e),
-                    "error.type": "dialout_failed",
-                }
-            )
     
     @pipeline.transport.event_handler("on_dialout_answered")
     async def on_dialout_answered(transport, data):
         logger.info(f"Call answered: {pipeline.phone_number}")
-        add_span_attributes(
-            **{
-                "call.event": "dialout_answered",
-                "call.phone_number": pipeline.phone_number,
-            }
-        )
     
     @pipeline.transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
         logger.info("Call ended")
-        add_span_attributes(
-            **{
-                "call.event": "dialout_stopped",
-                "call.phone_number": pipeline.phone_number,
-            }
-        )
-        
-        # Terminate pipeline
+
+        await save_transcript_to_db(pipeline)
+
         if pipeline.task:
             await pipeline.task.cancel()
     
     @pipeline.transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant, data):
         logger.info(f"Participant left: {participant}")
-        
-        add_span_attributes(
-            **{
-                "call.event": "participant_left",
-                "call.participant_id": participant,
-            }
-        )
         
         # Update call status if not already terminal
         try:
@@ -77,6 +45,9 @@ def setup_dialout_handlers(pipeline):
         except Exception as e:
             logger.error(f"Error updating call status: {e}")
         
+        # Save transcript before terminating
+        await save_transcript_to_db(pipeline)
+        
         # Terminate pipeline
         if pipeline.task:
             await pipeline.task.cancel()
@@ -87,14 +58,6 @@ def setup_dialout_handlers(pipeline):
         
         await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
         
-        add_span_attributes(
-            **{
-                "call.event": "dialout_error",
-                "call.phone_number": pipeline.phone_number,
-                "error.message": str(data),
-                "error.type": "dialout_error",
-            }
-        )
         
         # Terminate pipeline
         if pipeline.task:
