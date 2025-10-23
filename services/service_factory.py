@@ -62,15 +62,6 @@ class ServiceFactory:
         )
     
     @staticmethod
-    def create_classifier_llm(config: Dict[str, Any]) -> OpenAILLMService:
-        """Create classifier LLM for voicemail detection"""
-        return OpenAILLMService(
-            api_key=config['api_key'],
-            model=config['model'],
-            temperature=config['temperature']
-        )
-    
-    @staticmethod
     def create_llm(config: Dict[str, Any]) -> OpenAILLMService:
         """Create main LLM with function registration"""
         llm = OpenAILLMService(

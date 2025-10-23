@@ -76,7 +76,7 @@ class PromptRenderer:
         return "\n\n".join(sections)
     
     def render_prompt(self, prompt_name: str, field: str, data: Dict[str, Any]) -> str:
-        """Render utility prompt (voicemail, IVR, etc.)."""
+        """Render utility prompt (IVR)."""
         key = f"{prompt_name}.{field}"
         if key not in self._cache:
             return ""

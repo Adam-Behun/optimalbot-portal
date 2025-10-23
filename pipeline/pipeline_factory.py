@@ -6,7 +6,6 @@ Creates services, handlers, and wires them into a complete pipeline.
 from typing import Dict, Any
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.extensions.voicemail.voicemail_detector import VoicemailDetector
 from pipecat.extensions.ivr.ivr_navigator import IVRNavigator
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.transcript_processor import TranscriptProcessor
@@ -48,9 +47,6 @@ class PipelineFactory:
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
             'tts': ServiceFactory.create_tts(services_config['services']['tts']),
             'llm': ServiceFactory.create_llm(services_config['services']['llm']),
-            'classifier_llm': ServiceFactory.create_classifier_llm(
-                services_config['services']['classifier_llm']
-            ),
             'transport': ServiceFactory.create_transport(
                 services_config['services']['transport'],
                 room_config['room_url'],
@@ -115,25 +111,19 @@ class PipelineFactory:
             session_data['patient_data']
         )
         
-        # Create voicemail detector
-        voicemail_prompt = client_config.prompt_renderer.render_prompt(
-            "voicemail_detection", "system", formatted_data
-        )
-        voicemail_detector = VoicemailDetector(
-            llm=services['classifier_llm'],
-            voicemail_response_delay=0.8,
-            custom_system_prompt=voicemail_prompt
-        )
-        
         # Create IVR navigator
         ivr_goal = client_config.prompt_renderer.render_prompt(
             "ivr_navigation", "task", formatted_data
         ) or "Navigate to provider services for eligibility verification"
         
+        # Configure IVRNavigator with optimized VAD parameters for <1s response
         ivr_navigator = IVRNavigator(
             llm=services['llm'],
             ivr_prompt=ivr_goal,
-            ivr_vad_params=VADParams(stop_secs=2.0)
+            ivr_vad_params=VADParams(stop_secs=2.0),           # Longer for IVR menus
+            conversation_vad_params=VADParams(stop_secs=0.8),  # Faster for humans
+            on_conversation_detected=None,   # Handlers set in ivr.py
+            on_ivr_status_changed=None       # Handlers set in ivr.py
         )
         
         return {
@@ -141,7 +131,6 @@ class PipelineFactory:
             'state_manager': state_manager,
             'transcript_processor': transcript_processor,
             'context_aggregators': context_aggregators,
-            'voicemail_detector': voicemail_detector,
             'ivr_navigator': ivr_navigator,
             'llm': services['llm']
         }
@@ -157,13 +146,11 @@ class PipelineFactory:
             AudioResampler(target_sample_rate=16000),
             DropEmptyAudio(),
             services['stt'],
-            components['voicemail_detector'].detector(),
             components['transcript_processor'].user(),
             components['context_aggregators'].user(),
             components['ivr_navigator'],
             StateTagStripper(),
             services['tts'],
-            components['voicemail_detector'].gate(),
             components['transcript_processor'].assistant(),
             components['context_aggregators'].assistant(),
             services['transport'].output()

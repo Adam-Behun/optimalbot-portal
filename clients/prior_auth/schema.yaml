@@ -121,25 +121,6 @@ states:
         - provider_name
         - appointment_time
     
-    - name: "voicemail_detected"
-      description: "Voicemail system detected - leave message and end call"
-      prompts_ref: "voicemail_detected"
-      terminal: true
-      allowed_transitions: []
-      llm_directed: false
-      data_access:
-        - patient_id
-        - patient_name
-        - date_of_birth
-        - facility
-        - insurance_company
-        - insurance_member_id
-        - insurance_phone
-        - cpt_code
-        - provider_npi
-        - provider_name
-        - appointment_time
-    
     - name: "ivr_navigation"
       description: "Navigating IVR system to reach human representative"
       prompts_ref: "ivr_navigation"
@@ -238,19 +219,10 @@ states:
 # Transition rules
 transitions:
   # ============================================================================
-  # EVENT-DRIVEN TRANSITIONS (IVR/Voicemail/Human Classification)
+  # EVENT-DRIVEN TRANSITIONS (IVR/Human Classification)
   # ============================================================================
   
-  # Transition 1: connection → voicemail_detected (via event handler)
-  - from_state: "connection"
-    to_state: "voicemail_detected"
-    trigger:
-      type: "event"
-      event_name: "on_voicemail_detected"
-    reason: "voicemail_system_detected"
-    description: "VoicemailDetector classified call as voicemail system"
-  
-  # Transition 2: connection → ivr_navigation (via event handler)
+  # Transition 1: connection → ivr_navigation (via event handler)
   - from_state: "connection"
     to_state: "ivr_navigation"
     trigger:
@@ -259,7 +231,7 @@ transitions:
     reason: "ivr_system_detected"
     description: "IVRNavigator detected IVR system requiring navigation"
   
-  # Transition 3: connection → greeting (via event handler - human answered)
+  # Transition 2: connection → greeting (via event handler - human answered)
   - from_state: "connection"
     to_state: "greeting"
     trigger:
@@ -268,7 +240,7 @@ transitions:
     reason: "human_answered_directly"
     description: "Human answered call directly (no IVR system)"
   
-  # Transition 4: ivr_navigation → greeting (via event handler - IVR complete)
+  # Transition 3: ivr_navigation → greeting (via event handler - IVR complete)
   - from_state: "ivr_navigation"
     to_state: "greeting"
     trigger:
@@ -277,7 +249,7 @@ transitions:
     reason: "ivr_navigation_complete"
     description: "Successfully navigated IVR to reach human"
   
-  # Transition 5: ivr_navigation → ivr_stuck (via event handler - IVR stuck)
+  # Transition 4: ivr_navigation → ivr_stuck (via event handler - IVR stuck)
   - from_state: "ivr_navigation"
     to_state: "ivr_stuck"
     trigger:
@@ -290,7 +262,7 @@ transitions:
   # AUTO TRANSITION
   # ============================================================================
   
-  # Transition 6: greeting → verification
+  # Transition 5: greeting → verification
   - from_state: "greeting"
     to_state: "verification"
     trigger:

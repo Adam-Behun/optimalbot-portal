@@ -114,7 +114,7 @@ class StateManager:
         logger.info(f"🔄 {old_state} → {new_state} ({reason})")
         
         # Special states that don't need LLM context update
-        if new_state in ["connection", "voicemail_detected", "ivr_stuck"]:
+        if new_state in ["connection", "ivr_stuck"]:
             self.conversation_context.transition_to(new_state, reason=reason)
             return
         

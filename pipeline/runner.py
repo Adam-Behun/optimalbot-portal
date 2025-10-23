@@ -15,7 +15,6 @@ from pipeline.pipeline_factory import PipelineFactory
 from handlers import (
     setup_dialout_handlers,
     setup_transcript_handler,
-    setup_voicemail_handlers,
     setup_ivr_handlers,
     setup_function_call_handler,
 )
@@ -71,6 +70,7 @@ class ConversationPipeline:
         self.state_manager = None
         self.context_aggregators = None
         self.transcript_processor = None
+        self.ivr_navigator = None
         self.llm = None
         self.runner = None
         
@@ -108,12 +108,12 @@ class ConversationPipeline:
         self.state_manager = components['state_manager']
         self.transcript_processor = components['transcript_processor']
         self.context_aggregators = components['context_aggregators']
+        self.ivr_navigator = components['ivr_navigator']
         self.llm = components['llm']
         
         # Setup handlers
         setup_dialout_handlers(self)
         setup_transcript_handler(self)
-        setup_voicemail_handlers(self, components['voicemail_detector'])
         setup_ivr_handlers(self, components['ivr_navigator'])
         setup_function_call_handler(self)
         

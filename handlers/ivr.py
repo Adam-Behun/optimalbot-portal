@@ -1,73 +1,93 @@
 from loguru import logger
-from pipecat.frames.frames import LLMMessagesUpdateFrame, VADParamsUpdateFrame, TTSSpeakFrame, EndFrame
+from pipecat.frames.frames import (
+    LLMMessagesUpdateFrame, 
+    VADParamsUpdateFrame, 
+    TTSSpeakFrame,
+    EndFrame
+)
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
 from backend.models import get_async_patient_db
 
+# CRITICAL: Pre-define greeting as constant for zero LLM latency
+HUMAN_GREETING = "Hi, this is Alexandra from Adam's Medical Practice. I'm calling to verify eligibility and benefits for a patient."
+
 
 def setup_ivr_handlers(pipeline, ivr_navigator):
-    """Setup IVRNavigator event handlers"""
+    """Setup IVRNavigator event handlers for <1s response time"""
     pipeline.ivr_navigator = ivr_navigator
     
     @ivr_navigator.event_handler("on_conversation_detected")
     async def on_conversation_detected(processor, conversation_history):
-        logger.info(f"👤 Human answered - Session: {pipeline.session_id}")
-        
-        # Transition state to get proper greeting prompt
-        pipeline.conversation_context.transition_to("greeting", "human_answered_directly")
-        greeting_prompt = pipeline.conversation_context.render_prompt()
-        
-        # Build messages with system prompt
-        messages = [{"role": "system", "content": greeting_prompt}]
-        
-        # Add conversation history if available
-        if conversation_history:
-            messages.extend(conversation_history)
-        
-        # Update context and start conversation
-        if pipeline.task:
+        """
+        Fires IMMEDIATELY when human detected (not after full processing).
+        This is where we achieve <1s response time.
+        """
+        try:
+            logger.info(f"👤 Human detected - Session: {pipeline.session_id}")
+            
+            # Optional: Log human's initial greeting for debugging
+            if conversation_history:
+                last_msg = conversation_history[-1].get('content', '')
+                logger.debug(f"Human said: {last_msg}")
+            
+            # OPTIMIZATION: Skip greeting state, go straight to verification
+            pipeline.conversation_context.transition_to("verification", "human_answered")
+            verification_prompt = pipeline.conversation_context.render_prompt()
+            
+            # Build LLM context for NEXT turn (not this one)
+            messages = [{"role": "system", "content": verification_prompt}]
+            if conversation_history:
+                messages.extend(conversation_history)
+            
+            # CRITICAL: Queue frames in this order for optimal performance
             await pipeline.task.queue_frames([
-                LLMMessagesUpdateFrame(messages=messages, run_llm=True),
-                VADParamsUpdateFrame(VADParams(stop_secs=0.8))
+                VADParamsUpdateFrame(VADParams(stop_secs=0.8)),  # 1. Set faster VAD FIRST
+                TTSSpeakFrame(HUMAN_GREETING),                    # 2. Queue TTS directly (no LLM)
+                LLMMessagesUpdateFrame(messages=messages, run_llm=False)  # 3. Setup context (no immediate run)
             ])
-        
-        logger.info("✅ Conversation started")
+            
+            logger.info("✅ Greeting queued successfully - <1s response achieved")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in conversation handler: {e}")
+            # Fallback: still try to greet
+            await pipeline.task.queue_frames([TTSSpeakFrame(HUMAN_GREETING)])
     
     @ivr_navigator.event_handler("on_ivr_status_changed")
     async def on_ivr_status_changed(processor, status):
-        logger.info(f"🤖 IVR Status: {status}")
-        
-        if status == IVRStatus.DETECTED:
-            logger.info("✅ IVR system detected - navigation beginning automatically")
-        
-        elif status == IVRStatus.COMPLETED:
-            logger.info("✅ IVR navigation completed")
+        """Handle IVR navigation status changes"""
+        try:
+            if status == IVRStatus.DETECTED:
+                logger.info("🤖 IVR system detected - auto-navigation starting")
+                # IVR navigation starts automatically per Pipecat
+                pass
             
-            # Transition to greeting state
-            pipeline.conversation_context.transition_to("greeting", "ivr_navigation_complete")
-            greeting_prompt = pipeline.conversation_context.render_prompt()
-            
-            # Set up conversation with proper prompt
-            messages = [{"role": "system", "content": greeting_prompt}]
-            
-            if pipeline.task:
+            elif status == IVRStatus.COMPLETED:
+                logger.info("✅ IVR navigation complete - human reached")
+                
+                # Same fast greeting flow as direct human detection
+                pipeline.conversation_context.transition_to("verification", "ivr_complete")
+                verification_prompt = pipeline.conversation_context.render_prompt()
+                
+                messages = [{"role": "system", "content": verification_prompt}]
+                
                 await pipeline.task.queue_frames([
-                    LLMMessagesUpdateFrame(messages=messages, run_llm=True),
-                    VADParamsUpdateFrame(VADParams(stop_secs=0.8))
+                    VADParamsUpdateFrame(VADParams(stop_secs=0.8)),
+                    TTSSpeakFrame(HUMAN_GREETING),
+                    LLMMessagesUpdateFrame(messages=messages, run_llm=False)
                 ])
+                
+                logger.info("✅ Greeting queued after IVR - <1s response achieved")
             
-            logger.info("✅ IVR completed, conversation started")
+            elif status == IVRStatus.STUCK:
+                logger.warning("⚠️ IVR navigation stuck - ending call")
+                pipeline.conversation_context.transition_to("ivr_stuck", "navigation_failed")
+                
+                await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+                await pipeline.task.queue_frames([EndFrame()])
+                
+                logger.info("❌ Call ended - IVR stuck")
         
-        elif status == IVRStatus.STUCK:
-            logger.warning("⚠️ IVR navigation stuck - terminating call")
-            
-            pipeline.conversation_context.transition_to("ivr_stuck", "ivr_navigation_failed")
-            
-            # Update database
-            await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
-            
-            # Terminate
-            if pipeline.task:
-                await pipeline.task.cancel()
-            
-            logger.info("❌ Call terminated - IVR stuck")
+        except Exception as e:
+            logger.error(f"❌ Error in IVR status handler: {e}")

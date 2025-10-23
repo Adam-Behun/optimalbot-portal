@@ -21,14 +21,6 @@ services:
     presence_penalty: 0.3  # Encourages staying on topic
     seed: 42  # Deterministic outputs for consistency
 
-  # Classifier LLM for voicemail detection (cheaper model for binary classification)
-  classifier_llm:
-    provider: openai  # Same provider as main LLM
-    model: gpt-4o-mini  # Cheaper model (~10x cost savings) for simple voicemail/conversation classification
-    temperature: 0.1  # Lower temperature for more deterministic binary classification
-    api_key: ${OPENAI_API_KEY}  # API authentication key
-    max_tokens: 5  # Very low - only needs to output "CONVERSATION" or "VOICEMAIL"
-
   tts:
     provider: elevenlabs  # The TTS provider (e.g., elevenlabs, playht).
     model: eleven_flash_v2_5  # Model variant; turbo_v2 prioritizes low-latency synthesis for real-time voice.
