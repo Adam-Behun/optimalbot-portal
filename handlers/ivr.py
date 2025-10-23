@@ -1,13 +1,15 @@
 from loguru import logger
 from pipecat.frames.frames import (
-    LLMMessagesUpdateFrame, 
-    VADParamsUpdateFrame, 
+    LLMMessagesUpdateFrame,
+    VADParamsUpdateFrame,
     TTSSpeakFrame,
     EndFrame
 )
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from backend.models import get_async_patient_db
+from backend.functions import PATIENT_TOOLS
 
 # CRITICAL: Pre-define greeting as constant for zero LLM latency
 HUMAN_GREETING = "Hi, this is Alexandra from Adam's Medical Practice. I'm calling to verify eligibility and benefits for a patient."
@@ -34,12 +36,16 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             # OPTIMIZATION: Skip greeting state, go straight to verification
             pipeline.conversation_context.transition_to("verification", "human_answered")
             verification_prompt = pipeline.conversation_context.render_prompt()
-            
-            # Build LLM context for NEXT turn (not this one)
+
+            # Build LLM context with tools for conversation
             messages = [{"role": "system", "content": verification_prompt}]
             if conversation_history:
                 messages.extend(conversation_history)
-            
+
+            # Add tools to context for function calling
+            conversation_context = OpenAILLMContext(messages=messages, tools=PATIENT_TOOLS)
+            pipeline.context_aggregators.user()._context = conversation_context
+
             # CRITICAL: Queue frames in this order for optimal performance
             await pipeline.task.queue_frames([
                 VADParamsUpdateFrame(VADParams(stop_secs=0.8)),  # 1. Set faster VAD FIRST
@@ -65,13 +71,17 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             
             elif status == IVRStatus.COMPLETED:
                 logger.info("✅ IVR navigation complete - human reached")
-                
+
                 # Same fast greeting flow as direct human detection
                 pipeline.conversation_context.transition_to("verification", "ivr_complete")
                 verification_prompt = pipeline.conversation_context.render_prompt()
-                
+
                 messages = [{"role": "system", "content": verification_prompt}]
-                
+
+                # Add tools to context for function calling
+                conversation_context = OpenAILLMContext(messages=messages, tools=PATIENT_TOOLS)
+                pipeline.context_aggregators.user()._context = conversation_context
+
                 await pipeline.task.queue_frames([
                     VADParamsUpdateFrame(VADParams(stop_secs=0.8)),
                     TTSSpeakFrame(HUMAN_GREETING),

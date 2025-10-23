@@ -71,7 +71,17 @@ class ServiceFactory:
         )
         llm.register_function("update_prior_auth_status", update_prior_auth_status_handler)
         return llm
-    
+
+    @staticmethod
+    def create_classifier_llm(config: Dict[str, Any]) -> OpenAILLMService:
+        """Create fast classifier LLM without tools for IVR detection"""
+        return OpenAILLMService(
+            api_key=config['api_key'],
+            model=config['model'],
+            temperature=0,  # Deterministic classification
+            max_tokens=10   # Only need "<mode>conversation</mode>"
+        )
+
     @staticmethod
     def create_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
         """Create ElevenLabs TTS service"""

@@ -47,6 +47,7 @@ class PipelineFactory:
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
             'tts': ServiceFactory.create_tts(services_config['services']['tts']),
             'llm': ServiceFactory.create_llm(services_config['services']['llm']),
+            'classifier_llm': ServiceFactory.create_classifier_llm(services_config['services']['classifier_llm']),
             'transport': ServiceFactory.create_transport(
                 services_config['services']['transport'],
                 room_config['room_url'],
@@ -95,11 +96,10 @@ class PipelineFactory:
         # Create transcript processor
         transcript_processor = TranscriptProcessor()
         
-        # Create LLM context aggregator
+        # Create LLM context aggregator (no tools initially - classifier stays fast)
         initial_prompt = context.render_prompt()
         llm_context = OpenAILLMContext(
-            messages=[{"role": "system", "content": initial_prompt}],
-            tools=PATIENT_TOOLS
+            messages=[{"role": "system", "content": initial_prompt}]
         )
         context_aggregators = services['llm'].create_context_aggregator(llm_context)
         
@@ -118,7 +118,7 @@ class PipelineFactory:
         
         # Configure IVRNavigator with optimized VAD parameters for <1s response
         ivr_navigator = IVRNavigator(
-            llm=services['llm'],
+            llm=services['classifier_llm'],  # Fast classifier without tools
             ivr_prompt=ivr_goal,
             ivr_vad_params=VADParams(stop_secs=2.0)  # Longer wait for IVR menus
         )
