@@ -29,15 +29,15 @@ services:
     max_tokens: 10  # Only need "<mode>conversation</mode>"
 
   tts:
-    provider: elevenlabs  # The TTS provider (e.g., elevenlabs, playht).
-    model: eleven_flash_v2_5  # Model variant; turbo_v2 prioritizes low-latency synthesis for real-time voice.
-    voice_id: 3dzJXoCYueSQiptQ6euE  # ID of the voice to use; selects timbre/style (e.g., custom cloned voices for branding).
-    stability: 0.0  # Voice stability (0-1); lower values allow more variability/emotion but may increase latency slightly.
-    api_key: ${ELEVENLABS_API_KEY}  # API authentication key.
-    similarity_boost: 0.8  # Boosts voice likeness (0-1); higher improves accuracy to original voice but can slow synthesis.
-    optimize_streaming_latency: 3  # Latency optimization level (0-4); higher values reduce delay at minor quality cost for streaming.
-    output_format: pcm_24000  # Audio format (e.g., mp3_44100, pcm_16000); pcm_16000 is low-latency for telephony.
-    style: 0.0  # Voice style (0-1); adjusts expressiveness/tone for more natural speech.
+    provider: elevenlabs
+    model: eleven_turbo_v2_5
+    voice_id: 3dzJXoCYueSQiptQ6euE 
+    stability: 0.0
+    api_key: ${ELEVENLABS_API_KEY} 
+    similarity_boost: 0.8
+    optimize_streaming_latency: 3
+    output_format: pcm_24000
+    style: 0.0
 
   transport:
     provider: daily  # The transport/telephony provider (e.g., daily, twilio).

@@ -75,7 +75,7 @@ class StateTagStripper(FrameProcessor):
 
 
 class SSMLCodeFormatter(FrameProcessor):
-    """Wraps numeric codes in SSML prosody tags for slower, clearer TTS pronunciation"""
+    """Formats numeric codes with word-based digits and ellipsis padding for clear TTS pronunciation"""
 
     # Patterns for codes that need slow pronunciation
     CODE_PATTERNS = [
@@ -85,19 +85,15 @@ class SSMLCodeFormatter(FrameProcessor):
         (r'\bdate of birth[:\s]+([^,.\n]+)', 'DOB'),
     ]
 
-    SPELL_OUT_TRIGGERS = [
-        r'can you spell',
-        r'spell that',
-        r'say that slower',
-        r'slower please',
-        r'repeat that',
-        r"didn't catch that"
-    ]
+    # Digit to word mapping for natural pronunciation
+    DIGIT_WORDS = {
+        '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+        '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine'
+    }
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.last_codes = {}  # Store last spoken codes for spell-out requests
-        self.spell_out_mode = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -105,22 +101,16 @@ class SSMLCodeFormatter(FrameProcessor):
         if isinstance(frame, TextFrame):
             text = frame.text
 
-            # Check for spell-out triggers in user direction
-            if direction == FrameDirection.UPSTREAM:
-                if any(re.search(trigger, text, re.IGNORECASE) for trigger in self.SPELL_OUT_TRIGGERS):
-                    self.spell_out_mode = True
-
-            # Apply SSML formatting to assistant responses
+            # Apply formatting to assistant responses only
             if direction == FrameDirection.DOWNSTREAM:
-                formatted_text = self._apply_ssml(text)
+                formatted_text = self._apply_formatting(text)
                 if formatted_text != text:
                     frame = TextFrame(formatted_text)
-                self.spell_out_mode = False  # Reset after response
 
         await self.push_frame(frame, direction)
 
-    def _apply_ssml(self, text: str) -> str:
-        """Apply SSML prosody tags to numeric codes"""
+    def _apply_formatting(self, text: str) -> str:
+        """Apply digit-to-word and ellipsis formatting to codes"""
         result = text
 
         for pattern, code_type in self.CODE_PATTERNS:
@@ -130,30 +120,50 @@ class SSMLCodeFormatter(FrameProcessor):
                 code_value = match.group(1).strip()
                 self.last_codes[code_type] = code_value
 
-                # Format based on spell-out mode
-                if self.spell_out_mode:
-                    # Character-by-character pronunciation
-                    ssml_code = self._format_spell_out(code_value)
-                else:
-                    # Slow pronunciation with digit spacing
-                    ssml_code = self._format_slow_digits(code_value)
+                # Format the code with digits as words and ellipses
+                formatted_code = self._format_code(code_value, code_type)
 
-                # Replace the code portion with SSML-wrapped version
-                result = result[:match.start(1)] + ssml_code + result[match.end(1):]
+                # Replace the code portion with formatted version
+                result = result[:match.start(1)] + formatted_code + result[match.end(1):]
 
         return result
 
-    def _format_slow_digits(self, code: str) -> str:
-        """Format code with slow prosody and breaks between digit groups"""
+    def _format_code(self, code: str, code_type: str) -> str:
+        """Format code with digit-to-word conversion and ellipsis padding"""
         # Extract only alphanumeric characters
         clean_code = re.sub(r'[^A-Z0-9]', '', code.upper())
 
-        # Add pauses between characters for clarity
-        spaced = '-'.join(clean_code)
+        if code_type == 'NPI':
+            # NPI: Group as 3-3-4 with digits as words
+            # Example: 1234567890 → "one two three, four five six, seven eight nine zero"
+            digits = list(clean_code)
+            if len(digits) == 10:
+                group1 = ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits[0:3]])
+                group2 = ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits[3:6]])
+                group3 = ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits[6:10]])
+                return f"{group1}, {group2}, {group3}"
+            else:
+                # Fallback: all digits as words with commas
+                return ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits])
 
-        return f'<prosody rate="0.7">{spaced}</prosody>'
+        elif code_type == 'CPT':
+            # CPT: Individual digits as words
+            # Example: 99214 → "nine, nine, two, one, four"
+            digits = list(clean_code)
+            return ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits])
 
-    def _format_spell_out(self, code: str) -> str:
-        """Format code for character-by-character spelling"""
-        clean_code = re.sub(r'[^A-Z0-9]', '', code.upper())
-        return f'<say-as interpret-as="characters">{clean_code}</say-as>'
+        else:
+            # Member ID and others: Mix of letters and digits with ellipses between each
+            # Example: ABC456 → "... ... ... A ... ... ... B ... ... ... C ... ... ... four, five, six"
+            chars = list(clean_code)
+            result = []
+
+            for char in chars:
+                if char.isdigit():
+                    # Convert digit to word
+                    result.append(self.DIGIT_WORDS.get(char, char))
+                else:
+                    # Letter: add with ellipsis padding
+                    result.append(f"... ... ... {char}")
+
+            return ' '.join(result)
