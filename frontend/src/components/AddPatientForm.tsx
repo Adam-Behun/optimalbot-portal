@@ -1,6 +1,7 @@
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from '@tanstack/react-form';
 import { addPatient, addPatientsBulk } from '../api';
+import { AddPatientFormData } from '../types';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
@@ -44,7 +45,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
       skipEmptyLines: true,
       complete: async (results) => {
         try {
-          const patients = results.data;
+          const patients = results.data as AddPatientFormData[];
 
           if (patients.length === 0) {
             toast.error('CSV file is empty');
