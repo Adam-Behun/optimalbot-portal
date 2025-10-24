@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { getPatients, startCall, deletePatient } from '@/api';
 import { Patient } from '@/types';
 import { DataTable } from './data-table';
@@ -6,17 +7,21 @@ import { createColumns } from './columns';
 import { PatientDetailSheet } from './patient-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Phone, Trash2, RefreshCw } from 'lucide-react';
-import { toast } from "sonner";  // ✅ Added
+import { toast } from "sonner";
+import { ModeToggle } from "@/components/mode-toggle";
 
 export default function PatientList() {
+  const location = useLocation();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPatients, setSelectedPatients] = useState<Patient[]>([]);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
-  
+
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  const isActive = (path: string) => location.pathname === path;
 
   const loadPatients = useCallback(async () => {
     try {
@@ -162,7 +167,34 @@ export default function PatientList() {
   }
 
   return (
-    <div className="container mx-auto py-8 space-y-6">
+    <div className="max-w-5xl mx-auto py-8 px-4 space-y-6">
+      {/* Navigation and Controls */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-6">
+          <Link
+            to="/"
+            className={`px-4 py-2 inline-block transition-all border-b-2 ${
+              isActive('/')
+                ? 'text-primary border-primary font-semibold'
+                : 'text-muted-foreground border-transparent hover:text-foreground'
+            }`}
+          >
+            Patients
+          </Link>
+          <Link
+            to="/add-patient"
+            className={`px-4 py-2 inline-block transition-all border-b-2 ${
+              isActive('/add-patient')
+                ? 'text-primary border-primary font-semibold'
+                : 'text-muted-foreground border-transparent hover:text-foreground'
+            }`}
+          >
+            Add Patient
+          </Link>
+        </div>
+        <ModeToggle />
+      </div>
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Patients</h1>

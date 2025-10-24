@@ -30,8 +30,11 @@ export function PatientDetailSheet({
             Patient ID: {patient.patient_id}
           </SheetDescription>
         </SheetHeader>
-        <div className="mt-6">
-          <PatientDetail patientId={patient.patient_id} />
+        <div className="mt-4">
+          <PatientDetail
+            patientId={patient.patient_id}
+            onClose={() => onOpenChange(false)}
+          />
         </div>
       </SheetContent>
     </Sheet>

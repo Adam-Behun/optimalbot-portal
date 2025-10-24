@@ -1,27 +1,33 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { getPatient } from '../api';
 import { Patient, TranscriptMessage } from '../types';
 import { Button } from './ui/button';
+import { ModeToggle } from "@/components/mode-toggle";
 
 interface PatientDetailProps {
   patientId?: string;
   hideBackButton?: boolean;
+  onClose?: () => void;
 }
 
-const PatientDetail: React.FC<PatientDetailProps> = ({ 
-  patientId: propPatientId, 
-  hideBackButton = false 
+const PatientDetail: React.FC<PatientDetailProps> = ({
+  patientId: propPatientId,
+  hideBackButton = false,
+  onClose
 }) => {
   const params = useParams();
   const routePatientId = params.patientId;
   const patientId = propPatientId || routePatientId;
   const navigate = useNavigate();
-  
+  const location = useLocation();
+
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
+
+  const isActive = (path: string) => location.pathname === path;
 
   useEffect(() => {
     if (patientId) {
@@ -73,13 +79,43 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
     );
   }
 
-  return (
-    <div className="space-y-6">
+  // For standalone pages, wrap in same container as PatientList
+  const content = (
+    <div className="space-y-4">
+      {/* Navigation - only show on standalone page (not in sheet) */}
+      {!hideBackButton && !onClose && (
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-6">
+            <Link
+              to="/"
+              className={`px-4 py-2 inline-block transition-all border-b-2 ${
+                isActive('/')
+                  ? 'text-primary border-primary font-semibold'
+                  : 'text-muted-foreground border-transparent hover:text-foreground'
+              }`}
+            >
+              Patients
+            </Link>
+            <Link
+              to="/add-patient"
+              className={`px-4 py-2 inline-block transition-all border-b-2 ${
+                isActive('/add-patient')
+                  ? 'text-primary border-primary font-semibold'
+                  : 'text-muted-foreground border-transparent hover:text-foreground'
+              }`}
+            >
+              Add Patient
+            </Link>
+          </div>
+          <ModeToggle />
+        </div>
+      )}
+
       {/* Header with Back Button */}
       {!hideBackButton && (
         <div className="flex items-center gap-4">
           <Button
-            onClick={() => navigate('/')}
+            onClick={() => onClose ? onClose() : navigate('/')}
             variant="outline"
             size="sm"
           >
@@ -90,12 +126,12 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
       )}
 
       {/* Patient Information Card */}
-      <div className="bg-card rounded-lg border p-6 space-y-4">
-        <h3 className="text-lg font-semibold text-primary mb-4">
+      <div className="bg-card rounded-lg border p-4 space-y-3">
+        <h3 className="text-lg font-semibold text-primary mb-3">
           Patient Information
         </h3>
-        
-        <div className="space-y-3">
+
+        <div className="space-y-0">
           <DetailRow label="Patient Name" value={patient.patient_name} />
           <DetailRow label="Date of Birth" value={patient.date_of_birth} />
           <DetailRow label="Facility" value={patient.facility_name} />
@@ -105,19 +141,19 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
           <DetailRow label="CPT Code" value={patient.cpt_code} />
           <DetailRow label="Provider NPI" value={patient.provider_npi} />
           <DetailRow label="Provider Name" value={patient.provider_name} />
-          <DetailRow 
-            label="Appointment Time" 
-            value={new Date(patient.appointment_time).toLocaleString()} 
+          <DetailRow
+            label="Appointment Time"
+            value={new Date(patient.appointment_time).toLocaleString()}
           />
           <DetailRow label="Prior Auth Status" value={patient.prior_auth_status} />
-          <DetailRow 
-            label="Call Status" 
+          <DetailRow
+            label="Call Status"
             value={
               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                patient.call_status === 'Completed' 
-                  ? 'bg-green-100 text-green-800' 
-                  : patient.call_status === 'In Progress' 
-                    ? 'bg-yellow-100 text-yellow-800' 
+                patient.call_status === 'Completed'
+                  ? 'bg-green-100 text-green-800'
+                  : patient.call_status === 'In Progress'
+                    ? 'bg-yellow-100 text-yellow-800'
                     : 'bg-gray-100 text-gray-800'
               }`}>
                 {patient.call_status}
@@ -132,22 +168,22 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
 
       {/* Call Transcript Section */}
       {transcript.length > 0 && (
-        <div className="bg-card rounded-lg border p-6">
-          <h3 className="text-lg font-semibold text-primary mb-4">
+        <div className="bg-card rounded-lg border p-4">
+          <h3 className="text-lg font-semibold text-primary mb-3">
             Call Transcript
           </h3>
-          
-          <div className="space-y-4 max-h-[600px] overflow-y-auto">
+
+          <div className="space-y-2 max-h-[600px] overflow-y-auto">
             {transcript.map((message, index) => (
               <div
                 key={index}
-                className={`p-4 rounded-lg border-l-4 ${
+                className={`p-2.5 rounded-lg border-l-4 ${
                   message.role === 'assistant'
                     ? 'bg-blue-50 border-blue-500'
                     : 'bg-gray-50 border-gray-500'
                 }`}
               >
-                <div className="font-semibold text-sm mb-2">
+                <div className="font-semibold text-sm mb-1.5">
                   {message.role === 'assistant' ? 'AI Agent' : 'Insurance Rep'}
                 </div>
                 <div className="text-sm text-muted-foreground">
@@ -160,10 +196,21 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
       )}
 
       {transcript.length === 0 && patient.call_status === 'Completed' && (
-        <div className="bg-card rounded-lg border p-6 text-center">
+        <div className="bg-card rounded-lg border p-4 text-center">
           <p className="text-muted-foreground">No transcript available for this call.</p>
         </div>
       )}
+    </div>
+  );
+
+  // In sheet: return content directly. Standalone page: wrap in container
+  if (onClose) {
+    return content;
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto py-8 px-4 space-y-6">
+      {content}
     </div>
   );
 };
@@ -175,7 +222,7 @@ interface DetailRowProps {
 
 function DetailRow({ label, value }: DetailRowProps) {
   return (
-    <div className="flex py-3 border-b last:border-b-0">
+    <div className="flex py-1.5 border-b last:border-b-0">
       <div className="font-semibold text-muted-foreground w-48">
         {label}:
       </div>

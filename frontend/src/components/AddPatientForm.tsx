@@ -1,74 +1,30 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { addPatient, addPatientsBulk } from '../api';
-import { AddPatientFormData } from '../types';
-import Papa from 'papaparse';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { useForm } from '@tanstack/react-form';
+import { addPatient } from '../api';
+import { Button } from '@/components/ui/button';
+import { ButtonGroup } from '@/components/ui/button-group';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ModeToggle } from "@/components/mode-toggle";
+import { toast } from "sonner";
+import { Download, Upload, ChevronDownIcon } from "lucide-react";
+import { useRef, useState } from 'react';
 
-const AddPatientForm: React.FC = () => {
+const AddPatientForm = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState<AddPatientFormData>({
-    patient_name: '',
-    date_of_birth: '',
-    insurance_member_id: '',
-    insurance_company_name: '',
-    insurance_phone: '',
-    facility_name: '',
-    cpt_code: '',
-    provider_npi: '',
-    provider_name: '',
-    appointment_time: ''
-  });
+  const location = useLocation();
+  const isActive = (path: string) => location.pathname === path;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dobOpen, setDobOpen] = useState(false);
+  const [appointmentDateOpen, setAppointmentDateOpen] = useState(false);
 
-  const [csvPatients, setCsvPatients] = useState<AddPatientFormData[]>([]);
-  const [csvErrors, setCsvErrors] = useState<string[]>([]);
-  const [uploadingBulk, setUploadingBulk] = useState(false);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await addPatient(formData);
-      alert(`Patient ${response.patient_name} added successfully!`);
-      
-      setFormData({
-        patient_name: '',
-        date_of_birth: '',
-        insurance_member_id: '',
-        insurance_company_name: '',
-        insurance_phone: '',
-        facility_name: '',
-        cpt_code: '',
-        provider_npi: '',
-        provider_name: '',
-        appointment_time: ''
-      });
-      
-      navigate('/');
-    } catch (err) {
-      console.error('Error adding patient:', err);
-      setError('Failed to add patient. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDownloadExample = () => {
+  const handleDownloadSample = () => {
     const exampleCSV = `patient_name,date_of_birth,insurance_member_id,insurance_company_name,insurance_phone,facility_name,cpt_code,provider_npi,provider_name,appointment_time
 John Doe,1990-05-15,ABC123456789,Blue Cross Blue Shield,+11234567890,City Medical Center,99213,1234567890,Dr. Jane Smith,2025-10-15T10:00
 Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0987654321,Dr. John Johnson,2025-10-16T14:30`;
-    
+
     const blob = new Blob([exampleCSV], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -78,459 +34,482 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
     window.URL.revokeObjectURL(url);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
 
-    setCsvErrors([]);
-    setCsvPatients([]);
-
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: false,
-      complete: (results) => {
-        const errors: string[] = [];
-        const patients: AddPatientFormData[] = [];
-
-        const requiredColumns = [
-          'patient_name',
-          'date_of_birth',
-          'insurance_member_id',
-          'insurance_company_name',
-          'insurance_phone',
-          'facility_name',
-          'cpt_code',
-          'provider_npi',
-          'provider_name',
-          'appointment_time'
-        ];
-
-        // Check for missing columns
-        const headers = results.meta.fields || [];
-        const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-        
-        if (missingColumns.length > 0) {
-          errors.push(`Missing required columns: ${missingColumns.join(', ')}`);
-          setCsvErrors(errors);
-          return;
-        }
-
-        // Validate each row
-        results.data.forEach((row: any, idx: number) => {
-          const missingFields = requiredColumns.filter(col => !row[col] || row[col].trim() === '');
-          
-          if (missingFields.length > 0) {
-            errors.push(`Row ${idx + 1}: Missing ${missingFields.join(', ')}`);
-          } else {
-            // Validate phone format
-            const phonePattern = /^\+\d{10,15}$/;
-            if (!phonePattern.test(row.insurance_phone)) {
-              errors.push(`Row ${idx + 1}: Invalid phone format (must be +1234567890)`);
-            } else {
-              patients.push({
-                patient_name: row.patient_name.trim(),
-                date_of_birth: row.date_of_birth.trim(),
-                insurance_member_id: row.insurance_member_id.trim(),
-                insurance_company_name: row.insurance_company_name.trim(),
-                insurance_phone: row.insurance_phone.trim(),
-                facility_name: row.facility_name.trim(),
-                cpt_code: row.cpt_code.trim(),
-                provider_npi: row.provider_npi.trim(),
-                provider_name: row.provider_name.trim(),
-                appointment_time: row.appointment_time.trim()
-              });
-            }
-          }
-        });
-
-        setCsvErrors(errors);
-        setCsvPatients(patients);
-      },
-      error: (error) => {
-        setCsvErrors([`Failed to parse CSV: ${error.message}`]);
+  const form = useForm({
+    defaultValues: {
+      patient_name: '',
+      date_of_birth: '',
+      insurance_member_id: '',
+      insurance_company_name: '',
+      insurance_phone: '',
+      facility_name: '',
+      cpt_code: '',
+      provider_npi: '',
+      provider_name: '',
+      appointment_time: '',
+    },
+    onSubmit: async ({ value }) => {
+      try {
+        const response = await addPatient(value);
+        toast.success(`Patient ${response.patient_name} added successfully!`);
+        navigate('/');
+      } catch (err) {
+        console.error('Error adding patient:', err);
+        toast.error('Failed to add patient. Please try again.');
       }
-    });
-
-    e.target.value = '';
-  };
-
-  const handleBulkUpload = async () => {
-    if (csvPatients.length === 0) return;
-
-    setUploadingBulk(true);
-    setError(null);
-
-    try {
-      const response = await addPatientsBulk(csvPatients);
-      
-      if (response.failed_count > 0) {
-        const errorMsg = `Added ${response.success_count} patients. ${response.failed_count} failed.`;
-        alert(errorMsg);
-      } else {
-        alert(`Successfully added ${response.success_count} patients!`);
-      }
-      
-      navigate('/');
-    } catch (err) {
-      console.error('Error uploading patients:', err);
-      setError('Failed to upload patients. Please try again.');
-    } finally {
-      setUploadingBulk(false);
-    }
-  };
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '8px 12px',
-    border: '1px solid #dee2e6',
-    borderRadius: '4px',
-    fontSize: '14px',
-    boxSizing: 'border-box'
-  };
-
-  const labelStyle: React.CSSProperties = {
-    display: 'block',
-    marginBottom: '6px',
-    fontWeight: 500,
-    fontSize: '14px',
-    color: '#333'
-  };
-
-  const fieldStyle: React.CSSProperties = {
-    marginBottom: '16px'
-  };
+    },
+  });
 
   return (
-    <div style={{ padding: '20px', maxWidth: '900px', margin: '0 auto' }}>
-      <h2 style={{ marginBottom: '24px' }}>Add New Patient</h2>
-
-      {error && (
-        <div style={{
-          padding: '12px',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
-          borderRadius: '4px',
-          marginBottom: '20px'
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* CSV Upload Section */}
-      <div style={{
-        backgroundColor: 'white',
-        padding: '24px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        marginBottom: '24px'
-      }}>
-        <h3 style={{ marginTop: 0, marginBottom: '16px' }}>Bulk Upload (CSV)</h3>
-        
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-          <label style={{
-            padding: '10px 24px',
-            backgroundColor: '#667eea',
-            color: 'white',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px',
-            fontWeight: 500
-          }}>
-            Upload CSV
-            <input
-              type="file"
-              accept=".csv"
-              onChange={handleFileUpload}
-              style={{ display: 'none' }}
-            />
-          </label>
-          
-          <button
-            type="button"
-            onClick={handleDownloadExample}
-            style={{
-              padding: '10px 24px',
-              backgroundColor: '#f8f9fa',
-              color: '#333',
-              border: '1px solid #dee2e6',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '16px'
-            }}
+    <div className="max-w-5xl mx-auto py-8 px-4 space-y-6">
+      {/* Navigation and Controls */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-6">
+          <Link
+            to="/"
+            className={`px-4 py-2 inline-block transition-all border-b-2 ${
+              isActive('/')
+                ? 'text-primary border-primary font-semibold'
+                : 'text-muted-foreground border-transparent hover:text-foreground'
+            }`}
           >
-            Download Example CSV
-          </button>
+            Patients
+          </Link>
+          <Link
+            to="/add-patient"
+            className={`px-4 py-2 inline-block transition-all border-b-2 ${
+              isActive('/add-patient')
+                ? 'text-primary border-primary font-semibold'
+                : 'text-muted-foreground border-transparent hover:text-foreground'
+            }`}
+          >
+            Add Patient
+          </Link>
         </div>
-
-        {csvErrors.length > 0 && (
-          <div style={{
-            padding: '12px',
-            backgroundColor: '#f8d7da',
-            color: '#721c24',
-            borderRadius: '4px',
-            marginBottom: '16px'
-          }}>
-            <strong>Validation Errors:</strong>
-            <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
-              {csvErrors.map((err, idx) => (
-                <li key={idx}>{err}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {csvPatients.length > 0 && (
-          <>
-            <div style={{
-              padding: '12px',
-              backgroundColor: '#d4edda',
-              color: '#155724',
-              borderRadius: '4px',
-              marginBottom: '16px'
-            }}>
-              <strong>✓ {csvPatients.length} patients ready to upload</strong>
-            </div>
-
-            <div style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '16px' }}>
-              <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
-                <thead style={{ position: 'sticky', top: 0, backgroundColor: '#f8f9fa' }}>
-                  <tr>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>Name</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>DOB</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>Insurance</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>Phone</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>Facility</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {csvPatients.map((patient, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ padding: '8px' }}>{patient.patient_name}</td>
-                      <td style={{ padding: '8px' }}>{patient.date_of_birth}</td>
-                      <td style={{ padding: '8px' }}>{patient.insurance_company_name}</td>
-                      <td style={{ padding: '8px' }}>{patient.insurance_phone}</td>
-                      <td style={{ padding: '8px' }}>{patient.facility_name}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <button
-              onClick={handleBulkUpload}
-              disabled={uploadingBulk}
-              style={{
-                padding: '10px 24px',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: uploadingBulk ? 'not-allowed' : 'pointer',
-                fontSize: '16px',
-                fontWeight: 500,
-                opacity: uploadingBulk ? 0.6 : 1
-              }}
-            >
-              {uploadingBulk ? 'Adding Patients...' : `Add ${csvPatients.length} Patients`}
-            </button>
-          </>
-        )}
+        <ModeToggle />
       </div>
 
-      {/* Single Patient Form */}
-      <div style={{
-        backgroundColor: 'white',
-        padding: '24px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-      }}>
-        <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Or Add Single Patient</h3>
-        
-        <form onSubmit={handleSubmit}>
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Patient Name <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="patient_name"
-              value={formData.patient_name}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="John Doe"
-            />
-          </div>
+      {/* CSV Upload Buttons */}
+      <div className="flex justify-center">
+        <ButtonGroup>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={handleDownloadSample}
+            className="w-60"
+          >
+            <Download className="mr-2 h-5 w-5" />
+            Download Sample .csv
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={handleUploadClick}
+            className="w-60"
+          >
+            <Upload className="mr-2 h-5 w-5" />
+            Upload .csv File
+          </Button>
+        </ButtonGroup>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv"
+          className="hidden"
+        />
+      </div>
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Date of Birth <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="date"
-              name="date_of_birth"
-              value={formData.date_of_birth}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-            />
-          </div>
+      {/* Form */}
+      <div className="bg-card rounded-lg border">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            form.handleSubmit();
+          }}
+          className="p-4 space-y-0"
+        >
+          <form.Field
+            name="patient_name"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Patient name is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Patient Name
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Insurance Member ID <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="insurance_member_id"
-              value={formData.insurance_member_id}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="ABC123456789"
-            />
-          </div>
+          <form.Field
+            name="date_of_birth"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Date of birth is required' : undefined,
+            }}
+            children={(field) => {
+              const dateValue = field.state.value ? new Date(field.state.value) : undefined;
+              return (
+                <div className="flex items-center py-1.5 border-b">
+                  <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                    Date of Birth
+                  </Label>
+                  <div className="flex-1 flex gap-2">
+                    <Popover open={dobOpen} onOpenChange={setDobOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="justify-between font-normal border-0 h-8 flex-1"
+                        >
+                          {dateValue ? dateValue.toLocaleDateString() : "Select date"}
+                          <ChevronDownIcon className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto overflow-hidden p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={dateValue}
+                          captionLayout="dropdown"
+                          onSelect={(date) => {
+                            if (date) {
+                              field.handleChange(date.toISOString().split('T')[0]);
+                            }
+                            setDobOpen(false);
+                          }}
+                          fromYear={1900}
+                          toYear={new Date().getFullYear()}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1 ml-48">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              );
+            }}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Insurance Company <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="insurance_company_name"
-              value={formData.insurance_company_name}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="Blue Cross Blue Shield"
-            />
-          </div>
+          <form.Field
+            name="facility_name"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Facility name is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Facility
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Insurance Phone <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="tel"
-              name="insurance_phone"
-              value={formData.insurance_phone}
-              onChange={handleChange}
-              required
-              pattern="\+[0-9]{10,15}"
-              style={inputStyle}
-              placeholder="+11234567890"
-            />
-          </div>
+          <form.Field
+            name="insurance_company_name"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Insurance company is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Insurance Company
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Facility Name <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="facility_name"
-              value={formData.facility_name}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="City Medical Center"
-            />
-          </div>
+          <form.Field
+            name="insurance_member_id"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Member ID is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Insurance Member ID
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              CPT Code <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="cpt_code"
-              value={formData.cpt_code}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="99213"
-            />
-          </div>
+          <form.Field
+            name="insurance_phone"
+            validators={{
+              onChange: ({ value }) => {
+                if (!value) return 'Insurance phone is required';
+                if (!/^\+\d{10,15}$/.test(value)) return 'Phone must be +1234567890 format';
+                return undefined;
+              },
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Insurance Phone
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    placeholder="+1234567890"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Provider NPI <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="provider_npi"
-              value={formData.provider_npi}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="1234567890"
-            />
-          </div>
+          <form.Field
+            name="cpt_code"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'CPT code is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  CPT Code
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Provider Name <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="provider_name"
-              value={formData.provider_name}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-              placeholder="Dr. Jane Smith"
-            />
-          </div>
+          <form.Field
+            name="provider_npi"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Provider NPI is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Provider NPI
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={fieldStyle}>
-            <label style={labelStyle}>
-              Appointment Time <span style={{ color: 'red' }}>*</span>
-            </label>
-            <input
-              type="datetime-local"
-              name="appointment_time"
-              value={formData.appointment_time}
-              onChange={handleChange}
-              required
-              style={inputStyle}
-            />
-          </div>
+          <form.Field
+            name="provider_name"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Provider name is required' : undefined,
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Provider Name
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: '10px 24px',
-                backgroundColor: '#667eea',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                fontSize: '16px',
-                fontWeight: 500,
-                opacity: loading ? 0.6 : 1
-              }}
-            >
-              {loading ? 'Adding...' : 'Add Patient'}
-            </button>
-            
-            <button
+          <form.Field
+            name="appointment_time"
+            validators={{
+              onChange: ({ value }) =>
+                !value ? 'Appointment time is required' : undefined,
+            }}
+            children={(field) => {
+              const dateTimeValue = field.state.value ? new Date(field.state.value) : undefined;
+              const dateOnly = dateTimeValue ? dateTimeValue.toISOString().split('T')[0] : '';
+              const timeOnly = dateTimeValue ? dateTimeValue.toTimeString().split(' ')[0].substring(0, 5) : '';
+
+              return (
+                <div className="flex items-center py-1.5 border-b last:border-b-0">
+                  <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                    Appointment Time
+                  </Label>
+                  <div className="flex-1 flex gap-2">
+                    <Popover open={appointmentDateOpen} onOpenChange={setAppointmentDateOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="justify-between font-normal border-0 h-8 w-40"
+                        >
+                          {dateTimeValue ? dateTimeValue.toLocaleDateString() : "Select date"}
+                          <ChevronDownIcon className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto overflow-hidden p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={dateTimeValue}
+                          captionLayout="dropdown"
+                          onSelect={(date) => {
+                            if (date) {
+                              const newDateTime = new Date(date);
+                              if (timeOnly) {
+                                const [hours, minutes] = timeOnly.split(':');
+                                newDateTime.setHours(parseInt(hours), parseInt(minutes));
+                              }
+                              field.handleChange(newDateTime.toISOString().slice(0, 16));
+                            }
+                            setAppointmentDateOpen(false);
+                          }}
+                          fromYear={new Date().getFullYear()}
+                          toYear={new Date().getFullYear() + 5}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <Input
+                      type="time"
+                      value={timeOnly}
+                      onChange={(e) => {
+                        const time = e.target.value;
+                        if (dateOnly) {
+                          const newDateTime = new Date(dateOnly);
+                          const [hours, minutes] = time.split(':');
+                          newDateTime.setHours(parseInt(hours), parseInt(minutes));
+                          field.handleChange(newDateTime.toISOString().slice(0, 16));
+                        }
+                      }}
+                      className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 w-32 bg-background appearance-none [&::-webkit-calendar-picker-indicator]:hidden"
+                    />
+                  </div>
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1 ml-48">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              );
+            }}
+          />
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button
               type="button"
-              onClick={() => navigate('/')}
-              style={{
-                padding: '10px 24px',
-                backgroundColor: '#f8f9fa',
-                color: '#333',
-                border: '1px solid #dee2e6',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '16px'
-              }}
+              variant="outline"
+              onClick={() => form.reset()}
             >
-              Cancel
-            </button>
+              Reset
+            </Button>
+            <Button type="submit">
+              Add Patient
+            </Button>
           </div>
         </form>
       </div>

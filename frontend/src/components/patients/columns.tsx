@@ -102,8 +102,9 @@ export const createColumns = (config: ColumnsConfig): ColumnDef<Patient>[] => [
   },
   {
     id: "actions",
+    header: "Actions",
     cell: ({ row }) => (
-      <PatientActionsCell 
+      <PatientActionsCell
         patient={row.original}
         onActionComplete={config.onActionComplete}
       />
