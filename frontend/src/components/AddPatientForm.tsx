@@ -1,24 +1,21 @@
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from '@tanstack/react-form';
-import { addPatient } from '../api';
+import { addPatient, addPatientsBulk } from '../api';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ModeToggle } from "@/components/mode-toggle";
 import { toast } from "sonner";
-import { Download, Upload, ChevronDownIcon } from "lucide-react";
-import { useRef, useState } from 'react';
+import { Download, Upload } from "lucide-react";
+import { useRef } from 'react';
+import Papa from 'papaparse';
 
 const AddPatientForm = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [dobOpen, setDobOpen] = useState(false);
-  const [appointmentDateOpen, setAppointmentDateOpen] = useState(false);
 
   const handleDownloadSample = () => {
     const exampleCSV = `patient_name,date_of_birth,insurance_member_id,insurance_company_name,insurance_phone,facility_name,cpt_code,provider_npi,provider_name,appointment_time
@@ -36,6 +33,55 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        try {
+          const patients = results.data;
+
+          if (patients.length === 0) {
+            toast.error('CSV file is empty');
+            return;
+          }
+
+          toast.info(`Processing ${patients.length} patients...`);
+
+          const response = await addPatientsBulk(patients);
+
+          if (response.success_count > 0) {
+            toast.success(`Successfully added ${response.success_count} patient(s)`);
+          }
+
+          if (response.failed_count > 0) {
+            toast.error(`${response.failed_count} patient(s) failed to add`);
+            if (response.errors) {
+              response.errors.forEach((error: any) => {
+                toast.error(`Row ${error.row} (${error.patient_name}): ${error.error}`);
+              });
+            }
+          }
+
+          // Reset file input
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+        } catch (error) {
+          console.error('Error uploading CSV:', error);
+          toast.error('Failed to upload CSV file');
+        }
+      },
+      error: (error) => {
+        console.error('Error parsing CSV:', error);
+        toast.error('Failed to parse CSV file');
+      }
+    });
   };
 
   const form = useForm({
@@ -119,6 +165,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
           type="file"
           accept=".csv"
           className="hidden"
+          onChange={handleFileChange}
         />
       </div>
 
@@ -167,49 +214,29 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
               onChange: ({ value }) =>
                 !value ? 'Date of birth is required' : undefined,
             }}
-            children={(field) => {
-              const dateValue = field.state.value ? new Date(field.state.value) : undefined;
-              return (
-                <div className="flex items-center py-1.5 border-b">
-                  <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                    Date of Birth
-                  </Label>
-                  <div className="flex-1 flex gap-2">
-                    <Popover open={dobOpen} onOpenChange={setDobOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="justify-between font-normal border-0 h-8 flex-1"
-                        >
-                          {dateValue ? dateValue.toLocaleDateString() : "Select date"}
-                          <ChevronDownIcon className="h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto overflow-hidden p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={dateValue}
-                          captionLayout="dropdown"
-                          onSelect={(date) => {
-                            if (date) {
-                              field.handleChange(date.toISOString().split('T')[0]);
-                            }
-                            setDobOpen(false);
-                          }}
-                          fromYear={1900}
-                          toYear={new Date().getFullYear()}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Date of Birth
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    type="date"
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1 ml-48">
+                    <p className="text-sm text-destructive mt-1">
                       {field.state.meta.errors.join(', ')}
                     </p>
                   )}
                 </div>
-              );
-            }}
+              </div>
+            )}
           />
 
           <form.Field
@@ -432,71 +459,29 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
               onChange: ({ value }) =>
                 !value ? 'Appointment time is required' : undefined,
             }}
-            children={(field) => {
-              const dateTimeValue = field.state.value ? new Date(field.state.value) : undefined;
-              const dateOnly = dateTimeValue ? dateTimeValue.toISOString().split('T')[0] : '';
-              const timeOnly = dateTimeValue ? dateTimeValue.toTimeString().split(' ')[0].substring(0, 5) : '';
-
-              return (
-                <div className="flex items-center py-1.5 border-b last:border-b-0">
-                  <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                    Appointment Time
-                  </Label>
-                  <div className="flex-1 flex gap-2">
-                    <Popover open={appointmentDateOpen} onOpenChange={setAppointmentDateOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="justify-between font-normal border-0 h-8 w-40"
-                        >
-                          {dateTimeValue ? dateTimeValue.toLocaleDateString() : "Select date"}
-                          <ChevronDownIcon className="h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto overflow-hidden p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={dateTimeValue}
-                          captionLayout="dropdown"
-                          onSelect={(date) => {
-                            if (date) {
-                              const newDateTime = new Date(date);
-                              if (timeOnly) {
-                                const [hours, minutes] = timeOnly.split(':');
-                                newDateTime.setHours(parseInt(hours), parseInt(minutes));
-                              }
-                              field.handleChange(newDateTime.toISOString().slice(0, 16));
-                            }
-                            setAppointmentDateOpen(false);
-                          }}
-                          fromYear={new Date().getFullYear()}
-                          toYear={new Date().getFullYear() + 5}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    <Input
-                      type="time"
-                      value={timeOnly}
-                      onChange={(e) => {
-                        const time = e.target.value;
-                        if (dateOnly) {
-                          const newDateTime = new Date(dateOnly);
-                          const [hours, minutes] = time.split(':');
-                          newDateTime.setHours(parseInt(hours), parseInt(minutes));
-                          field.handleChange(newDateTime.toISOString().slice(0, 16));
-                        }
-                      }}
-                      className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 w-32 bg-background appearance-none [&::-webkit-calendar-picker-indicator]:hidden"
-                    />
-                  </div>
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b last:border-b-0">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Appointment Time
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    type="datetime-local"
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1 ml-48">
+                    <p className="text-sm text-destructive mt-1">
                       {field.state.meta.errors.join(', ')}
                     </p>
                   )}
                 </div>
-              );
-            }}
+              </div>
+            )}
           />
 
           <div className="flex justify-end gap-2 pt-4">

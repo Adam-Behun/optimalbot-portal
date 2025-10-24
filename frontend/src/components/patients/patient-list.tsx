@@ -9,6 +9,16 @@ import { Button } from '@/components/ui/button';
 import { Phone, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from "sonner";
 import { ModeToggle } from "@/components/mode-toggle";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function PatientList() {
   const location = useLocation();
@@ -17,6 +27,7 @@ export default function PatientList() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPatients, setSelectedPatients] = useState<Patient[]>([]);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -115,19 +126,17 @@ export default function PatientList() {
     toast.success(`Calls started: ${successCount} success, ${failCount} failed`);  // ✅ Changed
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedPatients.length === 0) {
-      toast.warning("No patients selected");  // ✅ Changed
+      toast.warning("No patients selected");
       return;
     }
+    setShowBulkDeleteDialog(true);
+  };
 
-    const confirmed = window.confirm(
-      `Delete ${selectedPatients.length} patient(s)? This cannot be undone.`
-    );
-    
-    if (!confirmed) return;
-
+  const handleBulkDeleteConfirm = async () => {
     setBulkActionLoading(true);
+    setShowBulkDeleteDialog(false);
     let successCount = 0;
     let failCount = 0;
 
@@ -254,6 +263,28 @@ export default function PatientList() {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
       />
+
+      <AlertDialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {selectedPatients.length} patient(s)?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the selected patient records.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDeleteConfirm}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
