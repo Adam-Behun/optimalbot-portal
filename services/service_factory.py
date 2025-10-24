@@ -2,6 +2,7 @@
 
 from typing import Dict, Any
 from deepgram import LiveOptions
+from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -54,12 +55,33 @@ class ServiceFactory:
     
     @staticmethod
     def create_stt(config: Dict[str, Any]) -> DeepgramSTTService:
-        """Create Deepgram STT service"""
-        return DeepgramSTTService(
-            api_key=config['api_key'],
-            model=config['model'],
-            options=LiveOptions(endpointing=config['endpointing'])
+        """Create Deepgram STT service from YAML configuration"""
+
+        # Log the configuration being loaded
+        logger.info(f"🎤 Creating Deepgram STT service with model: {config.get('model', 'NOT SET')}")
+        logger.info(f"   Endpointing: {config.get('endpointing')}ms")
+        logger.info(f"   Interim results: {config.get('interim_results')}")
+        logger.info(f"   VAD events: {config.get('vad_events')}")
+
+        # Build LiveOptions with ALL configuration from services.yaml
+        live_options = LiveOptions(
+            model=config.get('model', 'nova-2-general'),
+            endpointing=config.get('endpointing', 400),
+            language=config.get('language', 'en-US'),
+            interim_results=config.get('interim_results', False),
+            smart_format=config.get('smart_format', True),
+            punctuate=config.get('punctuate', True),
+            vad_events=config.get('vad_events', False),
         )
+
+        # Create service
+        service = DeepgramSTTService(
+            api_key=config['api_key'],
+            live_options=live_options
+        )
+
+        logger.info(f"✅ Deepgram STT service created successfully")
+        return service
     
     @staticmethod
     def create_llm(config: Dict[str, Any]) -> OpenAILLMService:
