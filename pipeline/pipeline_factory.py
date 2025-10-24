@@ -12,7 +12,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.transcript_processor import TranscriptProcessor
 
 from services.service_factory import ServiceFactory
-from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper
+from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper, SSMLCodeFormatter
 from core.context import ConversationContext
 from core.state_manager import StateManager
 from backend.functions import PATIENT_TOOLS
@@ -151,6 +151,7 @@ class PipelineFactory:
             components['context_aggregators'].user(),
             components['ivr_navigator'],
             StateTagStripper(),
+            SSMLCodeFormatter(),  # Apply SSML formatting before TTS
             services['tts'],
             components['transcript_processor'].assistant(),
             components['context_aggregators'].assistant(),

@@ -109,10 +109,19 @@ class ServiceFactory:
 
     @staticmethod
     def create_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
-        """Create ElevenLabs TTS service"""
+        """Create ElevenLabs TTS service with SSML support"""
+        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService as ElevenLabsService
+
+        params = ElevenLabsService.InputParams(
+            stability=config.get('stability'),
+            similarity_boost=config.get('similarity_boost'),
+            style=config.get('style', 0.0),
+            enable_ssml_parsing=True  # Enable SSML for code pronunciation control
+        )
+
         return ElevenLabsTTSService(
             api_key=config['api_key'],
             voice_id=config['voice_id'],
             model=config['model'],
-            stability=config['stability']
+            params=params
         )
