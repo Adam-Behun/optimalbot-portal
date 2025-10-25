@@ -32,11 +32,11 @@ class AudioResampler(FrameProcessor):
                 sample_rate=self.target_sample_rate,
                 num_channels=channels
             )
-            
+
             for attr in ['pts', 'transport_destination', 'id']:
                 if hasattr(frame, attr):
                     setattr(new_frame, attr, getattr(frame, attr))
-            
+
             await self.push_frame(new_frame, direction)
         else:
             await self.push_frame(frame, direction)
@@ -74,18 +74,9 @@ class StateTagStripper(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class SSMLCodeFormatter(FrameProcessor):
-    """Formats numeric codes with word-based digits and ellipsis padding for clear TTS pronunciation"""
+class CodeFormatter(FrameProcessor):
+    """Formats hyphenated codes (like M-E-M-1-2-3) for natural TTS pronunciation"""
 
-    # Patterns for codes that need slow pronunciation
-    CODE_PATTERNS = [
-        (r'\bNPI[:\s]+(\d+)', 'NPI'),
-        (r'\bMember ID[:\s]+([A-Z0-9\-\s]+)', 'Member ID'),
-        (r'\bCPT code[:\s]+(\d+)', 'CPT'),
-        (r'\bdate of birth[:\s]+([^,.\n]+)', 'DOB'),
-    ]
-
-    # Digit to word mapping for natural pronunciation
     DIGIT_WORDS = {
         '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
         '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine'
@@ -93,77 +84,54 @@ class SSMLCodeFormatter(FrameProcessor):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.last_codes = {}  # Store last spoken codes for spell-out requests
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TextFrame):
-            text = frame.text
+            formatted_text = self._format_hyphenated_codes(frame.text)
 
-            # Apply formatting to assistant responses only
-            if direction == FrameDirection.DOWNSTREAM:
-                formatted_text = self._apply_formatting(text)
-                if formatted_text != text:
-                    frame = TextFrame(formatted_text)
+            if formatted_text != frame.text:
+                frame = TextFrame(formatted_text)
 
         await self.push_frame(frame, direction)
 
-    def _apply_formatting(self, text: str) -> str:
-        """Apply digit-to-word and ellipsis formatting to codes"""
-        result = text
+    def _format_hyphenated_codes(self, text: str) -> str:
+        """
+        Converts hyphenated codes like 'M-E-M-1-2-3-4-5-6-7-8-9'
+        to speakable format: '... M . E . M . one two three, four five six, seven eight nine'
+        """
+        # Pattern: Find sequences of 4+ characters/digits separated by hyphens
+        # This catches codes like M-E-M-1-2-3-4 but avoids false positives like well-known
+        pattern = r'\b([A-Z0-9](?:-[A-Z0-9]){3,})\b'
 
-        for pattern, code_type in self.CODE_PATTERNS:
-            matches = list(re.finditer(pattern, result, re.IGNORECASE))
+        def replace_code(match):
+            code = match.group(1)
+            parts = code.split('-')
 
-            for match in reversed(matches):  # Reverse to preserve indices
-                code_value = match.group(1).strip()
-                self.last_codes[code_type] = code_value
+            # Separate letters and digits
+            letters = [p for p in parts if p.isalpha()]
+            digits = [p for p in parts if p.isdigit()]
 
-                # Format the code with digits as words and ellipses
-                formatted_code = self._format_code(code_value, code_type)
+            # Format letters as 'A . B . C'
+            letter_part = ' . '.join(letters) if letters else ''
 
-                # Replace the code portion with formatted version
-                result = result[:match.start(1)] + formatted_code + result[match.end(1):]
+            # Format digits in groups of 3 with word conversion
+            digit_groups = []
+            for i in range(0, len(digits), 3):
+                group = digits[i:i+3]
+                group_words = ' '.join([self.DIGIT_WORDS.get(d, d) for d in group])
+                digit_groups.append(group_words)
 
-        return result
+            digit_part = ', '.join(digit_groups) if digit_groups else ''
 
-    def _format_code(self, code: str, code_type: str) -> str:
-        """Format code with digit-to-word conversion and ellipsis padding"""
-        # Extract only alphanumeric characters
-        clean_code = re.sub(r'[^A-Z0-9]', '', code.upper())
-
-        if code_type == 'NPI':
-            # NPI: Group as 3-3-4 with digits as words
-            # Example: 1234567890 → "one two three, four five six, seven eight nine zero"
-            digits = list(clean_code)
-            if len(digits) == 10:
-                group1 = ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits[0:3]])
-                group2 = ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits[3:6]])
-                group3 = ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits[6:10]])
-                return f"{group1}, {group2}, {group3}"
+            # Combine with ellipsis for pause
+            if letter_part and digit_part:
+                return f"... {letter_part} . {digit_part}"
+            elif letter_part:
+                return f"... {letter_part}"
             else:
-                # Fallback: all digits as words with commas
-                return ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits])
+                return f"... {digit_part}"
 
-        elif code_type == 'CPT':
-            # CPT: Individual digits as words
-            # Example: 99214 → "nine, nine, two, one, four"
-            digits = list(clean_code)
-            return ', '.join([self.DIGIT_WORDS.get(d, d) for d in digits])
+        return re.sub(pattern, replace_code, text)
 
-        else:
-            # Member ID and others: Mix of letters and digits with ellipses between each
-            # Example: ABC456 → "... ... ... A ... ... ... B ... ... ... C ... ... ... four, five, six"
-            chars = list(clean_code)
-            result = []
-
-            for char in chars:
-                if char.isdigit():
-                    # Convert digit to word
-                    result.append(self.DIGIT_WORDS.get(char, char))
-                else:
-                    # Letter: add with ellipsis padding
-                    result.append(f"... ... ... {char}")
-
-            return ' '.join(result)

@@ -8,6 +8,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any
 from dataclasses import dataclass
+from loguru import logger
 
 from core.schema_parser import ConversationSchema
 from core.data_formatter import DataFormatter
@@ -91,5 +92,13 @@ class ClientLoader:
             if isinstance(value, dict):
                 config[key] = self._substitute_env_vars(value)
             elif isinstance(value, str) and value.startswith('${') and value.endswith('}'):
-                config[key] = os.getenv(value[2:-1])
+                env_var_name = value[2:-1]
+                env_value = os.getenv(env_var_name)
+
+                if env_value is None:
+                    logger.error(f"❌ Environment variable '{env_var_name}' is not set! Check your .env file.")
+                    raise ValueError(f"Required environment variable '{env_var_name}' is not set")
+
+                logger.debug(f"✓ Loaded {env_var_name}: {env_value[:10]}..." if len(env_value) > 10 else f"✓ Loaded {env_var_name}")
+                config[key] = env_value
         return config

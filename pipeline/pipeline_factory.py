@@ -12,7 +12,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.transcript_processor import TranscriptProcessor
 
 from services.service_factory import ServiceFactory
-from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper, SSMLCodeFormatter
+from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper, CodeFormatter
 from core.context import ConversationContext
 from core.state_manager import StateManager
 from backend.functions import PATIENT_TOOLS
@@ -115,17 +115,27 @@ class PipelineFactory:
             session_data['patient_data']
         )
         
+        # Render IVR classifier prompt from YAML
+        ivr_classifier_prompt = client_config.prompt_renderer.render_prompt(
+            "ivr_classifier", "system", {}
+        )
+
         # Create IVR navigator
         ivr_goal = client_config.prompt_renderer.render_prompt(
             "ivr_navigation", "task", formatted_data
         ) or "Navigate to provider services for eligibility verification"
-        
-        # Configure IVRNavigator with optimized VAD parameters for <1s response
+
+        # Configure IVRNavigator with custom classifier prompt and optimized VAD parameters
         ivr_navigator = IVRNavigator(
             llm=services['classifier_llm'],  # Fast classifier without tools
             ivr_prompt=ivr_goal,
             ivr_vad_params=VADParams(stop_secs=2.0)  # Longer wait for IVR menus
         )
+
+        # Override the classifier prompt with our custom one from YAML
+        if ivr_classifier_prompt:
+            ivr_navigator._classifier_prompt = ivr_classifier_prompt
+            ivr_navigator._ivr_processor._classifier_prompt = ivr_classifier_prompt
         
         return {
             'context': context,
@@ -151,7 +161,7 @@ class PipelineFactory:
             components['context_aggregators'].user(),
             components['ivr_navigator'],
             StateTagStripper(),
-            SSMLCodeFormatter(),  # Apply SSML formatting before TTS
+            CodeFormatter(),  # Format hyphenated codes before TTS
             services['tts'],
             components['transcript_processor'].assistant(),
             components['context_aggregators'].assistant(),

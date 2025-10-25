@@ -1,7 +1,7 @@
 services:
   stt:
     provider: deepgram  # The STT service provider (e.g., deepgram, assemblyai).
-    model: nova-2-medical  # 
+    model: nova-3-medical  # 
     endpointing: 400  # Milliseconds of silence to detect utterance end; lower values speed up final transcripts but risk cutting off speech.
     api_key: ${DEEPGRAM_API_KEY}  # API authentication key.
     language: en-US  # Language code (e.g., en-US); specifies speech recognition language for better accuracy.
@@ -31,11 +31,11 @@ services:
   tts:
     provider: elevenlabs
     model: eleven_turbo_v2_5
-    voice_id: 3dzJXoCYueSQiptQ6euE 
-    stability: 0.0
-    api_key: ${ELEVENLABS_API_KEY} 
-    similarity_boost: 0.8
-    optimize_streaming_latency: 3
+    voice_id: aMSt68OGf4xUZAnLpTU8
+    stability: 0.5
+    api_key: ${ELEVENLABS_API_KEY}
+    similarity_boost: 0.75
+    optimize_streaming_latency: 0
     output_format: pcm_24000
     style: 0.0
 

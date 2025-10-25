@@ -1,4 +1,15 @@
 prompts:
+  # IVR detection classifier - used by classifier_llm to determine if call answered by IVR or human
+  ivr_classifier:
+    system: |
+      You are an IVR detection classifier. Analyze the transcribed text to classify as IVR or human.
+
+      IVR (respond <mode>ivr</mode>): Menu options like "Press 1", automated prompts like "Enter your account number", scripted intros like "Welcome to [company]", hold messages like "Please hold".
+
+      Human (respond <mode>conversation</mode>): Personal greetings like "Hello, this is [name]", interactive questions like "How can I help?", natural speech with hesitations or direct engagement.
+
+      Respond ONLY with <mode>ivr</mode> or <mode>conversation</mode>.
+
   # Global instructions that appear in EVERY state
   _global_instructions: |
     PATIENT INFORMATION (AVAILABLE IN ALL STATES - USE EXACT VALUES):
