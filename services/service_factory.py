@@ -6,6 +6,7 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.services.daily import DailyParams, DailyTransport
@@ -54,34 +55,48 @@ class ServiceFactory:
         )
     
     @staticmethod
-    def create_stt(config: Dict[str, Any]) -> DeepgramSTTService:
-        """Create Deepgram STT service from YAML configuration"""
+    def create_stt(config: Dict[str, Any]):
+        """Create Deepgram STT service from YAML configuration
 
-        # Log the configuration being loaded
-        logger.info(f"🎤 Creating Deepgram STT service with model: {config.get('model', 'NOT SET')}")
-        logger.info(f"   Endpointing: {config.get('endpointing')}ms")
-        logger.info(f"   Interim results: {config.get('interim_results')}")
-        logger.info(f"   VAD events: {config.get('vad_events')}")
+        Supports both traditional Deepgram STT and Deepgram Flux STT.
+        Set use_flux: true in config to enable Flux model.
+        """
+        use_flux = config.get('use_flux', False)
 
-        # Build LiveOptions with ALL configuration from services.yaml
-        live_options = LiveOptions(
-            model=config.get('model', 'nova-2-general'),
-            endpointing=config.get('endpointing', 400),
-            language=config.get('language', 'en-US'),
-            interim_results=config.get('interim_results', False),
-            smart_format=config.get('smart_format', True),
-            punctuate=config.get('punctuate', True),
-            vad_events=config.get('vad_events', False),
-        )
+        if use_flux:
+            logger.info(f"🎤 Creating Deepgram Flux STT service")
 
-        # Create service
-        service = DeepgramSTTService(
-            api_key=config['api_key'],
-            live_options=live_options
-        )
+            # Basic pattern (matches Pipecat example): stt = DeepgramFluxSTTService(api_key=...)
+            service = DeepgramFluxSTTService(api_key=config['api_key'])
 
-        logger.info(f"✅ Deepgram STT service created successfully")
-        return service
+            logger.info(f"✅ Deepgram Flux STT service created successfully")
+            return service
+        else:
+            # Traditional Deepgram STT
+            logger.info(f"🎤 Creating Deepgram STT service with model: {config.get('model', 'NOT SET')}")
+            logger.info(f"   Endpointing: {config.get('endpointing')}ms")
+            logger.info(f"   Interim results: {config.get('interim_results')}")
+            logger.info(f"   VAD events: {config.get('vad_events')}")
+
+            # Build LiveOptions with ALL configuration from services.yaml
+            live_options = LiveOptions(
+                model=config.get('model', 'nova-2-general'),
+                endpointing=config.get('endpointing', 400),
+                language=config.get('language', 'en-US'),
+                interim_results=config.get('interim_results', False),
+                smart_format=config.get('smart_format', True),
+                punctuate=config.get('punctuate', True),
+                vad_events=config.get('vad_events', False),
+            )
+
+            # Create service
+            service = DeepgramSTTService(
+                api_key=config['api_key'],
+                live_options=live_options
+            )
+
+            logger.info(f"✅ Deepgram STT service created successfully")
+            return service
     
     @staticmethod
     def create_llm(config: Dict[str, Any]) -> OpenAILLMService:

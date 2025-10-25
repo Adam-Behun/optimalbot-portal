@@ -1,14 +1,8 @@
 services:
   stt:
-    provider: deepgram  # The STT service provider (e.g., deepgram, assemblyai).
-    model: nova-3-medical  # 
-    endpointing: 400  # Milliseconds of silence to detect utterance end; lower values speed up final transcripts but risk cutting off speech.
-    api_key: ${DEEPGRAM_API_KEY}  # API authentication key.
-    language: en-US  # Language code (e.g., en-US); specifies speech recognition language for better accuracy.
-    detect_language: false  # Whether to auto-detect language; disable for consistent language in specific use cases.
-    interim_results: true  # Whether to send partial transcripts; disable for lower latency on final results in simple flows.
-    smart_format: true  # Automatically formats numbers/dates/times in transcripts; improves readability without much latency hit.
-    vad_events: true  # Enables VAD event callbacks; integrates with external VAD for precise speech detection.
+    provider: deepgram
+    use_flux: true
+    api_key: ${DEEPGRAM_API_KEY}
 
   llm:
     provider: openai  # The LLM provider (e.g., openai, grok).

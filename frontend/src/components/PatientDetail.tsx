@@ -4,6 +4,7 @@ import { getPatient } from '../api';
 import { Patient, TranscriptMessage } from '../types';
 import { Button } from './ui/button';
 import { ModeToggle } from "@/components/mode-toggle";
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 interface PatientDetailProps {
   patientId?: string;
@@ -26,6 +27,7 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
+  const [showIVRDetails, setShowIVRDetails] = useState(false);
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -44,10 +46,21 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
 
       if (data.call_transcript) {
         try {
-          const parsed = JSON.parse(data.call_transcript);
-          setTranscript(parsed);
+          // Handle both object and JSON string formats
+          let parsed;
+          if (typeof data.call_transcript === 'string') {
+            parsed = JSON.parse(data.call_transcript);
+          } else {
+            parsed = data.call_transcript;
+          }
+
+          // Extract messages array from transcript data structure
+          // Expected format: { messages: [...], message_count: N }
+          const messages = parsed.messages || parsed;
+          setTranscript(Array.isArray(messages) ? messages : []);
         } catch (e) {
           console.error('Error parsing transcript:', e);
+          setTranscript([]);
         }
       }
     } catch (err) {
@@ -167,33 +180,99 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
       </div>
 
       {/* Call Transcript Section */}
-      {transcript.length > 0 && (
-        <div className="bg-card rounded-lg border p-4">
-          <h3 className="text-lg font-semibold text-primary mb-3">
-            Call Transcript
-          </h3>
+      {transcript.length > 0 && (() => {
+        // Separate IVR messages from regular conversation
+        const ivrMessages = transcript.filter(m => m.type === 'ivr' || m.type === 'ivr_action');
+        const ivrSummary = transcript.find(m => m.type === 'ivr_summary' && m.content.includes('ompleted') || m.content.includes('ailed'));
+        const conversationMessages = transcript.filter(m => m.type === 'transcript');
 
-          <div className="space-y-2 max-h-[600px] overflow-y-auto">
-            {transcript.map((message, index) => (
-              <div
-                key={index}
-                className={`p-2.5 rounded-lg border-l-4 ${
-                  message.role === 'assistant'
-                    ? 'bg-blue-50 border-blue-500'
-                    : 'bg-gray-50 border-gray-500'
-                }`}
-              >
-                <div className="font-semibold text-sm mb-1.5">
-                  {message.role === 'assistant' ? 'AI Agent' : 'Insurance Rep'}
+        return (
+          <div className="bg-card rounded-lg border p-4">
+            <h3 className="text-lg font-semibold text-primary mb-3">
+              Call Transcript
+            </h3>
+
+            {/* IVR Navigation Summary */}
+            {ivrSummary && (
+              <div className="mb-4 p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-700">
+                      IVR Navigation:
+                    </span>
+                    <span className={`text-sm font-medium ${
+                      ivrSummary.content.includes('ompleted')
+                        ? 'text-green-600'
+                        : 'text-red-600'
+                    }`}>
+                      {ivrSummary.content}
+                    </span>
+                  </div>
+                  {ivrMessages.length > 0 && (
+                    <button
+                      onClick={() => setShowIVRDetails(!showIVRDetails)}
+                      className="flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900"
+                    >
+                      {showIVRDetails ? (
+                        <>
+                          <ChevronDown size={16} />
+                          Hide Details
+                        </>
+                      ) : (
+                        <>
+                          <ChevronRight size={16} />
+                          Show Details
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {message.content}
-                </div>
+
+                {/* IVR Details Dropdown */}
+                {showIVRDetails && ivrMessages.length > 0 && (
+                  <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto">
+                    {ivrMessages.map((message, index) => (
+                      <div
+                        key={index}
+                        className={`p-2 rounded border-l-2 text-sm ${
+                          message.type === 'ivr_action'
+                            ? 'bg-amber-50 border-amber-500 font-medium'
+                            : 'bg-slate-100 border-slate-400'
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
+            )}
+
+            {/* Main Conversation Transcript */}
+            {conversationMessages.length > 0 && (
+              <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                {conversationMessages.map((message, index) => (
+                  <div
+                    key={index}
+                    className={`p-2.5 rounded-lg border-l-4 ${
+                      message.role === 'assistant'
+                        ? 'bg-blue-50 border-blue-500'
+                        : 'bg-gray-50 border-gray-500'
+                    }`}
+                  >
+                    <div className="font-semibold text-sm mb-1.5">
+                      {message.role === 'assistant' ? 'AI Agent' : 'Insurance Rep'}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {message.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {transcript.length === 0 && patient.call_status === 'Completed' && (
         <div className="bg-card rounded-lg border p-4 text-center">

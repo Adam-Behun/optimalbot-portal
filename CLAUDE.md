@@ -81,7 +81,7 @@ This architecture allows adding new use cases by creating new client directories
 - `audio_processors.py` - Custom audio processors (resampling, empty audio dropping, state tag stripping)
 
 **`services/`** - Service instantiation
-- `service_factory.py` - Creates Pipecat service instances (STT, TTS, LLM, Daily transport, VAD) from parsed YAML configs
+- `service_factory.py` - Creates Pipecat service instances (STT, TTS, LLM, Daily transport, VAD) from parsed YAML configs. Supports both traditional Deepgram STT and Deepgram Flux STT
 
 **`handlers/`** - Event handlers for pipeline
 - `ivr.py` - IVR detection and navigation status handlers
@@ -185,6 +185,63 @@ LLM can call `update_prior_auth_status(patient_id, status, reference_number)` du
 ### Transcript Persistence
 
 `transcript.py` handler collects all user/assistant messages during call and saves to MongoDB on call completion with session metadata.
+
+### Deepgram STT: Traditional vs Flux
+
+The system supports both **traditional Deepgram STT** and **Deepgram Flux STT** for speech recognition. Switch between them by setting `use_flux` in `services.yaml`.
+
+**Deepgram Flux (Current Default)**
+- **Model:** `flux-general-en` only (no medical-specific model yet)
+- **Advantages:**
+  - **EagerEndOfTurn**: Detects potential turn ends early, allowing LLM to start processing before speaker finishes (reduces latency by 500-1500ms)
+  - **Better turn detection**: More sophisticated confidence-based EOT detection with tunable thresholds
+  - **Lower overall latency**: Optimized for conversational AI with faster response times
+- **Key Parameters:**
+  - `eager_eot_threshold` (0.5-0.7): Lower = more aggressive interruption detection (faster but more false positives)
+  - `eot_threshold` (0.5-0.8, default 0.7): Confidence required to end turn - lower = faster turn completion
+  - `eot_timeout_ms` (default 5000): Maximum time after speech stops before forcing turn end
+  - `keyterm`: List of domain-specific terms to boost recognition (e.g., healthcare terminology)
+
+**Traditional Deepgram STT**
+- **Model:** Supports specialized models like `nova-3-medical`, `nova-2-general`, etc.
+- **Use when:**
+  - Medical-specific vocabulary is critical and Flux medical model unavailable
+  - Need language detection or multi-language support
+  - Require specific Deepgram features not yet in Flux
+- **Key Parameters:**
+  - `endpointing` (ms): Silence duration to detect utterance end
+  - `interim_results`: Enable partial transcripts
+  - `vad_events`: Enable VAD event callbacks
+  - `smart_format`: Auto-format numbers/dates/times
+
+**Switching Between Models:**
+
+Set `use_flux: true` or `use_flux: false` in `clients/<client_name>/services.yaml`:
+
+```yaml
+# Flux STT (recommended for lower latency)
+stt:
+  use_flux: true
+  model: flux-general-en
+  eager_eot_threshold: 0.55
+  eot_threshold: 0.65
+  eot_timeout_ms: 3500
+  keyterm: ["prior authorization", "CPT code", "NPI"]
+
+# Traditional STT (for medical model)
+stt:
+  use_flux: false
+  model: nova-3-medical
+  endpointing: 400
+  interim_results: true
+  vad_events: true
+```
+
+**Tuning Flux for Your Use Case:**
+
+- **Fast-paced conversations (IVR, menus)**: Lower thresholds (`eager_eot: 0.4-0.5`, `eot: 0.6`)
+- **Natural conversations (verification calls)**: Moderate thresholds (`eager_eot: 0.5-0.6`, `eot: 0.65-0.7`)
+- **Careful listening (collecting complex info)**: Higher thresholds (`eager_eot: 0.6-0.7`, `eot: 0.75+`)
 
 ## Environment Variables Required
 

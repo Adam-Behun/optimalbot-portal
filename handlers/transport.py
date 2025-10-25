@@ -55,10 +55,12 @@ def setup_dialout_handlers(pipeline):
     @pipeline.transport.event_handler("on_dialout_error")
     async def on_dialout_error(transport, data):
         logger.error(f"Dialout error: {data}")
-        
+
         await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
-        
-        
+
+        # Save transcript even on error (may have partial conversation)
+        await save_transcript_to_db(pipeline)
+
         # Terminate pipeline
         if pipeline.task:
             await pipeline.task.cancel()

@@ -85,8 +85,8 @@ export interface BulkAddResponse {
 
 // Transcript message structure
 export interface TranscriptMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
-  type: string;
+  type: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary';
 }
