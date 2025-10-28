@@ -191,9 +191,11 @@ prompts:
         - Facility: {{ facility }}
         - Insurance Company: {{ insurance_company }}
         - Appointment Time: {{ appointment_time }}
-      
-      You have access to the update_prior_auth_status function to record authorization decisions.
-      
+
+      AVAILABLE FUNCTIONS:
+        - update_prior_auth_status: Record authorization decisions
+        - dial_supervisor: Transfer call to human supervisor when requested
+
       {{ _global_instructions }}
     
     task: |
@@ -226,7 +228,14 @@ prompts:
       5. GET REFERENCE NUMBER
         - After recording status, ask: "Could you provide a reference or authorization number for this verification?"
         - When they provide it, call: update_prior_auth_status(patient_id="{{ patient_id }}", status="[same_status]", reference_number="[the_number_they_gave]")
-      
+
+      6. SUPERVISOR TRANSFER (USE SPARINGLY)
+        - ONLY use dial_supervisor if the representative explicitly requests to speak with a human supervisor
+        - Examples: "Can I speak to your manager?", "I need to talk to a real person", "Transfer me to a supervisor"
+        - Before transferring, say: "Let me transfer you to a supervisor now."
+        - Then call: dial_supervisor()
+        - Do NOT offer transfer proactively - only when they request it
+
       CONVERSATION GUIDELINES:
       - YOU called THEM - take initiative to provide information
       - Be natural and conversational, not robotic

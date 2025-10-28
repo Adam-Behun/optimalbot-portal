@@ -1,6 +1,8 @@
 """Daily.co transport event handlers"""
 
+from datetime import datetime
 from loguru import logger
+from pipecat.frames.frames import EndFrame
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
 
@@ -19,7 +21,33 @@ def setup_dialout_handlers(pipeline):
     
     @pipeline.transport.event_handler("on_dialout_answered")
     async def on_dialout_answered(transport, data):
-        logger.info(f"Call answered: {pipeline.phone_number}")
+        # Check if this is a transfer completion or initial call answer
+        if pipeline.transfer_in_progress:
+            logger.info("✅ Supervisor answered - completing transfer")
+
+            # Add transfer event to transcript
+            pipeline.transcripts.append({
+                "role": "system",
+                "content": "Call transferred to supervisor",
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": "transfer"
+            })
+
+            # Update call status
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id,
+                "Call Transferred"
+            )
+
+            # Save transcript before bot exits
+            await save_transcript_to_db(pipeline)
+
+            # Bot leaves call (cold transfer)
+            await pipeline.task.queue_frames([EndFrame()])
+
+        else:
+            # Initial call answered
+            logger.info(f"Call answered: {pipeline.phone_number}")
     
     @pipeline.transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
@@ -56,11 +84,30 @@ def setup_dialout_handlers(pipeline):
     async def on_dialout_error(transport, data):
         logger.error(f"Dialout error: {data}")
 
-        await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+        # Check if this is a transfer error or initial dialout error
+        if pipeline.transfer_in_progress:
+            logger.warning("Transfer to supervisor failed - continuing call")
 
-        # Save transcript even on error (may have partial conversation)
-        await save_transcript_to_db(pipeline)
+            # Reset transfer flag
+            pipeline.transfer_in_progress = False
 
-        # Terminate pipeline
-        if pipeline.task:
-            await pipeline.task.cancel()
+            # Add error event to transcript
+            pipeline.transcripts.append({
+                "role": "system",
+                "content": "Transfer to supervisor failed",
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": "transfer"
+            })
+
+            # Don't terminate - call continues with insurance rep
+
+        else:
+            # Initial dialout failed
+            await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+
+            # Save transcript even on error (may have partial conversation)
+            await save_transcript_to_db(pipeline)
+
+            # Terminate pipeline
+            if pipeline.task:
+                await pipeline.task.cancel()

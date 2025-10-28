@@ -77,6 +77,9 @@ class ConversationPipeline:
         # Transcript tracking
         self.transcripts = []
 
+        # Transfer state
+        self.transfer_in_progress = False
+
     async def run(self, room_url: str, room_token: str, room_name: str):
         logger.info(
             f"Starting pipeline - Client: {self.client_name}, "

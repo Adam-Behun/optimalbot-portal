@@ -26,36 +26,89 @@ def convert_spoken_to_numeric(text: str) -> str:
 
 async def update_prior_auth_status_handler(params: FunctionCallParams):
     """Handler for updating prior authorization status via LLM function call"""
-    
+
     patient_id = params.arguments.get("patient_id")
     status = params.arguments.get("status")
     reference_number = params.arguments.get("reference_number")
-    
+
     # Convert spoken numbers to digits
     if reference_number:
         original = reference_number
         reference_number = convert_spoken_to_numeric(reference_number)
         if original != reference_number:
             logger.info(f"Converted reference number: '{original}' → '{reference_number}'")
-    
+
     logger.info(f"Updating patient {patient_id}: status={status}, ref={reference_number}")
-    
+
     # Update database
     patient_db = get_async_patient_db()
     success = await patient_db.update_prior_auth(patient_id, status, reference_number)
-    
+
     result = {
         "success": success,
         "status": status,
         "reference_number": reference_number
     }
-    
+
     if not success:
         result["error"] = "Database update failed"
         logger.error(f"Failed to update patient {patient_id}")
     else:
         logger.info(f"✅ Successfully updated patient {patient_id}")
-    
+
+    await params.result_callback(result)
+
+
+async def dial_supervisor_handler(params: FunctionCallParams, transport, patient_data, pipeline):
+    """Handler for transferring call to supervisor"""
+
+    supervisor_phone = patient_data.get("supervisor_phone")
+
+    # Validate supervisor phone exists
+    if not supervisor_phone:
+        logger.warning("Transfer requested but no supervisor phone configured")
+        result = {
+            "success": False,
+            "error": "No supervisor phone available"
+        }
+        await params.result_callback(result)
+        return
+
+    # Validate phone format
+    import re
+    if not re.match(r'^\+\d{10,15}$', supervisor_phone):
+        logger.error(f"Invalid supervisor phone format: {supervisor_phone}")
+        result = {
+            "success": False,
+            "error": "Invalid supervisor phone format"
+        }
+        await params.result_callback(result)
+        return
+
+    logger.info(f"Initiating transfer to supervisor: {supervisor_phone}")
+
+    try:
+        # Set transfer flag
+        pipeline.transfer_in_progress = True
+
+        # Execute SIP call transfer
+        transfer_params = {"toEndPoint": supervisor_phone}
+        await transport.sip_call_transfer(transfer_params)
+
+        result = {
+            "success": True,
+            "transferred_to": supervisor_phone
+        }
+        logger.info(f"✅ Transfer initiated to {supervisor_phone}")
+
+    except Exception as e:
+        logger.error(f"Transfer failed: {e}")
+        pipeline.transfer_in_progress = False
+        result = {
+            "success": False,
+            "error": f"Transfer failed: {str(e)}"
+        }
+
     await params.result_callback(result)
 
 
@@ -81,6 +134,13 @@ update_prior_auth_function = FunctionSchema(
     required=["patient_id", "status"]
 )
 
-PATIENT_TOOLS = ToolsSchema(standard_tools=[update_prior_auth_function])
+dial_supervisor_function = FunctionSchema(
+    name="dial_supervisor",
+    description="Transfer the call to a human supervisor when requested by the insurance representative or when escalation is needed",
+    properties={},
+    required=[]
+)
 
-__all__ = ['PATIENT_TOOLS', 'update_prior_auth_status_handler']
+PATIENT_TOOLS = ToolsSchema(standard_tools=[update_prior_auth_function, dial_supervisor_function])
+
+__all__ = ['PATIENT_TOOLS', 'update_prior_auth_status_handler', 'dial_supervisor_handler']

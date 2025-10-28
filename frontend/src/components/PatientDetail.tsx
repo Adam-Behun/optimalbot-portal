@@ -4,7 +4,7 @@ import { getPatient } from '../api';
 import { Patient, TranscriptMessage } from '../types';
 import { Button } from './ui/button';
 import { ModeToggle } from "@/components/mode-toggle";
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, PhoneForwarded } from 'lucide-react';
 
 interface PatientDetailProps {
   patientId?: string;
@@ -151,6 +151,9 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
           <DetailRow label="Insurance Company" value={patient.insurance_company_name} />
           <DetailRow label="Insurance Member ID" value={patient.insurance_member_id} />
           <DetailRow label="Insurance Phone" value={patient.insurance_phone} />
+          {patient.supervisor_phone && (
+            <DetailRow label="Supervisor Phone" value={patient.supervisor_phone} />
+          )}
           <DetailRow label="CPT Code" value={patient.cpt_code} />
           <DetailRow label="Provider NPI" value={patient.provider_npi} />
           <DetailRow label="Provider Name" value={patient.provider_name} />
@@ -165,9 +168,11 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                 patient.call_status === 'Completed'
                   ? 'bg-green-100 text-green-800'
-                  : patient.call_status === 'In Progress'
-                    ? 'bg-yellow-100 text-yellow-800'
-                    : 'bg-gray-100 text-gray-800'
+                  : patient.call_status === 'Call Transferred'
+                    ? 'bg-purple-100 text-purple-800'
+                    : patient.call_status === 'In Progress'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-gray-100 text-gray-800'
               }`}>
                 {patient.call_status}
               </span>
@@ -251,23 +256,46 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
             {/* Main Conversation Transcript */}
             {conversationMessages.length > 0 && (
               <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                {conversationMessages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`p-2.5 rounded-lg border-l-4 ${
-                      message.role === 'assistant'
-                        ? 'bg-blue-50 border-blue-500'
-                        : 'bg-gray-50 border-gray-500'
-                    }`}
-                  >
-                    <div className="font-semibold text-sm mb-1.5">
-                      {message.role === 'assistant' ? 'AI Agent' : 'Insurance Rep'}
+                {conversationMessages.map((message, index) => {
+                  // Handle transfer events
+                  if (message.type === 'transfer') {
+                    return (
+                      <div
+                        key={index}
+                        className="p-3 rounded-lg bg-purple-50 border-l-4 border-purple-500"
+                      >
+                        <div className="flex items-center gap-2">
+                          <PhoneForwarded className="h-4 w-4 text-purple-600" />
+                          <span className="font-semibold text-purple-900">
+                            {message.content}
+                          </span>
+                        </div>
+                        <div className="text-xs text-purple-600 mt-1">
+                          {new Date(message.timestamp).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Handle regular conversation messages
+                  return (
+                    <div
+                      key={index}
+                      className={`p-2.5 rounded-lg border-l-4 ${
+                        message.role === 'assistant'
+                          ? 'bg-blue-50 border-blue-500'
+                          : 'bg-gray-50 border-gray-500'
+                      }`}
+                    >
+                      <div className="font-semibold text-sm mb-1.5">
+                        {message.role === 'assistant' ? 'AI Agent' : 'Insurance Rep'}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {message.content}
+                      </div>
                     </div>
-                    <div className="text-sm text-muted-foreground">
-                      {message.content}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

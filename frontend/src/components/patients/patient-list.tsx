@@ -8,7 +8,7 @@ import { PatientDetailSheet } from './patient-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Phone, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from "sonner";
-import { ModeToggle } from "@/components/mode-toggle";
+import { SettingsMenu } from "@/components/settings-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -201,7 +201,7 @@ export default function PatientList() {
             Add Patient
           </Link>
         </div>
-        <ModeToggle />
+        <SettingsMenu />
       </div>
 
       <div className="flex items-center justify-between">

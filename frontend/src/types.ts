@@ -6,6 +6,7 @@ export interface Patient {
   insurance_member_id: string;
   insurance_company_name: string;
   insurance_phone: string; // Format: +1234567890
+  supervisor_phone?: string; // Format: +1234567890
   facility_name: string;
   cpt_code: string;
   provider_npi: string;
@@ -14,11 +15,11 @@ export interface Patient {
   prior_auth_status: string;
   reference_number?: string;
   [key: string]: any;
-  
+
   // Call-related fields
-  call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Completed - Left VM';
+  call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Completed - Left VM' | 'Call Transferred';
   call_transcript?: string; // JSON string of transcript array
-  
+
   // Timestamps
   created_at?: string;
   updated_at?: string;
@@ -56,13 +57,14 @@ export interface StartCallResponse {
   message: string;
 }
 
-// Unified form data for adding patient(s) - ALL FIELDS REQUIRED
+// Unified form data for adding patient(s)
 export interface AddPatientFormData {
   patient_name: string;
   date_of_birth: string;
   insurance_member_id: string;
   insurance_company_name: string;
   insurance_phone: string; // Format: +1234567890
+  supervisor_phone?: string; // Format: +1234567890 (optional)
   facility_name: string;
   cpt_code: string;
   provider_npi: string;
@@ -88,5 +90,23 @@ export interface TranscriptMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
-  type: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary';
+  type: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary' | 'transfer';
+}
+
+// Authentication types
+export interface SignupRequest {
+  email: string;
+  password: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user_id: string;
+  email: string;
 }

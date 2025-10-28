@@ -5,7 +5,8 @@ import {
   AddPatientFormData,
   AddPatientResponse,
   StartCallResponse,
-  BulkAddResponse
+  BulkAddResponse,
+  AuthResponse
 } from './types';
 
 // Use Vite environment variable (empty string uses proxy in dev, relative URLs in production)
@@ -59,6 +60,23 @@ export const startCall = async (patientId: string, phoneNumber: string): Promise
 // POST /end-call/:sessionId - End a call session
 export const endCall = async (sessionId: string): Promise<void> => {
   await api.post(`/end-call/${sessionId}`);
+};
+
+// POST /auth/signup - Create new user account
+export const signup = async (email: string, password: string): Promise<AuthResponse> => {
+  const response = await api.post<AuthResponse>('/auth/signup', { email, password });
+  return response.data;
+};
+
+// POST /auth/login - Authenticate user
+export const login = async (email: string, password: string): Promise<AuthResponse> => {
+  const response = await api.post<AuthResponse>('/auth/login', { email, password });
+  return response.data;
+};
+
+// POST /auth/logout - Logout user
+export const logout = async (): Promise<void> => {
+  await api.post('/auth/logout');
 };
 
 export default api;

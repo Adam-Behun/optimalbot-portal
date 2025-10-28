@@ -196,6 +196,7 @@ states:
         - appointment_time
       functions:
         - update_prior_auth_status
+        - dial_supervisor
       allowed_transitions: ["closing", "greeting"]
       llm_directed: true
       required_before_closing: true

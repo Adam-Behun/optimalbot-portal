@@ -86,6 +86,7 @@ export const createColumns = (config: ColumnsConfig): ColumnDef<Patient>[] => [
         "In Progress": { variant: "default", label: "In Progress" },
         "Completed": { variant: "outline", label: "Completed" },
         "Completed - Left VM": { variant: "outline", label: "Completed - Left VM" },
+        "Call Transferred": { variant: "outline", label: "Call Transferred" },
       } as const
 
       const config = statusConfig[status] || { 

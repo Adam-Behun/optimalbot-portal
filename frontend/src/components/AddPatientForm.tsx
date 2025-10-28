@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ModeToggle } from "@/components/mode-toggle";
+import { SettingsMenu } from "@/components/settings-menu";
 import { toast } from "sonner";
 import { Download, Upload } from "lucide-react";
 import { useRef } from 'react';
@@ -19,9 +19,9 @@ const AddPatientForm = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDownloadSample = () => {
-    const exampleCSV = `patient_name,date_of_birth,insurance_member_id,insurance_company_name,insurance_phone,facility_name,cpt_code,provider_npi,provider_name,appointment_time
-John Doe,1990-05-15,ABC123456789,Blue Cross Blue Shield,+11234567890,City Medical Center,99213,1234567890,Dr. Jane Smith,2025-10-15T10:00
-Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0987654321,Dr. John Johnson,2025-10-16T14:30`;
+    const exampleCSV = `patient_name,date_of_birth,insurance_member_id,insurance_company_name,insurance_phone,supervisor_phone,facility_name,cpt_code,provider_npi,provider_name,appointment_time
+John Doe,1990-05-15,ABC123456789,Blue Cross Blue Shield,+11234567890,+11234567899,City Medical Center,99213,1234567890,Dr. Jane Smith,2025-10-15T10:00
+Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hospital,99214,0987654321,Dr. John Johnson,2025-10-16T14:30`;
 
     const blob = new Blob([exampleCSV], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -92,6 +92,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
       insurance_member_id: '',
       insurance_company_name: '',
       insurance_phone: '',
+      supervisor_phone: '',
       facility_name: '',
       cpt_code: '',
       provider_npi: '',
@@ -136,7 +137,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
             Add Patient
           </Link>
         </div>
-        <ModeToggle />
+        <SettingsMenu />
       </div>
 
       {/* CSV Upload Buttons */}
@@ -343,6 +344,41 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,Community Hospital,99214,0
               <div className="flex items-center py-1.5 border-b">
                 <Label htmlFor={field.name} className="w-48 text-muted-foreground">
                   Insurance Phone
+                </Label>
+                <div className="flex-1">
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    placeholder="+1234567890"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                  />
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                    <p className="text-sm text-destructive mt-1">
+                      {field.state.meta.errors.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          />
+
+          <form.Field
+            name="supervisor_phone"
+            validators={{
+              onChange: ({ value }) => {
+                if (value && !/^\+\d{10,15}$/.test(value)) {
+                  return 'Phone must be +1234567890 format';
+                }
+                return undefined;
+              },
+            }}
+            children={(field) => (
+              <div className="flex items-center py-1.5 border-b">
+                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                  Supervisor Phone (Optional)
                 </Label>
                 <div className="flex-1">
                   <Input
