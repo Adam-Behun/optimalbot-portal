@@ -300,8 +300,8 @@ async def start_call(
         
         # Convert ObjectId to string if needed
         patient = convert_objectid(patient)
-        
-        logger.info(f"Patient found: {patient.get('name', 'Unnamed')}")
+
+        logger.info(f"Patient found with ID: {call_request.patient_id}")
 
         # Log PHI access for starting call
         await log_phi_access_wrapper(
@@ -880,7 +880,7 @@ async def add_patient(
             resource_id=patient_id
         )
 
-        logger.info(f"User {current_user['email']} added new patient: {patient_data.get('patient_name')} (ID: {patient_id})")
+        logger.info(f"User {current_user['email']} added new patient with ID: {patient_id}")
 
         return {
             "status": "success",
@@ -933,7 +933,7 @@ async def add_patients_bulk(
             if patient_id:
                 success_count += 1
                 created_ids.append(patient_id)
-                logger.info(f"Added patient: {patient_data.get('patient_name')} (ID: {patient_id})")
+                logger.info(f"Added patient with ID: {patient_id}")
             else:
                 failed_count += 1
                 errors.append({
@@ -1069,17 +1069,16 @@ async def health_check():
 
 def validate_environment_variables():
     """
-    Validate required environment variables and their security requirements.
+    Validate required environment variables for BACKEND only.
+    Bot-only variables (OPENAI_API_KEY, DEEPGRAM_API_KEY, etc.) are NOT checked here
+    since they're managed by Pipecat Cloud secret set.
     Returns list of validation errors.
     """
     errors = []
 
-    # Required variables
+    # Required variables for backend
     required_vars = {
-        "OPENAI_API_KEY": lambda x: x.startswith("sk-"),
-        "DEEPGRAM_API_KEY": lambda x: len(x) > 20,
-        "DAILY_API_KEY": lambda x: len(x) > 20,
-        "DAILY_PHONE_NUMBER_ID": lambda x: len(x) > 10,
+        "PIPECAT_API_KEY": lambda x: len(x) > 20,
         "MONGO_URI": lambda x: x.startswith("mongodb"),
         "JWT_SECRET_KEY": lambda x: len(x) >= 32,
     }

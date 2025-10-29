@@ -5,34 +5,18 @@ FROM python:3.11-slim-bookworm
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies (ffmpeg needed for audio processing)
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy requirements first for better caching
 COPY requirements.txt .
 
 # Install Python dependencies
+# Note: Backend doesn't need audio processing (torch, torchaudio, VAD)
+# Those are only needed by bot.py which runs on Pipecat Cloud
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install CPU-only torch (much smaller, no CUDA/NVIDIA dependencies)
-RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-# Copy the install_deps.py script for model pre-caching
-COPY install_deps.py .
-
-# Pre-cache the Silero VAD model during build
-RUN python install_deps.py
-
-# Copy backend application code only (no frontend)
+# Copy backend application code only (no frontend, no bot code)
+# Backend only needs: app.py, backend/, utils/
+# Bot code (core/, pipeline/, handlers/, services/, clients/) is NOT used by backend
 COPY app.py .
-COPY core/ ./core/
-COPY pipeline/ ./pipeline/
-COPY handlers/ ./handlers/
-COPY services/ ./services/
-COPY clients/ ./clients/
 COPY backend/ ./backend/
 COPY utils/ ./utils/
 

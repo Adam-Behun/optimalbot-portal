@@ -51,7 +51,9 @@ frontend/
 
 # Bot image: Exclude bot runner (separate deployment)
 app.py
-Dockerfile.runner
+
+# Exclude obsolete Dockerfiles
+Dockerfile.obsolete-*
 
 # Bot image: Exclude tests
 tests/

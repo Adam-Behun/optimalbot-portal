@@ -864,39 +864,6 @@
   - Each commit message references phase number
   - Keep commits small and reversible
 
-  Deployment Rollback
-
-  If production breaks:
-
-  1. Backend rollback:
-  git checkout pre-refactor-baseline
-  fly deploy
-  2. Bot rollback:
-  git checkout pre-refactor-baseline
-  docker buildx build --platform linux/arm64 -f Dockerfile.bot -t adambehun/healthcare-bot:rollback --push .
-  pipecatcloud deploy  # Update pcc-deploy.toml to :rollback tag
-  3. Frontend rollback:
-  git checkout pre-refactor-baseline
-  cd frontend && vercel --prod
-
-  Monitoring Post-Deploy
-
-  Watch for issues:
-  # Monitor backend
-  fly logs -f
-
-  # Monitor bot
-  pipecatcloud agent logs healthcare-voice-ai --follow
-
-  # Monitor frontend
-  # Check Vercel dashboard logs
-
-  Rollback triggers:
-  - Any 5xx errors in backend
-  - Bot sessions failing to start
-  - Call completion rate drops below baseline
-  - PHI detected in logs (CRITICAL - rollback immediately)
-
   ---
   VII. PRIORITIZATION AND RISK ASSESSMENT
 
@@ -1102,23 +1069,3 @@
     - Flag any missing information from original codebase
 
   BEGIN REFACTORING with Phase 1: Analysis and Documentation.
-
-> /context 
-  ⎿  
-      Context Usage
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛀ ⛁ ⛀   claude-sonnet-4-5-20250929 · 121k/200k tokens (61%)
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ 
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   ⛁ System prompt: 2.5k tokens (1.2%)
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛀ ⛶   ⛁ System tools: 13.3k tokens (6.7%)
-     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Memory files: 3.4k tokens (1.7%)
-     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Messages: 57.2k tokens (28.6%)
-     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛶ Free space: 79k (39.3%)
-     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝   ⛝ Autocompact buffer: 45.0k tokens (22.5%)
-     ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ 
-     ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ 
-
-     Memory files · /memory
-     └ Project (/home/nope-4-0/projects/MyRobot/CLAUDE.md): 3.4k tokens
-
-     SlashCommand Tool · 0 commands
-     └ Total: 864 tokens

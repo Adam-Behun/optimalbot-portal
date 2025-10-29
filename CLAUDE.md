@@ -49,9 +49,52 @@ npm run build
 npm test
 ```
 
-### Full Stack
+### Deployment Architecture
 
-The backend serves the frontend from `frontend/build/` when built. In production, run only `python app.py` after building the frontend.
+**Production deployment uses three separate services:**
+- **Backend:** Deployed to Fly.io (runs `app.py` - FastAPI REST API only)
+- **Bot:** Deployed to Pipecat Cloud (runs `bot.py` - voice AI conversation orchestration)
+- **Frontend:** Deployed to Vercel (React application)
+
+### Deployment Commands
+
+**Backend (Fly.io):**
+```bash
+# Deploy backend to Fly.io
+fly deploy
+
+# View logs
+fly logs
+
+# Check status
+fly status
+```
+
+**Bot (Pipecat Cloud):**
+```bash
+# Build and push Docker image
+docker buildx build --platform linux/arm64 -f Dockerfile.bot -t adambehun/healthcare-bot:latest --push .
+
+# Deploy to Pipecat Cloud
+pipecatcloud deploy
+
+# View logs
+pipecatcloud agent logs healthcare-voice-ai
+
+# Check status
+pipecatcloud agent list
+```
+
+**Frontend (Vercel):**
+```bash
+cd frontend
+
+# Deploy to production
+vercel --prod
+
+# Deploy to preview
+vercel
+```
 
 ## Architecture Overview
 
@@ -94,22 +137,27 @@ This architecture allows adding new use cases by creating new client directories
 - `models.py` - `AsyncPatientRecord` class with Motor async operations
 - `functions.py` - LLM function definitions (`update_prior_auth_status`) and handlers
 
-### Request Flow
+### Request Flow (Pipecat Cloud Architecture)
 
-1. **POST /start-call** → Fetch patient from MongoDB → Create Daily.co room → Initialize `ConversationPipeline`
-2. **Pipeline initialization:**
+1. **POST /start-call** (Backend - app.py on Fly.io):
+   - Fetch patient from MongoDB
+   - Create session record
+   - Call Pipecat Cloud API via `pipecatcloud.session.Session()`
+   - Pass patient data to Pipecat Cloud via `SessionParams.data`
+   - Return session info to frontend
+
+2. **Bot execution** (Bot - bot.py on Pipecat Cloud):
+   - Pipecat Cloud invokes `async def bot(args: DailyRunnerArguments)`
    - `ClientLoader` loads schema/prompts/services for client
    - `PipelineFactory` builds Pipecat pipeline with all services
    - Handlers registered (dialout, IVR, transcript, function calls)
-   - OpenTelemetry tracing enabled with Langfuse exporter
-3. **Call execution:**
-   - Pipeline runs async task
-   - Daily.co places outbound call
+   - Daily.co places outbound call via transport.dial_out()
    - IVR navigator detects and navigates phone menus
    - State transitions occur based on schema rules
    - LLM function calls update patient records in MongoDB
    - Full transcript saved to database on call completion
-4. **Monitoring:** OpenTelemetry spans sent to Langfuse for observability
+
+3. **Monitoring:** OpenTelemetry spans sent to Langfuse for observability
 
 ### State Transition Types
 
@@ -245,22 +293,47 @@ stt:
 
 ## Environment Variables Required
 
-```
-OPENAI_API_KEY          # OpenAI API key for LLM
-DEEPGRAM_API_KEY        # Deepgram for STT
-ELEVENLABS_API_KEY      # ElevenLabs for TTS
-DAILY_API_KEY           # Daily.co for telephony
-DAILY_PHONE_NUMBER_ID   # Daily.co outbound phone number ID
-MONGO_URI               # MongoDB connection string
-LANGFUSE_PUBLIC_KEY     # Langfuse observability (public key)
-LANGFUSE_SECRET_KEY     # Langfuse observability (secret key)
-LANGFUSE_HOST           # Langfuse host URL
+### Backend Environment Variables (Fly.io - app.py)
+
+**Required:**
+```bash
+PIPECAT_API_KEY          # Pipecat Cloud API key to start bot sessions
+PIPECAT_AGENT_NAME       # Agent name (default: healthcare-voice-ai)
+MONGO_URI                # MongoDB connection string
+JWT_SECRET_KEY           # JWT token signing secret (min 32 chars)
+ALLOWED_ORIGINS          # CORS origins (comma-separated)
 ```
 
-Optional:
-- `DEBUG=true` - Enable debug mode
-- `OTEL_CONSOLE_EXPORT=true` - Print OpenTelemetry spans to console
-- `PORT=8000` - Server port (default 8000)
+**Optional:**
+```bash
+LANGFUSE_PUBLIC_KEY      # Langfuse observability (public key)
+LANGFUSE_SECRET_KEY      # Langfuse observability (secret key)
+LANGFUSE_HOST            # Langfuse host URL
+OTEL_CONSOLE_EXPORT      # Print OpenTelemetry spans to console (true/false)
+PORT                     # Server port (default 8000)
+```
+
+### Bot Environment Variables (Pipecat Cloud secret set - bot.py)
+
+**Required:**
+```bash
+OPENAI_API_KEY           # OpenAI API key for LLM
+DEEPGRAM_API_KEY         # Deepgram for STT
+ELEVENLABS_API_KEY       # ElevenLabs for TTS
+DAILY_API_KEY            # Daily.co for telephony
+DAILY_PHONE_NUMBER_ID    # Daily.co outbound phone number ID
+MONGO_URI                # MongoDB connection string (for LLM function calls)
+```
+
+**Optional:**
+```bash
+LANGFUSE_PUBLIC_KEY      # Langfuse observability (public key)
+LANGFUSE_SECRET_KEY      # Langfuse observability (secret key)
+LANGFUSE_HOST            # Langfuse host URL
+DEBUG                    # Enable debug mode (true/false)
+```
+
+**Note:** Bot environment variables are stored in Pipecat Cloud secret set `healthcare-secrets` (see `pcc-deploy.toml`)
 
 ## Testing Strategy
 
