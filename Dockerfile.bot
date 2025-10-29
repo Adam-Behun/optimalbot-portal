@@ -1,0 +1,23 @@
+# Pipecat Cloud bot image - uses official base image
+# Build: docker build --platform linux/arm64 -f Dockerfile.bot -t my-bot:latest .
+FROM dailyco/pipecat-base:latest
+
+# Copy and install dependencies
+COPY ./requirements.txt requirements.txt
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+# Copy bot entry point (required by base image)
+COPY ./bot.py bot.py
+
+# Copy application code (minimal - only what bot needs)
+COPY ./core/ ./core/
+COPY ./pipeline/ ./pipeline/
+COPY ./handlers/ ./handlers/
+COPY ./services/ ./services/
+COPY ./clients/ ./clients/
+COPY ./backend/functions.py ./backend/functions.py
+COPY ./backend/models.py ./backend/models.py
+COPY ./backend/sessions.py ./backend/sessions.py
+
+# Base image provides CMD - no need to specify
+# It will call: await bot(args)

@@ -45,3 +45,20 @@ __pycache__
 *.pyc
 .env
 .git
+
+# Bot image: Exclude frontend (deployed to Vercel)
+frontend/
+
+# Bot image: Exclude bot runner (separate deployment)
+app.py
+Dockerfile.runner
+
+# Bot image: Exclude tests
+tests/
+test_*.py
+*_test.py
+
+# Bot image: Exclude docs
+README.md
+CLAUDE.md
+docs/

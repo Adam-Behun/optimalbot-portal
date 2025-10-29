@@ -3,32 +3,24 @@ import logging
 import traceback
 import asyncio
 import datetime
-import json
-import time
-import aiohttp
-import yaml
-import requests
 import uvicorn
 import uuid
 import base64
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any
 from bson import ObjectId
-from pathlib import Path
 from pipecat.utils.tracing.setup import setup_tracing
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from pipecatcloud.session import Session, SessionParams
+from pipecatcloud.exception import AgentStartError
 
-# Engine imports
-from core import ConversationSchema, DataFormatter, PromptRenderer
-from core.client_loader import ClientLoader
+# Backend imports
 from backend.models import get_async_patient_db, get_async_user_db
 from backend.audit import get_audit_logger
-from pipeline.runner import ConversationPipeline
+from backend.sessions import get_async_session_db
 from utils.validator import validate_patient_data
 from jose import JWTError, jwt
 from datetime import timedelta
@@ -51,8 +43,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Healthcare AI Agent", version="1.0.0")
 
-# Configure CORS - restrict to specific origins for HIPAA compliance
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+# Configure CORS - Vercel frontend + local development
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "https://your-app.vercel.app,http://localhost:3000"
+).split(",")
 logger.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
@@ -92,20 +87,6 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
 
     return response
-
-if os.path.exists("frontend/build/assets"):
-    app.mount("/assets", StaticFiles(directory="frontend/build/assets"), name="assets")
-    logger.info("✅ Mounted /assets from frontend/build/assets")
-
-# Serve other static files from build root (manifest.json, robots.txt, etc.)
-if os.path.exists("frontend/build"):
-    @app.get("/manifest.json")
-    async def serve_manifest():
-        return FileResponse("frontend/build/manifest.json")
-    
-    @app.get("/robots.txt")
-    async def serve_robots():
-        return FileResponse("frontend/build/robots.txt")
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -290,9 +271,9 @@ async def initialize_application():
 # GLOBAL INSTANCES
 # ============================================================================
 
-active_pipelines = {}
 patient_db = get_async_patient_db()
 user_db = get_async_user_db()
+session_db = get_async_session_db()
 audit_logger = get_audit_logger()
 
 # ============================================================================
@@ -335,91 +316,84 @@ async def start_call(
         phone_number = call_request.phone_number or patient.get("phone_number")
         if not phone_number:
             raise HTTPException(status_code=400, detail="Phone number required")
-        
+
         # Generate session ID
         session_id = str(uuid.uuid4())
-        room_name = f"call_{session_id}"
-        
+
         logger.info(f"Session ID: {session_id}")
-        logger.info(f"Room name: {room_name}")
         logger.info(f"Phone number: {phone_number}")
-        
-        # Create Daily room
-        logger.info("Creating Daily room...")
-        daily_api_url = "https://api.daily.co/v1/rooms"
-        daily_headers = {
-            "Authorization": f"Bearer {os.getenv('DAILY_API_KEY')}",
-            "Content-Type": "application/json"
-        }
-        
-        room_response = requests.post(
-            daily_api_url,
-            headers=daily_headers,
-            json={
-                "name": room_name,
-                "properties": {
-                    "enable_dialout": True,
-                    "enable_chat": False,
-                    "enable_screenshare": False,
-                    "enable_recording": "cloud",
-                    "exp": int(datetime.datetime.now().timestamp()) + 3600
-                }
-            }
-        )
-        
-        if room_response.status_code not in [200, 201]:
-            logger.error(f"Failed to create room: {room_response.text}")
-            raise HTTPException(status_code=500, detail="Failed to create Daily room")
-        
-        room_data = room_response.json()
-        room_url = room_data["url"]
-        logger.info(f"Room created: {room_url}")
-        
-        # Create meeting token with owner privileges
-        logger.info("Creating meeting token...")
-        token_response = requests.post(
-            "https://api.daily.co/v1/meeting-tokens",
-            headers=daily_headers,
-            json={
-                "properties": {
-                    "room_name": room_name,
-                    "is_owner": True
-                }
-            }
-        )
-        
-        if token_response.status_code not in [200, 201]:
-            logger.error(f"Failed to create token: {token_response.text}")
-            raise HTTPException(status_code=500, detail="Failed to create meeting token")
-        
-        token = token_response.json()["token"]
-        logger.info("Meeting token created with owner privileges")
-        
-        # Create conversation pipeline (NEW - client-agnostic)
-        logger.info("Creating conversation pipeline...")
-        pipeline = ConversationPipeline(
-            client_name=call_request.client_name,
-            session_id=session_id,
-            patient_id=call_request.patient_id,
-            patient_data=patient,
-            phone_number=phone_number,
-            debug_mode=os.getenv("DEBUG", "false").lower() == "true"
-        )
-        
-        # Store in active pipelines
-        active_pipelines[session_id] = pipeline
-        logger.info(f"Pipeline stored (Total active: {len(active_pipelines)})")
-        
-        # Start the pipeline in background
-        logger.info("Starting pipeline task...")
-        asyncio.create_task(pipeline.run(room_url, token, room_name))
+
+        # Create session record in MongoDB
+        await session_db.create_session({
+            "session_id": session_id,
+            "patient_id": call_request.patient_id,
+            "phone_number": phone_number,
+            "client_name": call_request.client_name
+        })
+
+        # Start Pipecat Cloud bot session
+        logger.info("Starting Pipecat Cloud bot session...")
+
+        try:
+            # Get agent name and API key from environment
+            agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
+            pipecat_api_key = os.getenv("PIPECAT_API_KEY")
+
+            if not pipecat_api_key:
+                raise HTTPException(status_code=500, detail="PIPECAT_API_KEY not configured")
+
+            # Create session with Pipecat Cloud
+            session = Session(
+                agent_name=agent_name,
+                api_key=pipecat_api_key,
+                params=SessionParams(
+                    use_daily=True,  # Pipecat Cloud creates Daily room
+                    daily_room_properties={
+                        "enable_dialout": True,
+                        "enable_chat": False,
+                        "enable_screenshare": False,
+                        "enable_recording": "cloud",
+                        "exp": int(datetime.datetime.now().timestamp()) + 3600
+                    },
+                    data={
+                        "patient_id": call_request.patient_id,
+                        "patient_data": patient,  # Pass as dict (not JSON string)
+                        "phone_number": phone_number,
+                        "client_name": call_request.client_name
+                    }
+                )
+            )
+
+            # Start bot (Pipecat Cloud handles everything)
+            response = await session.start()
+
+            room_url = response.get("dailyRoom")
+            token = response.get("dailyToken")
+
+            logger.info(f"✅ Bot started via Pipecat Cloud")
+            logger.info(f"Room: {room_url}")
+
+            # Update session with room info
+            await session_db.update_session(session_id, {
+                "room_url": room_url,
+                "status": "running"
+            })
+
+        except AgentStartError as e:
+            logger.error(f"Pipecat Cloud start error: {e}")
+            await session_db.update_session(session_id, {"status": "failed"})
+            raise HTTPException(status_code=500, detail=f"Failed to start bot: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            await session_db.update_session(session_id, {"status": "failed"})
+            raise HTTPException(status_code=500, detail=f"Failed to start bot: {e}")
         
         return CallResponse(
             status="initiated",
             session_id=session_id,
-            room_name=room_name,
+            room_name=f"call_{session_id}",
             room_url=room_url,
-            message="Call session initiated successfully"
+            message="Call session initiated via Pipecat Cloud"
         )
         
     except HTTPException:
@@ -436,11 +410,12 @@ async def get_call_status(
     current_user: dict = Depends(get_current_user)
 ):
     """Get status of an active call (Protected - requires authentication)"""
-    if session_id not in active_pipelines:
+    session = await session_db.find_session(session_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    pipeline = active_pipelines[session_id]
-    state = pipeline.get_conversation_state()
+    # Get patient data for additional context
+    patient = await patient_db.find_patient_by_id(session["patient_id"])
 
     # Log PHI access
     await log_phi_access_wrapper(
@@ -453,10 +428,11 @@ async def get_call_status(
 
     return {
         "session_id": session_id,
-        "status": state["workflow_state"],
-        "current_state": state.get("current_state"),
-        "state_history": state.get("state_history", []),
-        "transcript_count": len(state.get("transcripts", []))
+        "status": session.get("status"),
+        "patient_name": patient.get("patient_name") if patient else None,
+        "call_status": patient.get("call_status") if patient else None,
+        "created_at": session.get("created_at"),
+        "pid": session.get("pid")
     }
 
 @app.get("/call/{session_id}/transcript")
@@ -466,11 +442,14 @@ async def get_call_transcript(
     current_user: dict = Depends(get_current_user)
 ):
     """Get full transcript of a call (Protected - requires authentication)"""
-    if session_id not in active_pipelines:
+    session = await session_db.find_session(session_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    pipeline = active_pipelines[session_id]
-    state = pipeline.get_conversation_state()
+    # Get patient with transcript
+    patient = await patient_db.find_patient_by_id(session["patient_id"])
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
 
     # Log PHI access for transcript
     await log_phi_access_wrapper(
@@ -483,8 +462,8 @@ async def get_call_transcript(
 
     return {
         "session_id": session_id,
-        "transcripts": state.get("transcripts", []),
-        "patient": state["patient_data"].get("patient_name")
+        "transcripts": patient.get("call_transcript", {}).get("messages", []),
+        "patient_name": patient.get("patient_name")
     }
 
 @app.delete("/call/{session_id}")
@@ -494,10 +473,9 @@ async def end_call(
     current_user: dict = Depends(get_current_user)
 ):
     """End an active call (Protected - requires authentication)"""
-    if session_id not in active_pipelines:
+    session = await session_db.find_session(session_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
-
-    pipeline = active_pipelines[session_id]
 
     # Log PHI access
     await log_phi_access_wrapper(
@@ -508,11 +486,21 @@ async def end_call(
         resource_id=session_id
     )
 
-    # TODO: Add pipeline cleanup/termination logic
     logger.info(f"User {current_user['email']} ending call session: {session_id}")
 
-    # Remove from active pipelines
-    del active_pipelines[session_id]
+    # Kill bot process if still running
+    if "pid" in session:
+        try:
+            import signal
+            os.kill(session["pid"], signal.SIGTERM)
+            logger.info(f"Terminated bot process PID: {session['pid']}")
+        except ProcessLookupError:
+            logger.info(f"Bot process {session['pid']} already terminated")
+        except Exception as e:
+            logger.warning(f"Failed to kill process: {e}")
+
+    # Mark session as completed
+    await session_db.update_session(session_id, {"status": "terminated"})
 
     return {
         "status": "ended",
@@ -526,16 +514,18 @@ async def list_active_calls(
     current_user: dict = Depends(get_current_user)
 ):
     """List all active call sessions (Protected - requires authentication)"""
-    active_calls = []
+    sessions = await session_db.list_active_sessions()
 
-    for session_id, pipeline in active_pipelines.items():
-        state = pipeline.get_conversation_state()
+    # Enrich with patient data
+    active_calls = []
+    for session in sessions:
+        patient = await patient_db.find_patient_by_id(session["patient_id"])
         active_calls.append({
-            "session_id": session_id,
-            "patient_id": pipeline.patient_id,
-            "patient_name": state["patient_data"].get("patient_name"),
-            "current_state": state.get("current_state"),
-            "status": state["workflow_state"]
+            "session_id": session["session_id"],
+            "patient_id": session["patient_id"],
+            "patient_name": patient.get("patient_name") if patient else None,
+            "status": session.get("status"),
+            "created_at": session.get("created_at")
         })
 
     # Log PHI access
@@ -1044,98 +1034,34 @@ async def delete_patient(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
-# SCHEMA MONITORING & TESTING ENDPOINTS
-# ============================================================================
-
-@app.get("/schema/info")
-async def get_schema_info():
-    """Schema metadata and performance metrics"""
-    if not conversation_schema:
-        raise HTTPException(status_code=503, detail="Schema not loaded")
-    
-    return {
-        "schema": {
-            "name": conversation_schema.conversation.name,
-            "version": conversation_schema.conversation.version,
-            "client_id": conversation_schema.conversation.client_id,
-        },
-        "states": {
-            "initial": conversation_schema.states.initial_state,
-            "total": len(conversation_schema.states.definitions),
-            "names": [s.name for s in conversation_schema.states.definitions]
-        },
-        "voice": {
-            "persona": conversation_schema.voice.persona.name,
-            "role": conversation_schema.voice.persona.role,
-            "tone": conversation_schema.voice.speaking_style.tone
-        },
-        "performance": startup_metrics,
-        "health": {
-            "schema_loaded": True,
-            "templates_cached": len(prompt_renderer._cache),
-            "init_time_ok": startup_metrics["total_init_ms"] < 500
-        }
-    }
-
-# ============================================================================
-# MONITORING API ENDPOINTS
-# ============================================================================
-
-
-
-# ============================================================================
 # HEALTH & STATUS ENDPOINTS
 # ============================================================================
 
 @app.get("/health")
 async def health_check():
-    """Health check with schema system status"""
+    """Health check for bot runner API"""
     try:
         db_status = "connected"
         patient_count = len(await patient_db.find_patients_by_status("Pending"))
     except Exception as e:
         db_status = f"error: {str(e)}"
         patient_count = 0
-    
-    schema_health = "healthy" if conversation_schema and prompt_renderer else "not_initialized"
-    
+
+    try:
+        active_sessions = await session_db.list_active_sessions()
+        session_count = len(active_sessions)
+    except Exception:
+        session_count = 0
+
     return {
-        "status": "healthy" if schema_health == "healthy" else "degraded",
-        "service": "healthcare-ai-agent",
-        "active_sessions": len(active_pipelines),
+        "status": "healthy",
+        "service": "healthcare-ai-bot-runner",
+        "active_sessions": session_count,
         "database": {
             "status": db_status,
             "pending_patients": patient_count
-        },
-        "schema_system": {
-            "status": schema_health,
-            "init_time_ms": startup_metrics.get("total_init_ms", 0),
-            "templates_cached": len(prompt_renderer._cache) if prompt_renderer else 0
         }
     }
-
-# ============================================================================
-# SPA CATCH-ALL ROUTE
-# ============================================================================
-
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    """
-    Catch-all to serve React SPA. Explicitly excludes /assets to let mount handle it.
-    """
-    # Don't catch /assets/* - let the StaticFiles mount handle it
-    if full_path.startswith("assets"):
-        raise HTTPException(status_code=404)
-    
-    # Serve index.html for all other routes (React Router handles routing)
-    index_path = "frontend/build/index.html"
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    else:
-        raise HTTPException(
-            status_code=503,
-            detail="Frontend not built. Run: cd frontend && npm run build"
-        )
 
 # ============================================================================
 # DEVELOPMENT SERVER

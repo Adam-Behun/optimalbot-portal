@@ -13,6 +13,7 @@ motor
 uvicorn
 fastapi
 requests
+pipecatcloud
 
 # Environment and configuration
 python-dotenv

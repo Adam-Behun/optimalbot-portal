@@ -1,0 +1,37 @@
+# Pipecat Cloud Deployment Configuration
+# See: https://docs.pipecat.ai/deployment/deployments
+
+# Agent name (must be unique in your organization)
+agent_name = "healthcare-voice-ai"
+
+# Docker image (update with your registry)
+# Format: registry/repository:tag
+# Examples:
+#   - Docker Hub: yourusername/healthcare-bot:latest
+#   - GCP: gcr.io/your-project/healthcare-bot:latest
+#   - AWS ECR: 123456789.dkr.ecr.us-east-1.amazonaws.com/healthcare-bot:latest
+image = "adambehun/healthcare-bot:latest"
+
+# Image registry credentials (if using private registry)
+# Create credential with: pipecat cloud organizations credentials create dockerhub-creds
+image_credentials = "dockerhub-creds"
+
+# Secret set name (store sensitive env vars in Pipecat Cloud)
+# Create secret set with: pipecat cloud organizations secrets create healthcare-secrets
+secret_set = "healthcare-secrets"
+
+# Agent profile (determines CPU and memory allocation)
+# Options:
+#   - agent-1x: 0.5 vCPU, 1 GB RAM (default, good for voice-only)
+#   - agent-2x: 1 vCPU, 2 GB RAM (better for video or complex processing)
+agent_profile = "agent-1x"
+
+# Scaling configuration
+[scaling]
+    # Minimum number of idle agents ready to handle requests
+    # Higher values = faster start times but higher costs
+    min_agents = 0
+
+    # Maximum number of concurrent sessions
+    # Prevents runaway costs
+    max_agents = 10
