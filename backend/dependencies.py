@@ -49,10 +49,10 @@ async def log_phi_access(
     user: dict,
     action: str,
     resource_type: str,
-    resource_id: str,
-    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+    resource_id: str
 ):
     """Log PHI access for HIPAA compliance"""
+    audit_logger = get_audit_logger()
     ip_address, user_agent = get_client_info(request)
     await audit_logger.log_phi_access(
         user_id=user["sub"],

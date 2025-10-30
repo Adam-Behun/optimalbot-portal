@@ -268,6 +268,13 @@ def get_audit_logger(db_client: Optional[AsyncIOMotorClient] = None) -> AuditLog
             from backend.models import _async_client
             db_client = _async_client
 
+            # Initialize client if not already done
+            if not db_client:
+                from motor.motor_asyncio import AsyncIOMotorClient
+                import os
+                mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+                db_client = AsyncIOMotorClient(mongo_uri)
+
         _audit_logger_instance = AuditLogger(db_client)
 
     return _audit_logger_instance

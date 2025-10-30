@@ -19,6 +19,20 @@ const api = axios.create({
   },
 });
 
+// Add request interceptor to include JWT token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
 // GET /patients - Fetch all patients with pending authorization
 export const getPatients = async (): Promise<Patient[]> => {
   const response = await api.get<PatientsResponse>('/patients');
@@ -27,19 +41,19 @@ export const getPatients = async (): Promise<Patient[]> => {
 
 // GET /patients/:id - Fetch single patient by ObjectID
 export const getPatient = async (patientId: string) => {
-  const response = await axios.get(`${API_BASE_URL}/patients/${patientId}`);
+  const response = await api.get(`/patients/${patientId}`);
   return response.data.patient;
 };
 
-// POST /add-patient - Add a new patient
+// POST /patients - Add a new patient
 export const addPatient = async (patientData: AddPatientFormData): Promise<AddPatientResponse> => {
-  const response = await api.post<AddPatientResponse>('/add-patient', patientData);
+  const response = await api.post<AddPatientResponse>('/patients', patientData);
   return response.data;
 };
 
-// POST /add-patients-bulk - Add multiple patients
+// POST /patients/bulk - Add multiple patients
 export const addPatientsBulk = async (patients: AddPatientFormData[]): Promise<BulkAddResponse> => {
-  const response = await api.post<BulkAddResponse>('/add-patients-bulk', { patients });
+  const response = await api.post<BulkAddResponse>('/patients/bulk', { patients });
   return response.data;
 };
 
@@ -77,6 +91,17 @@ export const login = async (email: string, password: string): Promise<AuthRespon
 // POST /auth/logout - Logout user
 export const logout = async (): Promise<void> => {
   await api.post('/auth/logout');
+};
+
+// POST /auth/request-reset - Request password reset token
+export const requestPasswordReset = async (email: string): Promise<{ token: string; expires_in_minutes: number }> => {
+  const response = await api.post('/auth/request-reset', { email });
+  return response.data;
+};
+
+// POST /auth/reset-password - Reset password with token
+export const resetPassword = async (email: string, token: string, new_password: string): Promise<void> => {
+  await api.post('/auth/reset-password', { email, token, new_password });
 };
 
 export default api;

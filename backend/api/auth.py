@@ -37,6 +37,19 @@ class AuthResponse(BaseModel):
     user_id: str
     email: str
 
+class RequestResetRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    token: str
+    new_password: str
+
+class ResetTokenResponse(BaseModel):
+    message: str
+    token: str
+    expires_in_minutes: int
+
 
 # Helper
 def create_access_token(data: dict, expires_delta: timedelta = None):
@@ -271,3 +284,105 @@ async def logout(
     except Exception as e:
         logger.error(f"Error during logout: {str(e)}")
         return {"message": "Logged out"}
+
+
+@router.post("/request-reset", response_model=ResetTokenResponse)
+@limiter.limit("3/hour")
+async def request_reset(
+    request: Request,
+    reset_request: RequestResetRequest,
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Generate password reset token (Level 1: token returned directly)"""
+    try:
+        ip_address, user_agent = get_client_info(request)
+
+        success, token = await user_db.generate_reset_token(reset_request.email)
+
+        if not success or not token:
+            await audit_logger.log_event(
+                event_type="password_reset_request",
+                user_id=None,
+                email=reset_request.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"error": "User not found"}
+            )
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        await audit_logger.log_event(
+            event_type="password_reset_request",
+            user_id=None,
+            email=reset_request.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={}
+        )
+
+        logger.info(f"Password reset requested for {reset_request.email}")
+
+        return ResetTokenResponse(
+            message="Reset token generated. Use this token to reset your password.",
+            token=token,
+            expires_in_minutes=60
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during password reset request: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/reset-password")
+@limiter.limit("5/hour")
+async def reset_password(
+    request: Request,
+    reset_data: ResetPasswordRequest,
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Reset password using token"""
+    try:
+        ip_address, user_agent = get_client_info(request)
+
+        success, error = await user_db.reset_password_with_token(
+            email=reset_data.email,
+            token=reset_data.token,
+            new_password=reset_data.new_password
+        )
+
+        if not success:
+            await audit_logger.log_event(
+                event_type="password_reset",
+                user_id=None,
+                email=reset_data.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"error": error}
+            )
+            raise HTTPException(status_code=400, detail=error)
+
+        await audit_logger.log_event(
+            event_type="password_reset",
+            user_id=None,
+            email=reset_data.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={}
+        )
+
+        logger.info(f"Password reset completed for {reset_data.email}")
+
+        return {"message": "Password reset successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during password reset: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

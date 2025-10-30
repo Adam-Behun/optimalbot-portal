@@ -73,9 +73,30 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           if (fileInputRef.current) {
             fileInputRef.current.value = '';
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error uploading CSV:', error);
-          toast.error('Failed to upload CSV file');
+
+          // Extract validation errors from response
+          if (error.response?.data?.detail && Array.isArray(error.response.data.detail)) {
+            const errors = error.response.data.detail;
+            const errorMessages = errors.map((err: any) => {
+              // Format: "Row 6 (Quvenzhané Poughkeepsie): insurance_phone - Only US/Canadian numbers allowed"
+              const location = err.loc || [];
+              const rowIndex = location.find((loc: any) => typeof loc === 'number');
+              const field = location[location.length - 1];
+              const msg = err.msg || 'Validation error';
+
+              if (rowIndex !== undefined) {
+                return `Row ${rowIndex + 1}, field "${field}": ${msg}`;
+              }
+              return `Field "${field}": ${msg}`;
+            }).join('\n');
+
+            toast.error(`Validation errors:\n${errorMessages}`, { duration: 10000 });
+          } else {
+            const errorMsg = error.response?.data?.detail || error.message || 'Failed to upload CSV file';
+            toast.error(errorMsg);
+          }
         }
       },
       error: (error) => {

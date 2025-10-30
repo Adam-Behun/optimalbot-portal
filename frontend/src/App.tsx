@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SignupForm } from './components/signup-form';
 import { LoginForm } from './components/login-form';
+import { ForgotPasswordForm } from './components/forgot-password-form';
+import { ResetPasswordForm } from './components/reset-password-form';
 
 const App = () => {
   return (
@@ -25,6 +27,20 @@ const App = () => {
                 <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
                   <div className="w-full max-w-sm">
                     <LoginForm />
+                  </div>
+                </div>
+              } />
+              <Route path="/forgot-password" element={
+                <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
+                  <div className="w-full max-w-sm">
+                    <ForgotPasswordForm />
+                  </div>
+                </div>
+              } />
+              <Route path="/reset-password" element={
+                <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
+                  <div className="w-full max-w-sm">
+                    <ResetPasswordForm />
                   </div>
                 </div>
               } />

@@ -20,6 +20,7 @@ class PatientCreate(BaseModel):
     insurance_member_id: str = Field(..., min_length=1, max_length=50)
     insurance_company_name: str = Field(..., min_length=1, max_length=100)
     insurance_phone: str
+    supervisor_phone: Optional[str] = None
 
     # Facility/provider information
     facility_name: str = Field(..., min_length=1, max_length=100)
@@ -46,20 +47,42 @@ class PatientCreate(BaseModel):
 
             # US/Canada only (+1)
             if parsed.country_code != 1:
-                raise ValueError('Only US/Canadian numbers allowed')
+                raise ValueError(f'Only US/Canadian numbers allowed. Got country code +{parsed.country_code}, expected +1. Use format: +1XXXXXXXXXX')
 
             if not phonenumbers.is_valid_number(parsed):
-                raise ValueError('Invalid phone number')
+                raise ValueError(f'Invalid phone number: {v}. Use format: +1XXXXXXXXXX')
 
             # Block emergency and premium numbers
             national = str(parsed.national_number)
             blocked_prefixes = ['911', '988', '999', '900', '976']
             if any(national.startswith(p) for p in blocked_prefixes):
-                raise ValueError('Cannot call emergency/premium numbers')
+                raise ValueError(f'Cannot call emergency/premium numbers (prefix: {national[:3]})')
 
             return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+        except phonenumbers.NumberParseException as e:
+            raise ValueError(f'Invalid phone format: {v}. Must use +1XXXXXXXXXX (e.g., +15165551234)')
+
+    @field_validator('supervisor_phone')
+    @classmethod
+    def validate_supervisor_phone(cls, v: Optional[str]) -> Optional[str]:
+        """Validate supervisor phone (optional)"""
+        if v is None or v.strip() == '':
+            return None
+
+        # Use same validation as insurance_phone
+        try:
+            parsed = phonenumbers.parse(v.strip(), None)
+            if parsed.country_code != 1:
+                raise ValueError(f'Only US/Canadian numbers allowed. Got country code +{parsed.country_code}, expected +1. Use format: +1XXXXXXXXXX')
+            if not phonenumbers.is_valid_number(parsed):
+                raise ValueError(f'Invalid phone number: {v}. Use format: +1XXXXXXXXXX')
+            national = str(parsed.national_number)
+            blocked_prefixes = ['911', '988', '999', '900', '976']
+            if any(national.startswith(p) for p in blocked_prefixes):
+                raise ValueError(f'Cannot call emergency/premium numbers (prefix: {national[:3]})')
+            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
         except phonenumbers.NumberParseException:
-            raise ValueError('Invalid phone format, use +1XXXXXXXXXX')
+            raise ValueError(f'Invalid phone format: {v}. Must use +1XXXXXXXXXX (e.g., +15165551234)')
 
     @field_validator('date_of_birth')
     @classmethod

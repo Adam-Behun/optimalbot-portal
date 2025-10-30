@@ -402,6 +402,91 @@ class AsyncUserRecord:
             logger.error(f"Error updating password for {user_id}: {e}")
             return False, str(e)
 
+    async def generate_reset_token(self, email: str) -> tuple[bool, Optional[str]]:
+        """Generate password reset token valid for 1 hour"""
+        try:
+            import secrets
+            from datetime import timedelta
+
+            user = await self.find_user_by_email(email)
+            if not user:
+                return False, None
+
+            token = secrets.token_urlsafe(32)
+            expires_at = datetime.utcnow() + timedelta(hours=1)
+
+            await self.users.update_one(
+                {"_id": user["_id"]},
+                {"$set": {
+                    "reset_token": token,
+                    "reset_token_expires": expires_at.isoformat(),
+                    "updated_at": datetime.utcnow().isoformat()
+                }}
+            )
+
+            logger.info(f"Reset token generated for {email}")
+            return True, token
+
+        except Exception as e:
+            logger.error(f"Error generating reset token for {email}: {e}")
+            return False, None
+
+    async def verify_reset_token(self, email: str, token: str) -> tuple[bool, Optional[str]]:
+        """Verify reset token and return user_id if valid"""
+        try:
+            user = await self.find_user_by_email(email)
+            if not user:
+                return False, None
+
+            stored_token = user.get("reset_token")
+            expires_str = user.get("reset_token_expires")
+
+            if not stored_token or not expires_str:
+                return False, None
+
+            if stored_token != token:
+                return False, None
+
+            expires_at = datetime.fromisoformat(expires_str)
+            if datetime.utcnow() > expires_at:
+                logger.warning(f"Expired reset token used for {email}")
+                return False, None
+
+            return True, str(user["_id"])
+
+        except Exception as e:
+            logger.error(f"Error verifying reset token for {email}: {e}")
+            return False, None
+
+    async def reset_password_with_token(
+        self,
+        email: str,
+        token: str,
+        new_password: str
+    ) -> tuple[bool, str]:
+        """Reset password using valid token"""
+        try:
+            is_valid, user_id = await self.verify_reset_token(email, token)
+            if not is_valid or not user_id:
+                return False, "Invalid or expired reset token"
+
+            success, error = await self.update_password(user_id, new_password)
+            if not success:
+                return False, error
+
+            # Clear reset token after successful reset
+            await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$unset": {"reset_token": "", "reset_token_expires": ""}}
+            )
+
+            logger.info(f"Password reset successful for {email}")
+            return True, ""
+
+        except Exception as e:
+            logger.error(f"Error resetting password for {email}: {e}")
+            return False, str(e)
+
     async def lock_account(self, user_id: str, reason: str) -> bool:
         """Lock a user account"""
         try:
