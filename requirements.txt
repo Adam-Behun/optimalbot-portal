@@ -13,6 +13,7 @@ motor
 uvicorn
 fastapi
 requests
+httpx
 pipecatcloud
 
 # Environment and configuration
@@ -40,3 +41,8 @@ pydantic
 # Authentication and security
 passlib[bcrypt]
 python-jose[cryptography]
+phonenumbers
+
+# Rate limiting and retry logic
+slowapi
+tenacity

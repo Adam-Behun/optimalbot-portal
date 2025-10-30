@@ -32,7 +32,7 @@ services:
     optimize_streaming_latency: 0
     output_format: pcm_24000
     style: 0.0
-    speed: 0.9
+    speed: 0.95  # TEST: Slightly faster speech for testing
 
   transport:
     provider: daily  # The transport/telephony provider (e.g., daily, twilio).

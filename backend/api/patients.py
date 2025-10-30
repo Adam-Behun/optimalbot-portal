@@ -1,0 +1,268 @@
+"""Patient management endpoints"""
+import logging
+import traceback
+from fastapi import APIRouter, HTTPException, Request, Depends
+from slowapi import Limiter
+from bson import ObjectId
+
+from backend.dependencies import (
+    get_current_user,
+    get_patient_db,
+    get_audit_logger_dep,
+    get_client_info,
+    log_phi_access,
+    get_user_id_from_request
+)
+from backend.models import AsyncPatientRecord
+from backend.audit import AuditLogger
+from backend.schemas import PatientCreate, PatientResponse, BulkPatientRequest, BulkUploadResponse
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+limiter = Limiter(key_func=get_user_id_from_request)
+
+
+# Helper
+def convert_objectid(doc: dict) -> dict:
+    """Convert MongoDB ObjectId to string"""
+    if doc and "_id" in doc and isinstance(doc["_id"], ObjectId):
+        doc["_id"] = str(doc["_id"])
+        doc["patient_id"] = doc["_id"]
+    return doc
+
+
+@router.get("")
+async def list_patients(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    patient_db: AsyncPatientRecord = Depends(get_patient_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Get all patients"""
+    try:
+        logger.info(f"📋 User {current_user['email']} fetching all patients")
+
+        cursor = patient_db.patients.find().sort("created_at", -1)
+        all_patients = await cursor.to_list(length=None)
+
+        logger.info(f"🔍 Found {len(all_patients)} patients in database")
+
+        patients = [convert_objectid(p) for p in all_patients]
+
+        # Log PHI access
+        ip_address, user_agent = get_client_info(request)
+        await audit_logger.log_phi_access(
+            user_id=current_user["sub"],
+            action="view_list",
+            resource_type="patient",
+            resource_id="all",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            endpoint=request.url.path,
+            details={"count": len(patients)}
+        )
+
+        logger.info(f"✅ Returning all {len(patients)} patients")
+
+        return {
+            "patients": patients,
+            "total_count": len(patients)
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error fetching patients: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{patient_id}")
+async def get_patient_by_id(
+    patient_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    patient_db: AsyncPatientRecord = Depends(get_patient_db)
+):
+    """Get specific patient by ID"""
+    try:
+        patient = await patient_db.find_patient_by_id(patient_id)
+
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        # Log PHI access
+        await log_phi_access(
+            request=request,
+            user=current_user,
+            action="view",
+            resource_type="patient",
+            resource_id=patient_id
+        )
+
+        return {
+            "status": "success",
+            "patient": convert_objectid(patient)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching patient {patient_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("", response_model=PatientResponse)
+@limiter.limit("20/minute")
+async def add_patient(
+    patient_data: PatientCreate,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    patient_db: AsyncPatientRecord = Depends(get_patient_db)
+):
+    """Add new patient"""
+    patient_dict = patient_data.model_dump()
+
+    patient_id = await patient_db.add_patient(patient_dict)
+
+    if not patient_id:
+        raise HTTPException(status_code=500, detail="Failed to add patient")
+
+    # Log PHI access
+    await log_phi_access(
+        request=request,
+        user=current_user,
+        action="create",
+        resource_type="patient",
+        resource_id=patient_id
+    )
+
+    logger.info(f"User {current_user['email']} added new patient with ID: {patient_id}")
+
+    return PatientResponse(
+        status="success",
+        patient_id=str(patient_id),
+        message="Patient added successfully"
+    )
+
+
+@router.post("/bulk", response_model=BulkUploadResponse)
+@limiter.limit("5/hour")
+async def add_patients_bulk(
+    bulk_request: BulkPatientRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    patient_db: AsyncPatientRecord = Depends(get_patient_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Add multiple patients from CSV upload"""
+    success_count = 0
+    failed_count = 0
+    errors = []
+    created_ids = []
+
+    for idx, patient_model in enumerate(bulk_request.patients):
+        patient_dict = patient_model.model_dump()
+
+        patient_id = await patient_db.add_patient(patient_dict)
+
+        if patient_id:
+            success_count += 1
+            created_ids.append(patient_id)
+            logger.info(f"Added patient with ID: {patient_id}")
+        else:
+            failed_count += 1
+            errors.append({
+                "row": idx + 1,
+                "error": "Database insertion failed"
+            })
+
+    # Log bulk PHI creation
+    ip_address, user_agent = get_client_info(request)
+    await audit_logger.log_phi_access(
+        user_id=current_user["sub"],
+        action="create_bulk",
+        resource_type="patient",
+        resource_id="bulk",
+        ip_address=ip_address,
+        user_agent=user_agent,
+        endpoint=request.url.path,
+        details={"success_count": success_count, "failed_count": failed_count}
+    )
+
+    return BulkUploadResponse(
+        status="completed",
+        success_count=success_count,
+        failed_count=failed_count,
+        total=len(bulk_request.patients),
+        created_ids=created_ids,
+        errors=errors if errors else None
+    )
+
+
+@router.put("/{patient_id}")
+async def update_patient(
+    patient_id: str,
+    patient_data: dict,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    patient_db: AsyncPatientRecord = Depends(get_patient_db)
+):
+    """Update existing patient"""
+    try:
+        success = await patient_db.update_patient(patient_id, patient_data)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+
+        # Log PHI access
+        await log_phi_access(
+            request=request,
+            user=current_user,
+            action="update",
+            resource_type="patient",
+            resource_id=patient_id
+        )
+
+        return {
+            "status": "success",
+            "message": "Patient updated successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating patient {patient_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{patient_id}")
+async def delete_patient(
+    patient_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    patient_db: AsyncPatientRecord = Depends(get_patient_db)
+):
+    """Delete patient"""
+    try:
+        success = await patient_db.delete_patient(patient_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+
+        # Log PHI access
+        await log_phi_access(
+            request=request,
+            user=current_user,
+            action="delete",
+            resource_type="patient",
+            resource_id=patient_id
+        )
+
+        return {
+            "status": "success",
+            "message": "Patient deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting patient {patient_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))

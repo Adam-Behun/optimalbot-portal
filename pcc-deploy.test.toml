@@ -1,0 +1,20 @@
+# Pipecat Cloud TEST/STAGING Deployment Configuration
+# Use this for testing changes before promoting to production
+
+# Test agent name (separate from production)
+agent_name = "healthcare-voice-ai-test"
+
+# Docker image with test tag
+image = "adambehun/healthcare-bot:test"
+
+# Use same credentials and secrets as production
+image_credentials = "dockerhub-creds"
+secret_set = "healthcare-secrets"
+
+# Agent profile
+agent_profile = "agent-1x"
+
+# Scaling configuration (lower limits for testing)
+[scaling]
+    min_agents = 0
+    max_agents = 3

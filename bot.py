@@ -31,6 +31,7 @@ async def bot(args: DailyRunnerArguments):
         args.session_id: Unique session ID from Pipecat Cloud
     """
     session_db = get_async_session_db()
+    pipeline = None
 
     try:
         logger.info(f"🤖 Bot starting - Session: {args.session_id}")
@@ -86,3 +87,14 @@ async def bot(args: DailyRunnerArguments):
             pass  # Don't fail on cleanup
 
         raise  # Re-raise for Pipecat Cloud to handle
+
+    finally:
+        # Cleanup resources on all exit paths (#16)
+        if pipeline:
+            logger.info("Bot cleanup complete")
+        # Close MongoDB connection
+        try:
+            if hasattr(session_db, 'client'):
+                session_db.client.close()
+        except Exception:
+            pass  # Don't fail on cleanup

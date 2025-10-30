@@ -141,14 +141,27 @@ class ConversationPipeline:
         
         self.state_manager.set_task(self.task)
         self.runner = CustomPipelineRunner()
-        
+
         try:
             await self.runner.run(self.task)
             logger.info("Pipeline completed successfully")
-            
+
         except Exception as e:
             logger.error(f"Pipeline error: {e}")
             raise
+
+        finally:
+            # Ensure pipeline cleanup on all exit paths (#16)
+            logger.info("Cleaning up pipeline resources...")
+            try:
+                if self.task:
+                    await self.task.cancel()
+                if self.transport:
+                    # Daily transport cleanup handled by Pipecat
+                    pass
+                logger.info("Pipeline cleanup complete")
+            except Exception as cleanup_error:
+                logger.error(f"Error during cleanup: {cleanup_error}")
     
     def get_conversation_state(self) -> Dict[str, Any]:
         """Get current conversation state for monitoring/debugging"""
