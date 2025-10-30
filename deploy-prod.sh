@@ -30,7 +30,8 @@ DOCKER_BUILDKIT=1 docker buildx build \
 
 echo ""
 echo "🚀 Deploying to Pipecat Cloud (production agent)..."
-pipecat cloud deploy -f pcc-deploy.toml
+# CLI automatically reads pcc-deploy.toml
+pipecat cloud deploy --force
 
 echo ""
 echo "✅ ============================================"

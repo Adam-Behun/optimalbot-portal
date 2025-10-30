@@ -20,7 +20,13 @@ DOCKER_BUILDKIT=1 docker buildx build \
 
 echo ""
 echo "🚀 Deploying to Pipecat Cloud (test agent)..."
-pipecat cloud deploy -f pcc-deploy.test.toml
+# Temporarily use test config (CLI only reads pcc-deploy.toml)
+mv pcc-deploy.toml pcc-deploy.toml.backup 2>/dev/null || true
+cp pcc-deploy.test.toml pcc-deploy.toml
+pipecat cloud deploy --force
+# Restore production config
+rm pcc-deploy.toml
+mv pcc-deploy.toml.backup pcc-deploy.toml 2>/dev/null || true
 
 echo ""
 echo "✅ ============================================"
