@@ -234,62 +234,44 @@ LLM can call `update_prior_auth_status(patient_id, status, reference_number)` du
 
 `transcript.py` handler collects all user/assistant messages during call and saves to MongoDB on call completion with session metadata.
 
-### Deepgram STT: Traditional vs Flux
+### Deepgram Flux STT
 
-The system supports both **traditional Deepgram STT** and **Deepgram Flux STT** for speech recognition. Switch between them by setting `use_flux` in `services.yaml`.
+The system uses **Deepgram Flux** for speech-to-text with built-in turn detection (no external VAD required).
 
-**Deepgram Flux (Current Default)**
-- **Model:** `flux-general-en` only (no medical-specific model yet)
-- **Advantages:**
-  - **EagerEndOfTurn**: Detects potential turn ends early, allowing LLM to start processing before speaker finishes (reduces latency by 500-1500ms)
-  - **Better turn detection**: More sophisticated confidence-based EOT detection with tunable thresholds
-  - **Lower overall latency**: Optimized for conversational AI with faster response times
-- **Key Parameters:**
-  - `eager_eot_threshold` (0.5-0.7): Lower = more aggressive interruption detection (faster but more false positives)
-  - `eot_threshold` (0.5-0.8, default 0.7): Confidence required to end turn - lower = faster turn completion
-  - `eot_timeout_ms` (default 5000): Maximum time after speech stops before forcing turn end
-  - `keyterm`: List of domain-specific terms to boost recognition (e.g., healthcare terminology)
+**Features:**
+- **Model:** `flux-general-en` (general-purpose English model)
+- **Built-in turn detection:** EagerEndOfTurn and EndOfTurn events provide low-latency turn detection
+- **EagerEndOfTurn:** Detects potential turn ends early, allowing LLM processing to start before speaker finishes (reduces latency by 500-1500ms)
+- **No Silero VAD needed:** Flux handles turn detection internally, eliminating ~1.5GB PyTorch dependency
 
-**Traditional Deepgram STT**
-- **Model:** Supports specialized models like `nova-3-medical`, `nova-2-general`, etc.
-- **Use when:**
-  - Medical-specific vocabulary is critical and Flux medical model unavailable
-  - Need language detection or multi-language support
-  - Require specific Deepgram features not yet in Flux
-- **Key Parameters:**
-  - `endpointing` (ms): Silence duration to detect utterance end
-  - `interim_results`: Enable partial transcripts
-  - `vad_events`: Enable VAD event callbacks
-  - `smart_format`: Auto-format numbers/dates/times
+**Configuration Parameters:**
 
-**Switching Between Models:**
-
-Set `use_flux: true` or `use_flux: false` in `clients/<client_name>/services.yaml`:
+Configure in `clients/<client_name>/services.yaml`:
 
 ```yaml
-# Flux STT (recommended for lower latency)
 stt:
-  use_flux: true
-  model: flux-general-en
-  eager_eot_threshold: 0.55
-  eot_threshold: 0.65
-  eot_timeout_ms: 3500
-  keyterm: ["prior authorization", "CPT code", "NPI"]
-
-# Traditional STT (for medical model)
-stt:
-  use_flux: false
-  model: nova-3-medical
-  endpointing: 400
-  interim_results: true
-  vad_events: true
+  api_key: ${DEEPGRAM_API_KEY}
+  model: flux-general-en                                    # Required
+  eager_eot_threshold: 0.55                                 # Optional: Enable EagerEndOfTurn (0.4-0.7)
+  eot_threshold: 0.65                                       # Optional: End-of-turn confidence (0.5-0.8, default 0.7)
+  eot_timeout_ms: 3500                                      # Optional: Max ms after speech to force turn end (default 5000)
+  keyterm: ["prior authorization", "CPT code", "NPI"]       # Optional: Boost recognition of domain terms
+  tag: ["production", "prior-auth"]                         # Optional: Tags for usage reporting
+  mip_opt_out: false                                        # Optional: Opt out of Model Improvement Program
 ```
 
-**Tuning Flux for Your Use Case:**
+**Parameter Tuning Guide:**
 
-- **Fast-paced conversations (IVR, menus)**: Lower thresholds (`eager_eot: 0.4-0.5`, `eot: 0.6`)
-- **Natural conversations (verification calls)**: Moderate thresholds (`eager_eot: 0.5-0.6`, `eot: 0.65-0.7`)
-- **Careful listening (collecting complex info)**: Higher thresholds (`eager_eot: 0.6-0.7`, `eot: 0.75+`)
+- `eager_eot_threshold`: Lower = more aggressive interruption detection (faster, more LLM calls); higher = more conservative
+- `eot_threshold`: Lower = turns end sooner (faster responses, more interruptions); higher = turns end later (complete utterances)
+- `eot_timeout_ms`: Maximum time after speech stops before forcing turn end regardless of confidence
+- `keyterm`: List of specialized terms to improve recognition accuracy (healthcare, technical terms)
+
+**Recommended Settings by Use Case:**
+
+- **Fast-paced (IVR menus)**: `eager_eot: 0.4-0.5`, `eot: 0.6`
+- **Natural conversations**: `eager_eot: 0.5-0.6`, `eot: 0.65-0.7`
+- **Complex info collection**: `eager_eot: 0.6-0.7`, `eot: 0.75+`
 
 ## Environment Variables Required
 

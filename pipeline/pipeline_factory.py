@@ -39,10 +39,7 @@ class PipelineFactory:
             tuple: (pipeline, transport, components)
         """
         services_config = client_config.services_config
-        
-        # Create VAD analyzer
-        vad_analyzer = ServiceFactory.create_vad_analyzer()
-        
+
         # Create services
         services = {
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
@@ -53,8 +50,7 @@ class PipelineFactory:
                 services_config['services']['transport'],
                 room_config['room_url'],
                 room_config['room_token'],
-                room_config['room_name'],
-                vad_analyzer
+                room_config['room_name']
             )
         }
         

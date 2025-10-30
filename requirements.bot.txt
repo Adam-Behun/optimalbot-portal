@@ -1,36 +1,33 @@
 # Bot-specific dependencies (for Dockerfile.bot)
-# Excludes backend API dependencies (FastAPI, auth, etc.)
+# Base image includes: fastapi, loguru, pipecatcloud
+# We install only what's needed beyond that
 
-# Core Pipecat and AI services (bot needs these)
-pipecat-ai[daily,silero,elevenlabs,deepgram,tracing]
+# Core Pipecat and AI services
+# Deepgram Flux has built-in turn detection (no need for Silero VAD)
+pipecat-ai[daily,elevenlabs,deepgram,tracing]
 openai
-cartesia
 daily-python
 
-# Database (bot needs for LLM function calls and session tracking)
+# Database (for LLM function calls and session tracking)
 pymongo
 motor
 
-# Environment and configuration
+# Environment
 python-dotenv
 
-# Audio processing (bot needs for voice)
-numpy
-scipy
-
-# Observability (bot needs for tracing)
+# Observability (tracing)
 langfuse
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 
-# Schema and templating (bot needs for YAML configs)
+# Schema and templating
 jinja2
 pyyaml
 pydantic
 
-# Retry logic (bot uses in handlers)
+# Retry logic
 tenacity
 
-# Phone number parsing (bot uses in validation)
+# Phone number parsing
 phonenumbers

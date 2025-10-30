@@ -1,8 +1,12 @@
 services:
   stt:
-    provider: deepgram
-    use_flux: true
     api_key: ${DEEPGRAM_API_KEY}
+    model: flux-general-en
+    # Optional Flux parameters for turn detection tuning:
+    # eager_eot_threshold: 0.55
+    # eot_threshold: 0.65
+    # eot_timeout_ms: 3500
+    # keyterm: ["prior authorization", "CPT code", "NPI"]
 
   llm:
     provider: openai  # The LLM provider (e.g., openai, grok).

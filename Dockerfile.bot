@@ -1,41 +1,37 @@
 # Optimized Pipecat Cloud bot image
-# Build: docker buildx build --platform linux/arm64 -f Dockerfile.bot.v2 -t adambehun/healthcare-bot:latest --push .
+# Base image (207MB) includes: fastapi, loguru, pipecatcloud SDK
+# We install: pipecat-ai + voice services + minimal dependencies
 
 FROM dailyco/pipecat-base:latest
 
-# Enable bytecode compilation for faster imports
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-# Install bot-specific dependencies (excludes backend API deps)
-# Using requirements.bot.txt reduces image size by ~100MB
+# Install dependencies
+# Base image only has fastapi/loguru/pipecatcloud - we need everything else
 COPY requirements.bot.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir --upgrade -r requirements.bot.txt
+    pip install --no-cache-dir -r requirements.bot.txt && \
+    # Remove pip cache and unnecessary files
+    rm -rf /root/.cache/pip && \
+    find /usr/local/lib/python*/site-packages -name '*.pyc' -delete && \
+    find /usr/local/lib/python*/site-packages -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 
-# Copy bot entry point (most likely to change frequently)
+# Copy bot code
 COPY bot.py .
 
-# Copy only bot-required backend modules (not entire backend/)
-# This reduces image size by ~200KB and avoids copying API/FastAPI code
+# Copy minimal backend modules
 COPY backend/__init__.py backend/
 COPY backend/functions.py backend/
 COPY backend/models.py backend/
 COPY backend/sessions.py backend/
 
-# Copy bot modules (order by change frequency - least changed first)
-# Better layer caching = faster rebuilds
+# Copy bot modules (order for better caching)
 COPY services/ ./services/
 COPY clients/ ./clients/
 COPY handlers/ ./handlers/
 COPY core/ ./core/
 COPY pipeline/ ./pipeline/
 
-# Pre-compile Python to bytecode for faster cold starts (~500ms improvement)
-RUN python -m compileall -q . 2>/dev/null || true
-
-# Verify bot.py is valid (fail build if broken)
+# Verify bot.py
 RUN python -c "import bot; assert hasattr(bot, 'bot'), 'bot() function missing'"
-
-# Base image provides CMD - no need to specify
