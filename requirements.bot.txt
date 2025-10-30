@@ -1,0 +1,36 @@
+# Bot-specific dependencies (for Dockerfile.bot)
+# Excludes backend API dependencies (FastAPI, auth, etc.)
+
+# Core Pipecat and AI services (bot needs these)
+pipecat-ai[daily,silero,elevenlabs,deepgram,tracing]
+openai
+cartesia
+daily-python
+
+# Database (bot needs for LLM function calls and session tracking)
+pymongo
+motor
+
+# Environment and configuration
+python-dotenv
+
+# Audio processing (bot needs for voice)
+numpy
+scipy
+
+# Observability (bot needs for tracing)
+langfuse
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+
+# Schema and templating (bot needs for YAML configs)
+jinja2
+pyyaml
+pydantic
+
+# Retry logic (bot uses in handlers)
+tenacity
+
+# Phone number parsing (bot uses in validation)
+phonenumbers

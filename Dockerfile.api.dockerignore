@@ -1,18 +1,27 @@
-# Default .dockerignore (fallback)
-#
-# Specific ignore files are used for:
-#   - Dockerfile.api -> Dockerfile.api.dockerignore (backend API)
-#   - Dockerfile.bot -> Dockerfile.bot.dockerignore (Pipecat bot)
-#
-# This file is used if no specific ignore file exists.
+# Backend API ignore file (for Dockerfile.api)
+# Used by: fly deploy
+
+# ============================================
+# EXCLUDE: Bot-specific code (not needed by backend API)
+# ============================================
+core/
+pipeline/
+handlers/
+services/
+clients/
+bot.py
+requirements.bot.txt
+
+# ============================================
+# EXCLUDE: Frontend (deployed separately to Vercel)
+# ============================================
+frontend/
 
 # ============================================
 # Python artifacts
 # ============================================
 __pycache__
-**/__pycache__
 *.py[cod]
-**/*.py[cod]
 *$py.class
 *.so
 .Python
@@ -28,40 +37,23 @@ venv.bak/
 # ============================================
 .env
 .env.*
-**/.env
 *.log
-**/*.log
 
 # ============================================
 # IDE and OS
 # ============================================
 .vscode/
-**/.vscode
 .idea/
-**/.idea
 *.swp
 *.swo
-**/*.swp
-**/*.swo
 .DS_Store
-**/.DS_Store
 Thumbs.db
-**/Thumbs.db
 
 # ============================================
 # Database
 # ============================================
 *.db
-**/*.db
 *.sqlite3
-**/*.sqlite3
-
-# ============================================
-# Frontend
-# ============================================
-frontend/node_modules
-frontend/build
-node_modules
 
 # ============================================
 # Git
@@ -69,6 +61,14 @@ node_modules
 .git/
 .gitignore
 .github/
+
+# ============================================
+# Deployment configs (other services)
+# ============================================
+pcc-deploy*.toml
+deploy-*.sh
+Dockerfile.bot
+Dockerfile.bot.dockerignore
 
 # ============================================
 # Documentation
@@ -86,14 +86,4 @@ AUDIT_ISSUES.md
 tests/
 test_*.py
 *_test.py
-
-# ============================================
-# Obsolete files
-# ============================================
-Dockerfile.obsolete-*
-**/debug_audio.wav
-**/real*.txt
-**/ThePerfectFineTuningTranscript.txt
-**/14FineTuningExamples.txt
-**/fine-tune
-**/documentation
+pytest.ini

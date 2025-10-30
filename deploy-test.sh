@@ -9,8 +9,9 @@ echo "============================================"
 echo ""
 
 # Build Docker image for ARM64 (Pipecat Cloud architecture)
-echo "📦 Building Docker image (test tag)..."
-docker buildx build \
+# BuildKit automatically uses Dockerfile.bot.dockerignore
+echo "📦 Building optimized Docker image (test tag)..."
+DOCKER_BUILDKIT=1 docker buildx build \
   --platform linux/arm64 \
   -f Dockerfile.bot \
   -t adambehun/healthcare-bot:test \
@@ -19,7 +20,7 @@ docker buildx build \
 
 echo ""
 echo "🚀 Deploying to Pipecat Cloud (test agent)..."
-pipecatcloud deploy -f pcc-deploy.test.toml
+pipecat cloud deploy -f pcc-deploy.test.toml
 
 echo ""
 echo "✅ ============================================"

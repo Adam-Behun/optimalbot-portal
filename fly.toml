@@ -8,6 +8,9 @@ kill_timeout = '5s'
 
 [build]
   dockerfile = 'Dockerfile.api'
+  # BuildKit automatically uses Dockerfile.api.dockerignore
+  [build.args]
+    DOCKER_BUILDKIT = "1"
 
 [env]
   PYTHONUNBUFFERED = '1'

@@ -19,8 +19,9 @@ fi
 echo ""
 
 # Build Docker image for ARM64
-echo "📦 Building Docker image (latest tag)..."
-docker buildx build \
+# BuildKit automatically uses Dockerfile.bot.dockerignore
+echo "📦 Building optimized Docker image (latest tag)..."
+DOCKER_BUILDKIT=1 docker buildx build \
   --platform linux/arm64 \
   -f Dockerfile.bot \
   -t adambehun/healthcare-bot:latest \
@@ -29,7 +30,7 @@ docker buildx build \
 
 echo ""
 echo "🚀 Deploying to Pipecat Cloud (production agent)..."
-pipecatcloud deploy -f pcc-deploy.toml
+pipecat cloud deploy -f pcc-deploy.toml
 
 echo ""
 echo "✅ ============================================"
@@ -42,5 +43,5 @@ echo ""
 echo "Next steps:"
 echo "1. Update .env: PIPECAT_AGENT_NAME=healthcare-voice-ai"
 echo "2. Restart backend if needed"
-echo "3. Monitor logs: pipecatcloud agent logs healthcare-voice-ai"
+echo "3. Monitor logs: pipecat cloud agent logs healthcare-voice-ai"
 echo ""
