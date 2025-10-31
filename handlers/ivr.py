@@ -66,7 +66,9 @@ def _process_ivr_conversation(conversation_history, pipeline):
 def setup_ivr_handlers(pipeline, ivr_navigator):
     """Setup IVRNavigator event handlers for <1s response time"""
     pipeline.ivr_navigator = ivr_navigator
-    
+
+    logger.info(f"🔧 IVR handlers configured for session: {pipeline.session_id}")
+
     @ivr_navigator.event_handler("on_conversation_detected")
     async def on_conversation_detected(processor, conversation_history):
         """
@@ -75,6 +77,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
         """
         try:
             logger.info(f"👤 Human detected - Session: {pipeline.session_id}")
+            logger.debug(f"Conversation history length: {len(conversation_history) if conversation_history else 0}")
 
             # Save IVR conversation to transcript (for DB/frontend)
             # This does NOT get passed to LLM - keeps conversation context clean

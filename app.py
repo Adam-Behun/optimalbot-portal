@@ -3,6 +3,10 @@ import os
 import asyncio
 import uvicorn
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from backend.config import validate_backend_startup
 from backend.main import app

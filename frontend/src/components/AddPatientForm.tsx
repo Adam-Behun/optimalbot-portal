@@ -204,8 +204,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="patient_name"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Patient name is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'Patient name is required';
+                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
+                  return 'Patient name must contain only English alphabet characters';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -234,8 +239,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="date_of_birth"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Date of birth is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value) return 'Date of birth is required';
+                const dob = new Date(value);
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                yesterday.setHours(23, 59, 59, 999);
+                if (dob > yesterday) {
+                  return 'Date of birth must be at least yesterday or earlier';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -265,8 +279,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="facility_name"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Facility name is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'Facility name is required';
+                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
+                  return 'Facility name must contain only English alphabet characters';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -295,8 +314,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="insurance_company_name"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Insurance company is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'Insurance company is required';
+                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
+                  return 'Insurance company must contain only English alphabet characters';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -325,8 +349,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="insurance_member_id"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Member ID is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'Member ID is required';
+                if (!/^[a-zA-Z0-9]+$/.test(value.trim())) {
+                  return 'Member ID must contain only letters and numbers';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -356,8 +385,21 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
             name="insurance_phone"
             validators={{
               onChange: ({ value }) => {
-                if (!value) return 'Insurance phone is required';
-                if (!/^\+\d{10,15}$/.test(value)) return 'Phone must be +1234567890 format';
+                if (!value || !value.trim()) return 'Insurance phone is required';
+                const cleaned = value.trim().replace(/[\s\-]/g, '');
+                if (cleaned.startsWith('+1')) {
+                  const digits = cleaned.substring(2);
+                  if (!/^\d{10}$/.test(digits)) {
+                    return 'Phone must have exactly 10 digits after +1 (e.g., +15551234567)';
+                  }
+                } else if (cleaned.startsWith('1')) {
+                  const digits = cleaned.substring(1);
+                  if (!/^\d{10}$/.test(digits)) {
+                    return 'Phone must have exactly 10 digits after 1 (e.g., 15551234567)';
+                  }
+                } else {
+                  return 'Phone must start with +1 or 1 (e.g., +15551234567 or 15551234567)';
+                }
                 return undefined;
               },
             }}
@@ -373,7 +415,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    placeholder="+1234567890"
+                    placeholder="+15551234567"
                     className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
@@ -390,8 +432,20 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
             name="supervisor_phone"
             validators={{
               onChange: ({ value }) => {
-                if (value && !/^\+\d{10,15}$/.test(value)) {
-                  return 'Phone must be +1234567890 format';
+                if (!value || value.trim() === '') return undefined;
+                const cleaned = value.trim().replace(/[\s\-]/g, '');
+                if (cleaned.startsWith('+1')) {
+                  const digits = cleaned.substring(2);
+                  if (!/^\d{10}$/.test(digits)) {
+                    return 'Phone must have exactly 10 digits after +1 (e.g., +15551234567)';
+                  }
+                } else if (cleaned.startsWith('1')) {
+                  const digits = cleaned.substring(1);
+                  if (!/^\d{10}$/.test(digits)) {
+                    return 'Phone must have exactly 10 digits after 1 (e.g., 15551234567)';
+                  }
+                } else {
+                  return 'Phone must start with +1 or 1 (e.g., +15551234567 or 15551234567)';
                 }
                 return undefined;
               },
@@ -408,7 +462,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    placeholder="+1234567890"
+                    placeholder="+15551234567"
                     className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
@@ -424,8 +478,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="cpt_code"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'CPT code is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'CPT code is required';
+                if (!/^\d+$/.test(value.trim())) {
+                  return 'CPT code must contain only integers';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -454,8 +513,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="provider_npi"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Provider NPI is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'Provider NPI is required';
+                if (!/^\d+$/.test(value.trim())) {
+                  return 'Provider NPI must contain only integers';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -484,8 +548,13 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="provider_name"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Provider name is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value || !value.trim()) return 'Provider name is required';
+                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
+                  return 'Provider name must contain only English alphabet characters';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b">
@@ -514,8 +583,21 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           <form.Field
             name="appointment_time"
             validators={{
-              onChange: ({ value }) =>
-                !value ? 'Appointment time is required' : undefined,
+              onChange: ({ value }) => {
+                if (!value) return 'Appointment time is required';
+                const appt = new Date(value);
+                const now = new Date();
+                const minTime = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
+                const maxTime = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000); // 3 months from now
+
+                if (appt < minTime) {
+                  return 'Appointment must be at least 1 hour from now';
+                }
+                if (appt > maxTime) {
+                  return 'Appointment must be within 3 months from now';
+                }
+                return undefined;
+              },
             }}
             children={(field) => (
               <div className="flex items-center py-1.5 border-b last:border-b-0">

@@ -25,6 +25,7 @@ class ServiceFactory:
             room_token,
             room_name,
             params=DailyParams(
+                audio_in_enabled=True,
                 audio_in_sample_rate=16000,
                 audio_in_channels=1,
                 audio_out_enabled=True,

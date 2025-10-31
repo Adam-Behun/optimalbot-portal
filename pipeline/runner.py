@@ -85,7 +85,7 @@ class ConversationPipeline:
             f"Starting pipeline - Client: {self.client_name}, "
             f"Session: {self.session_id}, Phone: {self.phone_number}"
         )
-        
+
         # Build pipeline
         session_data = {
             'session_id': self.session_id,
@@ -93,19 +93,27 @@ class ConversationPipeline:
             'patient_data': self.patient_data,
             'phone_number': self.phone_number
         }
-        
+
         room_config = {
             'room_url': room_url,
             'room_token': room_token,
             'room_name': room_name
         }
-        
+
+        logger.info(f"📋 Building pipeline with session_data keys: {list(session_data.keys())}")
+        logger.info(f"📋 Room config: {room_name}")
+        logger.info("📋 Calling PipelineFactory.build()...")
+
         self.pipeline, self.transport, components = PipelineFactory.build(
             self.client_config,
             session_data,
             room_config
         )
-        
+
+        logger.info("✅ Pipeline built successfully")
+        logger.info(f"✅ Pipeline object: {type(self.pipeline).__name__}")
+        logger.info(f"✅ Transport object: {type(self.transport).__name__}")
+
         # Extract components
         self.conversation_context = components['context']
         self.state_manager = components['state_manager']
@@ -113,14 +121,29 @@ class ConversationPipeline:
         self.context_aggregators = components['context_aggregators']
         self.ivr_navigator = components['ivr_navigator']
         self.llm = components['llm']
-        
-        # Setup handlers
+
+        logger.info(f"✅ Components extracted - State: {self.conversation_context.current_state}")
+        logger.info(f"✅ LLM service: {type(self.llm).__name__}")
+        logger.info(f"✅ Transport: {type(self.transport).__name__}")
+
+        # CRITICAL: Setup handlers BEFORE creating task
+        # The task will join the Daily room immediately, so handlers must be ready
+        logger.info("🔧 Setting up dialout handlers...")
         setup_dialout_handlers(self)
+
+        logger.info("🔧 Setting up transcript handler...")
         setup_transcript_handler(self)
+
+        logger.info("🔧 Setting up IVR handlers...")
         setup_ivr_handlers(self, components['ivr_navigator'])
+
+        logger.info("🔧 Setting up function call handler...")
         setup_function_call_handler(self)
-        
+
+        logger.info("✅ All handlers configured")
+
         # Create task with OpenTelemetry enabled
+        # NOTE: Task will trigger transport.join() immediately
         # Pipecat will automatically create the conversation span and all child spans
         self.task = PipelineTask(
             self.pipeline,
@@ -142,12 +165,21 @@ class ConversationPipeline:
         self.state_manager.set_task(self.task)
         self.runner = CustomPipelineRunner()
 
+        logger.info("=" * 60)
+        logger.info("🚀 STARTING PIPELINE RUNNER")
+        logger.info(f"🚀 Initial state: {self.conversation_context.current_state}")
+        logger.info(f"🚀 Session: {self.session_id}")
+        logger.info(f"🚀 Phone: {self.phone_number}")
+        logger.info("=" * 60)
+
         try:
             await self.runner.run(self.task)
-            logger.info("Pipeline completed successfully")
+            logger.info("✅ Pipeline completed successfully")
 
         except Exception as e:
             logger.error(f"Pipeline error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
 
         finally:

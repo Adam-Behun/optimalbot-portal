@@ -121,6 +121,10 @@ async def start_call(
             agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
             pipecat_api_key = os.getenv("PIPECAT_API_KEY")
 
+            logger.info(f"Agent name from env: {agent_name}")
+            logger.info(f"API key from env: {'***' + pipecat_api_key[-4:] if pipecat_api_key else 'NOT SET'}")
+            logger.info(f"API key length: {len(pipecat_api_key) if pipecat_api_key else 0}")
+
             if not pipecat_api_key:
                 raise HTTPException(status_code=500, detail="PIPECAT_API_KEY not configured")
 

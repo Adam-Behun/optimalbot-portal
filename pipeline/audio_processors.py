@@ -4,6 +4,9 @@ from pipecat.processors.frame_processor import FrameDirection
 from pipecat.audio.utils import create_stream_resampler
 import audioop
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AudioResampler(FrameProcessor):
     def __init__(self, target_sample_rate: int = 16000, target_channels: int = 1, **kwargs):
@@ -11,10 +14,19 @@ class AudioResampler(FrameProcessor):
         self._resampler = create_stream_resampler()
         self.target_sample_rate = target_sample_rate
         self.target_channels = target_channels
+        self._audio_frame_count = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, AudioRawFrame):
+            self._audio_frame_count += 1
+            if self._audio_frame_count == 1:
+                logger.info(f"🎤 AudioResampler: First audio frame received! "
+                           f"(sr={frame.sample_rate}, ch={frame.num_channels}, "
+                           f"len={len(frame.audio)} bytes)")
+            elif self._audio_frame_count % 100 == 0:
+                logger.debug(f"🎤 AudioResampler: {self._audio_frame_count} frames processed")
+
             audio = frame.audio
             sample_rate = frame.sample_rate
             channels = frame.num_channels
@@ -44,11 +56,22 @@ class AudioResampler(FrameProcessor):
 class DropEmptyAudio(FrameProcessor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._audio_frame_count = 0
+        self._dropped_count = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, AudioRawFrame) and len(frame.audio) == 0:
-            return
+        if isinstance(frame, AudioRawFrame):
+            if len(frame.audio) == 0:
+                self._dropped_count += 1
+                if self._dropped_count == 1:
+                    logger.warning("🚫 DropEmptyAudio: Dropping empty audio frame")
+                return
+            else:
+                self._audio_frame_count += 1
+                if self._audio_frame_count == 1:
+                    logger.info(f"✅ DropEmptyAudio: First valid audio frame passed through! "
+                               f"({len(frame.audio)} bytes)")
         await self.push_frame(frame, direction)
 
 class StateTagStripper(FrameProcessor):

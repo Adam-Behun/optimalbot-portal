@@ -1,12 +1,11 @@
 """
 Pydantic schemas for request/response validation
-Minimal validation focused on security and data integrity
+Validation rules match frontend for consistent UX
 """
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
-import phonenumbers
 
 
 class PatientCreate(BaseModel):
@@ -14,7 +13,7 @@ class PatientCreate(BaseModel):
 
     # Patient demographics
     patient_name: str = Field(..., min_length=1, max_length=100)
-    date_of_birth: str = Field(..., pattern=r'^\d{4}-\d{2}-\d{2}$')
+    date_of_birth: str
 
     # Insurance information
     insurance_member_id: str = Field(..., min_length=1, max_length=50)
@@ -24,8 +23,8 @@ class PatientCreate(BaseModel):
 
     # Facility/provider information
     facility_name: str = Field(..., min_length=1, max_length=100)
-    cpt_code: str = Field(..., min_length=1, max_length=20)
-    provider_npi: str = Field(..., pattern=r'^\d{10}$')
+    cpt_code: str
+    provider_npi: str
     provider_name: str = Field(..., min_length=1, max_length=100)
 
     # Appointment information
@@ -38,66 +37,140 @@ class PatientCreate(BaseModel):
     call_status: Optional[str] = Field(default="Not Started")
     prior_auth_status: Optional[str] = Field(default="Pending")
 
+    @field_validator('patient_name', 'facility_name', 'insurance_company_name', 'provider_name')
+    @classmethod
+    def validate_text_field(cls, v: str) -> str:
+        """Validate text contains only English alphabet characters"""
+        if not v or not v.strip():
+            raise ValueError('Field cannot be empty')
+        # Allow letters, spaces, hyphens, apostrophes, periods, commas
+        if not re.match(r"^[a-zA-Z\s\-'.,]+$", v.strip()):
+            raise ValueError('Field must contain only English alphabet characters')
+        return v.strip()
+
+    @field_validator('insurance_member_id')
+    @classmethod
+    def validate_member_id(cls, v: str) -> str:
+        """Validate member ID is alphanumeric"""
+        if not v or not v.strip():
+            raise ValueError('Member ID cannot be empty')
+        if not re.match(r'^[a-zA-Z0-9]+$', v.strip()):
+            raise ValueError('Member ID must contain only letters and numbers')
+        return v.strip()
+
     @field_validator('insurance_phone')
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        """Validate US/Canada phone only, block emergency/premium numbers"""
-        try:
-            parsed = phonenumbers.parse(v.strip(), None)
+        """Validate US/Canada phone number format"""
+        if not v or not v.strip():
+            raise ValueError('Phone number is required')
 
-            # US/Canada only (+1)
-            if parsed.country_code != 1:
-                raise ValueError(f'Only US/Canadian numbers allowed. Got country code +{parsed.country_code}, expected +1. Use format: +1XXXXXXXXXX')
+        # Remove spaces and dashes for validation
+        cleaned = v.strip().replace(' ', '').replace('-', '')
 
-            if not phonenumbers.is_valid_number(parsed):
-                raise ValueError(f'Invalid phone number: {v}. Use format: +1XXXXXXXXXX')
+        # Must start with +1 or 1
+        if cleaned.startswith('+1'):
+            digits = cleaned[2:]
+        elif cleaned.startswith('1'):
+            digits = cleaned[1:]
+            cleaned = '+' + cleaned
+        else:
+            raise ValueError('Phone must start with +1 or 1 (e.g., +15551234567 or 15551234567)')
 
-            # Block emergency and premium numbers
-            national = str(parsed.national_number)
-            blocked_prefixes = ['911', '988', '999', '900', '976']
-            if any(national.startswith(p) for p in blocked_prefixes):
-                raise ValueError(f'Cannot call emergency/premium numbers (prefix: {national[:3]})')
+        # Check remaining are 10 digits
+        if not re.match(r'^\d{10}$', digits):
+            raise ValueError('Phone must have exactly 10 digits after country code (e.g., +15551234567)')
 
-            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-        except phonenumbers.NumberParseException as e:
-            raise ValueError(f'Invalid phone format: {v}. Must use +1XXXXXXXXXX (e.g., +15165551234)')
+        # Return normalized format
+        return cleaned if cleaned.startswith('+') else '+' + cleaned
 
     @field_validator('supervisor_phone')
     @classmethod
     def validate_supervisor_phone(cls, v: Optional[str]) -> Optional[str]:
-        """Validate supervisor phone (optional)"""
+        """Validate supervisor phone (optional, same rules as insurance_phone)"""
         if v is None or v.strip() == '':
             return None
 
-        # Use same validation as insurance_phone
-        try:
-            parsed = phonenumbers.parse(v.strip(), None)
-            if parsed.country_code != 1:
-                raise ValueError(f'Only US/Canadian numbers allowed. Got country code +{parsed.country_code}, expected +1. Use format: +1XXXXXXXXXX')
-            if not phonenumbers.is_valid_number(parsed):
-                raise ValueError(f'Invalid phone number: {v}. Use format: +1XXXXXXXXXX')
-            national = str(parsed.national_number)
-            blocked_prefixes = ['911', '988', '999', '900', '976']
-            if any(national.startswith(p) for p in blocked_prefixes):
-                raise ValueError(f'Cannot call emergency/premium numbers (prefix: {national[:3]})')
-            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-        except phonenumbers.NumberParseException:
-            raise ValueError(f'Invalid phone format: {v}. Must use +1XXXXXXXXXX (e.g., +15165551234)')
+        # Apply same validation as insurance_phone
+        cleaned = v.strip().replace(' ', '').replace('-', '')
+
+        if cleaned.startswith('+1'):
+            digits = cleaned[2:]
+        elif cleaned.startswith('1'):
+            digits = cleaned[1:]
+            cleaned = '+' + cleaned
+        else:
+            raise ValueError('Phone must start with +1 or 1 (e.g., +15551234567 or 15551234567)')
+
+        if not re.match(r'^\d{10}$', digits):
+            raise ValueError('Phone must have exactly 10 digits after country code (e.g., +15551234567)')
+
+        return cleaned if cleaned.startswith('+') else '+' + cleaned
+
+    @field_validator('cpt_code')
+    @classmethod
+    def validate_cpt_code(cls, v: str) -> str:
+        """Validate CPT code is integers only"""
+        if not v or not v.strip():
+            raise ValueError('CPT code is required')
+        if not re.match(r'^\d+$', v.strip()):
+            raise ValueError('CPT code must contain only integers')
+        return v.strip()
+
+    @field_validator('provider_npi')
+    @classmethod
+    def validate_npi(cls, v: str) -> str:
+        """Validate NPI is integers only"""
+        if not v or not v.strip():
+            raise ValueError('Provider NPI is required')
+        if not re.match(r'^\d+$', v.strip()):
+            raise ValueError('Provider NPI must contain only integers')
+        return v.strip()
 
     @field_validator('date_of_birth')
     @classmethod
     def validate_dob(cls, v: str) -> str:
-        """Validate date format and reasonable range"""
+        """Validate date is at least yesterday and in the past"""
         try:
             dob = datetime.strptime(v, '%Y-%m-%d')
-            if dob > datetime.now():
-                raise ValueError('Date cannot be in future')
-            if (datetime.now() - dob).days > 130 * 365:
-                raise ValueError('Date too far in past')
+            yesterday = datetime.now() - timedelta(days=1)
+            yesterday = yesterday.replace(hour=23, minute=59, second=59)
+
+            if dob > yesterday:
+                raise ValueError('Date of birth must be at least yesterday or earlier')
+
             return v
         except ValueError as e:
-            if 'format' in str(e).lower():
-                raise ValueError('Use YYYY-MM-DD format')
+            if 'does not match format' in str(e):
+                raise ValueError('Date must be in YYYY-MM-DD format')
+            raise
+
+    @field_validator('appointment_time')
+    @classmethod
+    def validate_appointment_time(cls, v: str) -> str:
+        """Validate appointment is between 1 hour from now and 3 months out"""
+        try:
+            # Try parsing ISO format with T
+            if 'T' in v:
+                appt = datetime.fromisoformat(v.replace('Z', '+00:00'))
+            else:
+                # Try space-separated format
+                appt = datetime.strptime(v, '%Y-%m-%d %H:%M:%S')
+
+            now = datetime.now()
+            min_time = now + timedelta(hours=1)
+            max_time = now + timedelta(days=90)  # 3 months
+
+            if appt < min_time:
+                raise ValueError('Appointment must be at least 1 hour from now')
+
+            if appt > max_time:
+                raise ValueError('Appointment must be within 3 months from now')
+
+            return v
+        except ValueError as e:
+            if 'does not match' in str(e) or 'Invalid' in str(e):
+                raise ValueError('Appointment time must be in valid datetime format (YYYY-MM-DDTHH:MM)')
             raise
 
 

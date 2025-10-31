@@ -8,6 +8,7 @@ import {
   BulkAddResponse,
   AuthResponse
 } from './types';
+import { removeAuthToken } from './lib/auth';
 
 // Use Vite environment variable (empty string uses proxy in dev, relative URLs in production)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -29,6 +30,28 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor to handle 401 (session expired)
+api.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    // If we get a 401 Unauthorized response (token expired or invalid)
+    if (error.response?.status === 401) {
+      // Clear authentication data
+      removeAuthToken();
+
+      // Redirect to login page
+      window.location.href = '/login';
+
+      // Return a rejected promise with a user-friendly message
+      return Promise.reject(new Error('Your session has expired. Please log in again.'));
+    }
+
     return Promise.reject(error);
   }
 );

@@ -53,14 +53,12 @@ prompts:
     
     task: |
       The call just connected.
-      
-      WAIT SILENTLY for the other party to speak first. DO NOT say anything yet.
-      
-      They will either:
-      1. Answer as a human ("Hello?", "Insurance department, how can I help?")
-      2. Play an IVR menu ("Press 1 for..., Press 2 for...")
-      
-      Let them speak first. Stay silent and listen.
+
+      TEST MODE: Immediately greet the person who answered.
+
+      Say ONLY: "Hello, this is a test call. Can you hear me?"
+
+      Then wait for their response.
 
   # IVR navigation in progress
   ivr_navigation:
