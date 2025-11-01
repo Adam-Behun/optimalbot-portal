@@ -4,7 +4,7 @@
 
 # Core Pipecat and AI services
 # Deepgram Flux has built-in turn detection (no need for Silero VAD)
-pipecat-ai[daily,elevenlabs,deepgram,tracing]
+pipecat-ai[daily,elevenlabs,deepgram,groq,tracing]
 openai
 daily-python
 

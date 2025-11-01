@@ -40,12 +40,16 @@ class PipelineFactory:
         """
         services_config = client_config.services_config
 
+        # Create LLM switcher (manages classifier_llm and main llm)
+        llm_switcher, classifier_llm, main_llm = ServiceFactory.create_llm_switcher(services_config['services'])
+
         # Create services
         services = {
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
             'tts': ServiceFactory.create_tts(services_config['services']['tts']),
-            'llm': ServiceFactory.create_llm(services_config['services']['llm']),
-            'classifier_llm': ServiceFactory.create_classifier_llm(services_config['services']['classifier_llm']),
+            'llm_switcher': llm_switcher,
+            'classifier_llm': classifier_llm,  # Keep reference for IVRNavigator
+            'main_llm': main_llm,  # Keep reference for switching
             'transport': ServiceFactory.create_transport(
                 services_config['services']['transport'],
                 room_config['room_url'],
@@ -93,15 +97,14 @@ class PipelineFactory:
         # Create transcript processor
         transcript_processor = TranscriptProcessor()
         
-        # Create LLM context aggregator
+        # Create LLM context aggregator using main_llm
+        # Note: Context aggregator routes messages through IVRNavigator → LLMSwitcher → active LLM
         initial_prompt = context.render_prompt()
         llm_context = OpenAILLMContext(
             messages=[{"role": "system", "content": initial_prompt}],
-            tools=PATIENT_TOOLS
+            tools=NOT_GIVEN  # Start with no tools - classifier_llm is active initially
         )
-        # Disable tools initially for fast IVR classification
-        llm_context.set_tools(NOT_GIVEN)
-        context_aggregators = services['llm'].create_context_aggregator(llm_context)
+        context_aggregators = services['main_llm'].create_context_aggregator(llm_context)
         
         # Link state manager to context aggregators
         state_manager.set_context_aggregators(context_aggregators)
@@ -121,9 +124,9 @@ class PipelineFactory:
             "ivr_navigation", "task", formatted_data
         ) or "Navigate to provider services for eligibility verification"
 
-        # Configure IVRNavigator with custom classifier prompt and optimized VAD parameters
+        # Configure IVRNavigator with LLM switcher (starts with classifier_llm active)
         ivr_navigator = IVRNavigator(
-            llm=services['classifier_llm'],  # Fast classifier without tools
+            llm=services['llm_switcher'],  # LLM switcher (classifier active initially)
             ivr_prompt=ivr_goal,
             ivr_vad_params=VADParams(stop_secs=2.0)  # Longer wait for IVR menus
         )
@@ -139,7 +142,8 @@ class PipelineFactory:
             'transcript_processor': transcript_processor,
             'context_aggregators': context_aggregators,
             'ivr_navigator': ivr_navigator,
-            'llm': services['llm']
+            'llm_switcher': services['llm_switcher'],
+            'main_llm': services['main_llm']
         }
     
     @staticmethod

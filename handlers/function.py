@@ -7,7 +7,7 @@ from backend.functions import update_prior_auth_status_handler, dial_supervisor_
 def setup_function_call_handler(pipeline):
     """Setup handler for LLM function calls"""
 
-    @pipeline.llm.event_handler("on_function_call")
+    @pipeline.main_llm.event_handler("on_function_call")
     async def handle_function_call(llm, function_name, params):
         logger.info(f"🔧 Function call: {function_name}")
 

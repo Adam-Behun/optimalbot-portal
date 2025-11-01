@@ -1,11 +1,14 @@
 """Service Factory - Creates service instances from configuration"""
 
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from loguru import logger
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
+from pipecat.pipeline.llm_switcher import LLMSwitcher
+from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
 from backend.functions import PATIENT_TOOLS, update_prior_auth_status_handler
 
 
@@ -66,27 +69,47 @@ class ServiceFactory:
         return service
     
     @staticmethod
-    def create_llm(config: Dict[str, Any]) -> OpenAILLMService:
+    def create_llm(config: Dict[str, Any]):
         """Create main LLM with function registration"""
-        llm = OpenAILLMService(
-            api_key=config['api_key'],
-            model=config['model'],
-            temperature=config['temperature']
-        )
+        provider = config.get('provider', 'openai')
+
+        if provider == 'groq':
+            llm = GroqLLMService(
+                api_key=config['api_key'],
+                model=config['model'],
+                temperature=config.get('temperature', 0.4)
+            )
+        else:  # default to openai
+            llm = OpenAILLMService(
+                api_key=config['api_key'],
+                model=config['model'],
+                temperature=config['temperature']
+            )
+
         llm.register_function("update_prior_auth_status", update_prior_auth_status_handler)
         return llm
 
     @staticmethod
-    def create_classifier_llm(config: Dict[str, Any]) -> OpenAILLMService:
+    def create_classifier_llm(config: Dict[str, Any]):
         """Create fast classifier LLM without tools for IVR detection"""
-        llm = OpenAILLMService(
-            api_key=config['api_key'],
-            model=config['model'],
-            temperature=0,  # Deterministic classification
-            max_tokens=10   # Only need "<mode>conversation</mode>"
-        )
-        # Register function handler (needed when tools are enabled mid-conversation)
-        llm.register_function("update_prior_auth_status", update_prior_auth_status_handler)
+        provider = config.get('provider', 'openai')
+
+        if provider == 'groq':
+            llm = GroqLLMService(
+                api_key=config['api_key'],
+                model=config['model'],
+                temperature=0,  # Deterministic classification
+                max_tokens=10   # Only need "<mode>conversation</mode>"
+            )
+        else:  # default to openai
+            llm = OpenAILLMService(
+                api_key=config['api_key'],
+                model=config['model'],
+                temperature=0,  # Deterministic classification
+                max_tokens=10   # Only need "<mode>conversation</mode>"
+            )
+
+        # No function registration for classifier - it only does IVR vs Human detection
         return llm
 
     @staticmethod
@@ -107,3 +130,26 @@ class ServiceFactory:
             model=config['model'],
             params=params
         )
+
+    @staticmethod
+    def create_llm_switcher(config: Dict[str, Any]) -> tuple:
+        """Create LLM switcher managing classifier and main LLM
+
+        The switcher starts with classifier_llm active (for initial IVR/CONVERSATION detection).
+        To switch to main_llm, push ManuallySwitchServiceFrame(service=main_llm) to pipeline.
+
+        Returns:
+            tuple: (llm_switcher, classifier_llm, main_llm)
+        """
+        # Create both LLMs separately
+        classifier_llm = ServiceFactory.create_classifier_llm(config['classifier_llm'])
+        main_llm = ServiceFactory.create_llm(config['llm'])
+
+        # Create switcher with both LLMs
+        # Manual strategy defaults to first LLM (classifier_llm) as active
+        llm_switcher = LLMSwitcher(
+            llms=[classifier_llm, main_llm],
+            strategy_type=ServiceSwitcherStrategyManual
+        )
+
+        return llm_switcher, classifier_llm, main_llm

@@ -5,7 +5,8 @@ from pipecat.frames.frames import (
     LLMMessagesUpdateFrame,
     VADParamsUpdateFrame,
     TTSSpeakFrame,
-    EndFrame
+    EndFrame,
+    ManuallySwitchServiceFrame
 )
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
@@ -92,7 +93,11 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             pipeline.conversation_context.transition_to("verification", "human_answered")
             verification_prompt = pipeline.conversation_context.render_prompt()
 
-            # Enable tools for function calling
+            # Switch to main LLM (has functions registered)
+            switch_frame = ManuallySwitchServiceFrame(service=pipeline.main_llm)
+            await pipeline.task.queue_frames([switch_frame])
+
+            # Enable tools for function calling (context needs to know tools are available)
             context = pipeline.context_aggregators.user().context
             context.set_tools(PATIENT_TOOLS)
 
@@ -121,6 +126,16 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             if status == IVRStatus.DETECTED:
                 logger.info("🤖 IVR system detected - auto-navigation starting")
 
+                # Switch to main LLM for IVR navigation (needs smarter model)
+                switch_frame = ManuallySwitchServiceFrame(service=pipeline.main_llm)
+                await pipeline.task.queue_frames([switch_frame])
+
+                # Enable tools for IVR navigation (though IVR shouldn't call functions)
+                context = pipeline.context_aggregators.user().context
+                context.set_tools(PATIENT_TOOLS)
+
+                logger.info("✅ Switched to main LLM for IVR navigation")
+
                 # Add IVR detection summary to transcript
                 pipeline.transcripts.append({
                     "role": "system",
@@ -141,12 +156,9 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                 })
 
                 # Same fast greeting flow as direct human detection
+                # Note: main_llm already active from DETECTED, no need to switch again
                 pipeline.conversation_context.transition_to("verification", "ivr_complete")
                 verification_prompt = pipeline.conversation_context.render_prompt()
-
-                # Enable tools for function calling
-                context = pipeline.context_aggregators.user().context
-                context.set_tools(PATIENT_TOOLS)
 
                 messages = [{"role": "system", "content": verification_prompt}]
 

@@ -9,21 +9,17 @@ services:
     # keyterm: ["prior authorization", "CPT code", "NPI"]
 
   llm:
-    provider: openai  # The LLM provider (e.g., openai, grok).
-    model: gpt-4o-mini  # Model name; gpt-4o-mini is faster/cheaper for low-latency responses.
+    provider: openai  # Main LLM for conversation and IVR navigation
+    model: gpt-4o-mini  # Capable model for complex tasks
     temperature: 0.4  # Sampling temperature (0-2); higher values make output more creative/random, lower more deterministic/focused.
     api_key: ${OPENAI_API_KEY}  # API authentication key.
-    max_tokens: 100  # Maximum tokens in response; limits output length to prevent long delays in generation.
-    top_p: 0.85  # Nucleus sampling (0-1); considers top probability mass for diversity; lower focuses on likely tokens for consistency.
-    frequency_penalty: 0.5  # Penalty for repeating tokens ( -2 to 2); positive values reduce repetition for more natural dialogue.
-    presence_penalty: 0.3  # Encourages staying on topic
-    seed: 42  # Deterministic outputs for consistency
+    max_tokens: 150  # Maximum tokens in response; limits output length to prevent long delays in generation.
 
   classifier_llm:
-    provider: openai
-    model: gpt-4o-mini
+    provider: groq
+    model: llama-3.1-8b-instant  # Fastest production model for classification (560 t/s)
     temperature: 0  # Deterministic classification
-    api_key: ${OPENAI_API_KEY}
+    api_key: ${GROQ_API_KEY}
     max_tokens: 10  # Only need "<mode>conversation</mode>"
 
   tts:

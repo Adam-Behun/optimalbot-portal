@@ -71,7 +71,8 @@ class ConversationPipeline:
         self.context_aggregators = None
         self.transcript_processor = None
         self.ivr_navigator = None
-        self.llm = None
+        self.llm_switcher = None
+        self.main_llm = None
         self.runner = None
         
         # Transcript tracking
@@ -120,10 +121,12 @@ class ConversationPipeline:
         self.transcript_processor = components['transcript_processor']
         self.context_aggregators = components['context_aggregators']
         self.ivr_navigator = components['ivr_navigator']
-        self.llm = components['llm']
+        self.llm_switcher = components['llm_switcher']
+        self.main_llm = components['main_llm']
 
         logger.info(f"✅ Components extracted - State: {self.conversation_context.current_state}")
-        logger.info(f"✅ LLM service: {type(self.llm).__name__}")
+        logger.info(f"✅ LLM switcher: {type(self.llm_switcher).__name__}")
+        logger.info(f"✅ Active LLM: {type(self.llm_switcher.active_llm).__name__}")
         logger.info(f"✅ Transport: {type(self.transport).__name__}")
 
         # CRITICAL: Setup handlers BEFORE creating task
