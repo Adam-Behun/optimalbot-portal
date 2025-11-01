@@ -1,6 +1,7 @@
 # Pipecat and AI services
 pipecat-ai[daily,silero,elevenlabs,deepgram,groq,tracing]
 openai
+anthropic
 cartesia
 daily-python
 
