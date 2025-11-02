@@ -2,669 +2,126 @@
   {
     "case_id": "000",
     "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "clear_provider_option",
-      "description": "Tests navigation when menu explicitly offers a provider services option",
-      "user_utterance": "Thank you for calling HealthFirst. Please listen carefully as our menu options have changed. Press 1 for member services. Press 2 for provider services and claims. Press 3 to speak with a representative. Press 4 to repeat this menu.",
-      "expected_behavior": "Press 2. The menu explicitly labels option 2 as 'provider services and claims,' which directly matches the provider-focused intent. This is a clear and unambiguous match."
-    },
-    "conversation_history": []
+    "scenario": {
+      "scenario_id": "aetna_provider_services_direct",
+      "description": "Direct navigation to provider services representative for eligibility verification",
+      "steps": [
+        {
+          "user_utterance": "Thank you for calling Aetna. This call may be monitored for quality assurance. Para español, oprima nueve. For member services, press 1. For provider services, press 2. For sales and new plans, press 3.",
+          "expected_dtmf": "2",
+          "reasoning": "Selecting provider services as we are calling as a healthcare provider representative"
+        },
+        {
+          "user_utterance": "You have reached provider services. For eligibility and benefits verification, press 1. For prior authorization status, press 2. For claims inquiry, press 3. To speak with a provider representative, press 0.",
+          "expected_dtmf": "1",
+          "reasoning": "Selecting eligibility and benefits verification which is our primary objective"
+        },
+        {
+          "user_utterance": "Please hold while we connect you to an eligibility verification specialist. Your estimated wait time is three minutes.",
+          "expected_dtmf": "",
+          "reasoning": "No action needed - call is being transferred to the appropriate department"
+        }
+      ]
+    }
   },
   {
     "case_id": "001",
     "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "member_vs_provider_confusion",
-      "description": "Tests decision-making when both member and provider options exist but provider benefits could be misinterpreted as member-focused",
-      "user_utterance": "Welcome to BlueCare Insurance. Press 1 to check your member benefits and eligibility. Press 2 for claims status. Press 3 for pharmacy information. Press 9 for all other inquiries.",
-      "expected_behavior": "Press 9 for all other inquiries. While 'benefits and eligibility' might relate to providers checking patient coverage, option 1 is explicitly framed as 'your member benefits' (patient-focused). Options 2 and 3 are ambiguous. Since there's no clear provider services option and the context is uncertain, selecting option 9 ensures reaching someone who can properly route the call."
-    },
-    "conversation_history": []
+    "scenario": {
+      "scenario_id": "united_healthcare_multilevel_auth",
+      "description": "Multi-level navigation through provider menu to reach prior authorization department",
+      "steps": [
+        {
+          "user_utterance": "Welcome to UnitedHealthcare. For English, press 1. Para español, oprima dos.",
+          "expected_dtmf": "1",
+          "reasoning": "Selecting English language option to proceed with the call"
+        },
+        {
+          "user_utterance": "For questions about your health plan or member ID card, press 1. If you are a healthcare provider or facility, press 2. For all other inquiries, press 3. To repeat this menu, press 9.",
+          "expected_dtmf": "2",
+          "reasoning": "Identifying as a healthcare provider to access provider-specific services"
+        },
+        {
+          "user_utterance": "Provider services menu. For general provider inquiries, press 1. For utilization management including prior authorizations, press 2. For claims and reimbursement, press 3. For contracting and credentialing, press 4. To return to the main menu, press star.",
+          "expected_dtmf": "2",
+          "reasoning": "Selecting utilization management for prior authorization requests"
+        },
+        {
+          "user_utterance": "Utilization management. For prior authorization requests, press 1. For authorization status checks, press 2. For medical necessity reviews, press 3. To speak with a clinician, press 0.",
+          "expected_dtmf": "1",
+          "reasoning": "Selecting prior authorization requests to submit or verify authorization requirements"
+        },
+        {
+          "user_utterance": "Transferring you to our prior authorization department. Please have the member ID and procedure codes ready. Please hold.",
+          "expected_dtmf": "",
+          "reasoning": "No action needed - successfully routed to prior authorization department"
+        }
+      ]
+    }
   },
   {
-    "case_id": "002_step1",
+    "case_id": "002",
     "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "provider_services_2step",
-      "description": "Two-step navigation from main menu to provider services department [Step 1/2]",
-      "user_utterance": "Thank you for calling HealthCare Solutions. Please listen carefully as our menu options have changed. Press 1 for member services, press 2 for provider services, press 3 for pharmacy information, or press 0 to speak with an operator.",
-      "expected_behavior": "Should press <dtmf>2</dtmf>. Healthcare provider calling about a patient matter, so selecting provider services"
-    },
-    "conversation_history": []
+    "scenario": {
+      "scenario_id": "cigna_wrong_path_recovery",
+      "description": "Navigation with initial wrong selection to member services, backtracking to reach provider line",
+      "steps": [
+        {
+          "user_utterance": "Thank you for calling Cigna. Your call may be recorded. For questions about your benefits or to find a doctor, press 1. For pharmacy and prescription inquiries, press 2. For providers and facilities, press 3. For all other questions, press 4.",
+          "expected_dtmf": "1",
+          "reasoning": "Mistakenly selecting member services option - this will need to be corrected"
+        },
+        {
+          "user_utterance": "Member services. For eligibility and benefits, press 1. For claims status, press 2. To find a network provider, press 3. To speak with a member services representative, press 0. To return to the previous menu, press star.",
+          "expected_dtmf": "*",
+          "reasoning": "Recognizing this is member services, not provider services - returning to main menu to select correct option"
+        },
+        {
+          "user_utterance": "Returning to main menu. For questions about your benefits or to find a doctor, press 1. For pharmacy and prescription inquiries, press 2. For providers and facilities, press 3. For all other questions, press 4.",
+          "expected_dtmf": "3",
+          "reasoning": "Now correctly selecting providers and facilities option as we are calling as a healthcare provider"
+        },
+        {
+          "user_utterance": "Provider relations. For eligibility verification, press 1. For prior authorization, press 2. For claims and payment, press 3. To speak with a provider services representative, press 0.",
+          "expected_dtmf": "1",
+          "reasoning": "Selecting eligibility verification which is our target department for verifying patient coverage"
+        },
+        {
+          "user_utterance": "Connecting you to eligibility verification. Please hold for the next available representative.",
+          "expected_dtmf": "",
+          "reasoning": "No action needed - successfully navigated to eligibility verification after correcting initial error"
+        }
+      ]
+    }
   },
   {
-    "case_id": "002_step2",
+    "case_id": "003",
     "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "provider_services_2step",
-      "description": "Two-step navigation from main menu to provider services department [Step 2/2]",
-      "user_utterance": "You've reached provider services. Press 1 for claims and billing inquiries, press 2 for eligibility verification, press 3 for prior authorization requests, press 4 for provider enrollment, or press 0 to speak with a representative.",
-      "expected_behavior": "Should press <dtmf>0</dtmf>. Routing to live representative for complex provider inquiry that may require multiple topics"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "Thank you for calling HealthCare Solutions. Please listen carefully as our menu options have changed. Press 1 for member services, press 2 for provider services, press 3 for pharmacy information, or press 0 to speak with an operator."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "004_step1",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "prior_auth_new_request_4step",
-      "description": "Four-step navigation to submit a new prior authorization request for a medical procedure [Step 1/4]",
-      "user_utterance": "Welcome to MediCare Insurance. For quality assurance, this call may be monitored or recorded. Press 1 for English, press 2 for Spanish.",
-      "expected_behavior": "Should press <dtmf>1</dtmf>. Selecting English language option to proceed"
-    },
-    "conversation_history": []
-  },
-  {
-    "case_id": "004_step2",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "prior_auth_new_request_4step",
-      "description": "Four-step navigation to submit a new prior authorization request for a medical procedure [Step 2/4]",
-      "user_utterance": "Main menu. Press 1 for members, press 2 for healthcare providers, press 3 for employers and brokers, or press 9 to repeat this menu.",
-      "expected_behavior": "Should press <dtmf>2</dtmf>. Calling as a healthcare provider on behalf of a patient"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "Welcome to MediCare Insurance. For quality assurance, this call may be monitored or recorded. Press 1 for English, press 2 for Spanish."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>1</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "004_step3",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "prior_auth_new_request_4step",
-      "description": "Four-step navigation to submit a new prior authorization request for a medical procedure [Step 3/4]",
-      "user_utterance": "Provider menu. Press 1 for claims status, press 2 for prior authorization and referrals, press 3 for credentialing and contracting, press 4 for payment and remittance, or press 0 for other provider services.",
-      "expected_behavior": "Should press <dtmf>2</dtmf>. Need to submit a prior authorization request for patient treatment"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "Welcome to MediCare Insurance. For quality assurance, this call may be monitored or recorded. Press 1 for English, press 2 for Spanish."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>1</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "Main menu. Press 1 for members, press 2 for healthcare providers, press 3 for employers and brokers, or press 9 to repeat this menu."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "004_step4",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "prior_auth_new_request_4step",
-      "description": "Four-step navigation to submit a new prior authorization request for a medical procedure [Step 4/4]",
-      "user_utterance": "Prior authorization services. Press 1 to submit a new prior authorization request, press 2 to check the status of an existing request, press 3 for urgent or expedited requests, or press 0 to speak with an authorization specialist.",
-      "expected_behavior": "Should press <dtmf>1</dtmf>. Submitting a new prior authorization request for a scheduled procedure"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "Welcome to MediCare Insurance. For quality assurance, this call may be monitored or recorded. Press 1 for English, press 2 for Spanish."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>1</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "Main menu. Press 1 for members, press 2 for healthcare providers, press 3 for employers and brokers, or press 9 to repeat this menu."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "Provider menu. Press 1 for claims status, press 2 for prior authorization and referrals, press 3 for credentialing and contracting, press 4 for payment and remittance, or press 0 for other provider services."
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "008_step1",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_wrong_submenu",
-      "description": "AI enters billing submenu instead of claims, recognizes error, backtracks with *, then navigates correctly [Step 1/4]",
-      "user_utterance": "I need to check the status of my medical claim",
-      "expected_behavior": "Should press <dtmf>2</dtmf>. Initial selection - choosing option 2 for Billing & Payments (wrong choice)"
-    },
-    "conversation_history": []
-  },
-  {
-    "case_id": "008_step2",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_wrong_submenu",
-      "description": "AI enters billing submenu instead of claims, recognizes error, backtracks with *, then navigates correctly [Step 2/4]",
-      "user_utterance": "[IVR plays: You've reached Billing. Press 1 for payment options, 2 for balance inquiry, 3 for payment arrangements]",
-      "expected_behavior": "Should press <dtmf>*</dtmf>. Recognizes dead end - this is billing menu but user needs claims, backtrack to main menu"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to check the status of my medical claim"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "008_step3",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_wrong_submenu",
-      "description": "AI enters billing submenu instead of claims, recognizes error, backtracks with *, then navigates correctly [Step 3/4]",
-      "user_utterance": "[IVR plays: Returning to main menu. Press 1 for claims, 2 for billing, 3 for member services]",
-      "expected_behavior": "Should press <dtmf>1</dtmf>. After backtracking, correctly selects claims option"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to check the status of my medical claim"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: You've reached Billing. Press 1 for payment options, 2 for balance inquiry, 3 for payment arrangements]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>*</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "008_step4",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_wrong_submenu",
-      "description": "AI enters billing submenu instead of claims, recognizes error, backtracks with *, then navigates correctly [Step 4/4]",
-      "user_utterance": "[IVR plays: Claims department. Your estimated wait time is 3 minutes]",
-      "expected_behavior": "Should press <dtmf>WAIT</dtmf>. Successfully reached correct department"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to check the status of my medical claim"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: You've reached Billing. Press 1 for payment options, 2 for balance inquiry, 3 for payment arrangements]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>*</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Returning to main menu. Press 1 for claims, 2 for billing, 3 for member services]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>1</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "012_step1",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_multi_level_backtrack",
-      "description": "AI goes two levels deep into wrong path (member services > plan details), needs multiple backtracks to reach provider network department [Step 1/6]",
-      "user_utterance": "I need to find a specialist in my network",
-      "expected_behavior": "Should press <dtmf>3</dtmf>. First wrong turn - selecting member services instead of provider network"
-    },
-    "conversation_history": []
-  },
-  {
-    "case_id": "012_step2",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_multi_level_backtrack",
-      "description": "AI goes two levels deep into wrong path (member services > plan details), needs multiple backtracks to reach provider network department [Step 2/6]",
-      "user_utterance": "[IVR plays: Member Services. Press 1 for ID card, 2 for plan details, 3 for enrollment]",
-      "expected_behavior": "Should press <dtmf>2</dtmf>. Second wrong turn - going deeper into plan details submenu"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to find a specialist in my network"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>3</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "012_step3",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_multi_level_backtrack",
-      "description": "AI goes two levels deep into wrong path (member services > plan details), needs multiple backtracks to reach provider network department [Step 3/6]",
-      "user_utterance": "[IVR plays: Plan Details. Press 1 for coverage summary, 2 for deductible information, 3 for benefits]",
-      "expected_behavior": "Should press <dtmf>*</dtmf>. First backtrack - realizes this is wrong area, need to go back one level"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to find a specialist in my network"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>3</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Member Services. Press 1 for ID card, 2 for plan details, 3 for enrollment]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "012_step4",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_multi_level_backtrack",
-      "description": "AI goes two levels deep into wrong path (member services > plan details), needs multiple backtracks to reach provider network department [Step 4/6]",
-      "user_utterance": "[IVR plays: Returning to Member Services menu. Press 1 for ID card, 2 for plan details, 3 for enrollment]",
-      "expected_behavior": "Should press <dtmf>0</dtmf>. Second backtrack - member services entirely wrong, press 0 for operator or main menu"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to find a specialist in my network"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>3</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Member Services. Press 1 for ID card, 2 for plan details, 3 for enrollment]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Plan Details. Press 1 for coverage summary, 2 for deductible information, 3 for benefits]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>*</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "012_step5",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_multi_level_backtrack",
-      "description": "AI goes two levels deep into wrong path (member services > plan details), needs multiple backtracks to reach provider network department [Step 5/6]",
-      "user_utterance": "[IVR plays: Transferring to operator... Please hold. Or press 4 to return to main menu for Provider Network]",
-      "expected_behavior": "Should press <dtmf>4</dtmf>. Taking offered option to return to main menu instead of waiting for operator"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to find a specialist in my network"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>3</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Member Services. Press 1 for ID card, 2 for plan details, 3 for enrollment]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Plan Details. Press 1 for coverage summary, 2 for deductible information, 3 for benefits]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>*</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Returning to Member Services menu. Press 1 for ID card, 2 for plan details, 3 for enrollment]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>0</dtmf>"
-      }
-    ]
-  },
-  {
-    "case_id": "012_step6",
-    "state": "ivr_navigation",
-    "patient_data": {
-      "patient_id": "507f1f77bcf86cd799439011",
-      "patient_name": "John Smith",
-      "date_of_birth": "1985-03-15",
-      "facility": "Adam's Medical Practice",
-      "insurance_company": "Blue Cross Blue Shield",
-      "insurance_member_id": "BCBS123456789",
-      "insurance_phone": "1-800-555-0123",
-      "cpt_code": "99213",
-      "provider_npi": "1234567890",
-      "provider_name": "Dr. Sarah Johnson",
-      "appointment_time": "2025-11-15T14:30:00"
-    },
-    "test_scenario": {
-      "scenario_id": "dead_end_multi_level_backtrack",
-      "description": "AI goes two levels deep into wrong path (member services > plan details), needs multiple backtracks to reach provider network department [Step 6/6]",
-      "user_utterance": "[IVR plays: Main menu. Press 4 for Provider Network and Directory]",
-      "expected_behavior": "Should press <dtmf>4</dtmf>. Finally selecting correct department for finding in-network specialists"
-    },
-    "conversation_history": [
-      {
-        "role": "user",
-        "content": "I need to find a specialist in my network"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>3</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Member Services. Press 1 for ID card, 2 for plan details, 3 for enrollment]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>2</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Plan Details. Press 1 for coverage summary, 2 for deductible information, 3 for benefits]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>*</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Returning to Member Services menu. Press 1 for ID card, 2 for plan details, 3 for enrollment]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>0</dtmf>"
-      },
-      {
-        "role": "user",
-        "content": "[IVR plays: Transferring to operator... Please hold. Or press 4 to return to main menu for Provider Network]"
-      },
-      {
-        "role": "assistant",
-        "content": "<dtmf>4</dtmf>"
-      }
-    ]
+    "scenario": {
+      "scenario_id": "humana_deep_menu_specialist",
+      "description": "Complex multi-tier menu system requiring navigation through provider services to specialized eligibility department",
+      "steps": [
+        {
+          "user_utterance": "Welcome to Humana. This call may be monitored or recorded. For member services, press 1. For healthcare professionals and facilities, press 2. For employer groups, press 3. To hear this menu again, press 9.",
+          "expected_dtmf": "2",
+          "reasoning": "Selecting healthcare professionals and facilities as we are calling from a provider office"
+        },
+        {
+          "user_utterance": "Healthcare provider services. For medical providers, press 1. For dental providers, press 2. For behavioral health providers, press 3. For pharmacy providers, press 4. For facility inquiries, press 5. To speak with an operator, press 0.",
+          "expected_dtmf": "1",
+          "reasoning": "Selecting medical providers as we are a medical practice seeking eligibility information"
+        },
+        {
+          "user_utterance": "Medical provider services. For real-time eligibility and benefits, press 1. For prior authorizations and referrals, press 2. For claims inquiry, press 3. For provider enrollment, press 4. To return to the previous menu, press star.",
+          "expected_dtmf": "1",
+          "reasoning": "Selecting real-time eligibility and benefits verification which is our primary objective"
+        },
+        {
+          "user_utterance": "Please hold while we transfer you to an eligibility specialist. Have the member's ID number and date of birth ready. Your call will be answered in the order it was received.",
+          "expected_dtmf": "",
+          "reasoning": "No action needed - successfully navigated through multi-tier menu to reach eligibility verification specialist"
+        }
+      ]
+    }
   }
 ]

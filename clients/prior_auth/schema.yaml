@@ -101,46 +101,16 @@ data_schema:
 
 # State machine
 states:
-  initial_state: "connection"
-  
+  initial_state: "verification"  # IVRNavigator handles classification, handlers transition directly to verification
+
   definitions:
     # Event-driven states - DO NOT MODIFY BEHAVIOR
-    - name: "connection"
-      description: "Call connected - waiting for other party to speak first"
-      prompts_ref: "connection"
-      entry_point: true
-      allowed_transitions: []
-      llm_directed: false
-      data_access:
-        - patient_id
-        - patient_name
-        - date_of_birth
-        - facility
-        - insurance_company
-        - insurance_member_id
-        - insurance_phone
-        - cpt_code
-        - provider_npi
-        - provider_name
-        - appointment_time
-    
     - name: "ivr_navigation"
       description: "Navigating IVR system to reach human representative"
       prompts_ref: "ivr_navigation"
       allowed_transitions: []
       llm_directed: false
-      data_access:
-        - patient_id
-        - patient_name
-        - date_of_birth
-        - facility
-        - insurance_company
-        - insurance_member_id
-        - insurance_phone
-        - cpt_code
-        - provider_npi
-        - provider_name
-        - appointment_time
+      data_access: []  # IVR navigation doesn't need patient data
     
     - name: "ivr_stuck"
       description: "IVR navigation failed - unable to reach human"
@@ -148,38 +118,9 @@ states:
       terminal: true
       allowed_transitions: []
       llm_directed: false
-      data_access:
-        - patient_id
-        - patient_name
-        - date_of_birth
-        - facility
-        - insurance_company
-        - insurance_member_id
-        - insurance_phone
-        - cpt_code
-        - provider_npi
-        - provider_name
-        - appointment_time
+      data_access: []  # IVR stuck doesn't need patient data
     
     # Conversation states - ENABLE LLM DIRECTION
-    - name: "greeting"
-      description: "Initial greeting after reaching human representative"
-      prompts_ref: "greeting"
-      allowed_transitions: ["verification"]
-      llm_directed: false  # Keep keyword-based transition
-      data_access:
-        - patient_id
-        - patient_name
-        - date_of_birth
-        - facility
-        - insurance_company
-        - insurance_member_id
-        - insurance_phone
-        - cpt_code
-        - provider_npi
-        - provider_name
-        - appointment_time
-    
     - name: "verification"
       description: "Provide patient information and verify insurance coverage"
       prompts_ref: "verification"
@@ -197,7 +138,7 @@ states:
       functions:
         - update_prior_auth_status
         - dial_supervisor
-      allowed_transitions: ["closing", "greeting"]
+      allowed_transitions: ["closing"]
       llm_directed: true
       required_before_closing: true
     
@@ -225,35 +166,19 @@ transitions:
   # ============================================================================
   # EVENT-DRIVEN TRANSITIONS (IVR/Human Classification)
   # ============================================================================
-  
-  # Transition 1: connection → ivr_navigation (via event handler)
-  - from_state: "connection"
-    to_state: "ivr_navigation"
-    trigger:
-      type: "event"
-      event_name: "on_ivr_status_changed:DETECTED"
-    reason: "ivr_system_detected"
-    description: "IVRNavigator detected IVR system requiring navigation"
-  
-  # Transition 2: connection → greeting (via event handler - human answered)
-  - from_state: "connection"
-    to_state: "greeting"
-    trigger:
-      type: "event"
-      event_name: "on_conversation_detected"
-    reason: "human_answered_directly"
-    description: "Human answered call directly (no IVR system)"
-  
-  # Transition 3: ivr_navigation → greeting (via event handler - IVR complete)
+  # Note: IVRNavigator handles initial classification and event handlers transition directly to
+  # verification (human) or ivr_navigation (IVR system). Hardcoded greeting sent in handlers.
+
+  # Transition 1: ivr_navigation → verification (via event handler - IVR complete)
   - from_state: "ivr_navigation"
-    to_state: "greeting"
+    to_state: "verification"
     trigger:
       type: "event"
       event_name: "on_ivr_status_changed:COMPLETED"
     reason: "ivr_navigation_complete"
-    description: "Successfully navigated IVR to reach human"
-  
-  # Transition 4: ivr_navigation → ivr_stuck (via event handler - IVR stuck)
+    description: "Successfully navigated IVR to reach human, transition to verification"
+
+  # Transition 2: ivr_navigation → ivr_stuck (via event handler - IVR stuck)
   - from_state: "ivr_navigation"
     to_state: "ivr_stuck"
     trigger:
@@ -261,16 +186,3 @@ transitions:
       event_name: "on_ivr_status_changed:STUCK"
     reason: "ivr_navigation_failed"
     description: "IVR navigation failed - unable to proceed"
-  
-  # ============================================================================
-  # AUTO TRANSITION
-  # ============================================================================
-  
-  # Transition 5: greeting → verification
-  - from_state: "greeting"
-    to_state: "verification"
-    trigger:
-      type: "auto"  # Triggers on ANY user response
-      delay: 0
-    reason: "greeting delivered"
-    description: "Greeting delivered - ready for verification conversation"

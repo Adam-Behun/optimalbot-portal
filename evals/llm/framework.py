@@ -16,6 +16,9 @@ import yaml
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from openai import OpenAI
 
@@ -40,13 +43,12 @@ class LLMEvaluationFramework:
         model: str = "gpt-4o",
         temperature: float = 0.7,
     ):
-        """Initialize eval framework with same components as production bot."""
         self.client_name = client_name
         self.model = model
         self.temperature = temperature
 
-        # Load schema and prompts (same as bot, but skip services.yaml)
-        client_path = Path(f"clients/{client_name}")
+        project_root = Path(__file__).parent.parent.parent
+        client_path = project_root / "clients" / client_name
         if not client_path.exists():
             raise ValueError(f"Client directory not found: {client_path}")
 

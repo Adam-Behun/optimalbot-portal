@@ -2,6 +2,9 @@ import os
 from typing import List, Dict, Any
 from anthropic import Anthropic
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class IVRTestGenerator:
@@ -9,175 +12,115 @@ class IVRTestGenerator:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
-
         self.client = Anthropic(api_key=api_key)
         self.model = model
 
-    def generate_single_step_cases(self, num_cases: int = 5) -> List[Dict[str, Any]]:
-        prompt = """Generate single-step IVR menu test cases.
+    def generate_test_cases(self, num_cases: int = 5) -> List[Dict[str, Any]]:
+        prompt = """You will be generating realistic IVR (Interactive Voice Response) navigation test cases for testing an AI healthcare assistant that calls insurance companies.
 
-CONTEXT:
-AI navigates phone menus using DTMF tones.
-Single interaction: hear menu, press button.
+**BACKGROUND AND CONTEXT:**
 
-TASK:
-Generate diverse single-step menu scenarios.
+IVR systems are automated phone menus that use voice prompts and DTMF (touch-tone) inputs to route callers. Your test cases will simulate realistic insurance company phone menus.
 
-For each test case provide:
-1. scenario_id: Short identifier
-2. description: What this tests
-3. user_utterance: Menu announcement
-4. expected_behavior: What to do and why
+**CRITICAL CONTEXT - YOU ARE CALLING AS A PROVIDER:**
+The AI being tested represents a healthcare office staff member (provider representative), NOT a patient or insurance member. The goal is to navigate insurance company phone systems to reach departments that serve healthcare providers, specifically for:
+- Eligibility verification
+- Prior authorization requests
+- Benefits verification
+- Provider-related inquiries
 
-Include:
-- Clear provider services option
-- Implicit provider option (eligibility, benefits)
-- No direct match (need representative)
-- Confusing member vs provider options
+**TARGET DEPARTMENTS (Priority Order):**
+1. **Provider Services / Provider Relations** (HIGHEST PRIORITY - this is the correct department for providers)
+2. **Healthcare Provider line** (HIGH PRIORITY)
+3. **Speak to Representative / Agent** (HIGH PRIORITY - reaching a human agent)
+4. **Eligibility Verification / Benefits Verification / Prior Authorization** (MEDIUM PRIORITY - acceptable if clearly for providers)
+5. **Operator / Press 0** (LAST RESORT - when no clear provider option exists)
 
-Output format:
-<test_cases>
-[
-  {
-    "scenario_id": "...",
-    "description": "...",
-    "user_utterance": "...",
-    "expected_behavior": "..."
-  }
-]
-</test_cases>
+**DEPARTMENTS TO AVOID (Wrong for providers):**
+- Member Services (for patients/insurance members only)
+- Claims / Billing (not the goal for eligibility checks)
+- Pharmacy Services
+- Find a Doctor
 
-Generate exactly """ + str(num_cases) + """ cases."""
+**OUTPUT FORMAT:**
 
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=4000,
-            temperature=1.0,
-            messages=[{"role": "user", "content": prompt}],
-        )
+Generate exactly """ + str(num_cases) + """ test cases. Each test case must be valid JSON following this exact structure:
 
-        content = response.content[0].text
-        test_cases_str = content[content.find("["):content.rfind("]")+1]
-        return json.loads(test_cases_str)
-
-    def generate_multi_step_cases(self, num_cases: int = 3) -> List[Dict[str, Any]]:
-        prompt = """Generate multi-step IVR navigation sequences (2-4 steps).
-
-CONTEXT:
-AI navigates multi-level phone menus.
-Each step: hear menu, press button, get next menu.
-
-TASK:
-Generate realistic multi-step navigation flows.
-
-For each test case provide:
-1. scenario_id: Short identifier
-2. description: What this tests
-3. steps: Array of navigation steps
-
-Each step has:
-- user_utterance: Menu prompt
-- expected_dtmf: Which button to press
-- reasoning: Why this choice
-
-Include scenarios:
-- 2 steps: Main menu → Provider submenu
-- 3 steps: Main → Provider → Prior auth
-- 4 steps: Main → Provider → Prior auth → New request
-- Final step should reach human or require decision
-
-Output format:
-<test_cases>
-[
-  {
-    "scenario_id": "...",
-    "description": "...",
-    "steps": [
-      {
-        "user_utterance": "...",
-        "expected_dtmf": "2",
-        "reasoning": "..."
-      }
-    ]
-  }
-]
-</test_cases>
-
-Generate exactly """ + str(num_cases) + """ multi-step sequences."""
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=6000,
-            temperature=1.0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        content = response.content[0].text
-        test_cases_str = content[content.find("["):content.rfind("]")+1]
-        return json.loads(test_cases_str)
-
-    def generate_dead_end_cases(self, num_cases: int = 2) -> List[Dict[str, Any]]:
-        prompt = """Generate IVR dead-end and backtracking scenarios.
-
-CONTEXT:
-AI navigates phone menus but sometimes reaches wrong department.
-Must recognize dead end and backtrack using * or 0.
-
-TASK:
-Generate scenarios requiring backtracking.
-
-For each test case provide:
-1. scenario_id: Short identifier
-2. description: What this tests
-3. steps: Array showing wrong path then correction
-
-Include:
-- Wrong submenu selected, need to press * to go back
-- Member services instead of provider, need to backtrack
-- Claims department instead of eligibility, press 0 for operator
-- Multi-level wrong path requiring multiple backtracks
-
-Output format:
-<test_cases>
-[
-  {
-    "scenario_id": "...",
-    "description": "...",
-    "steps": [
-      {
-        "user_utterance": "...",
-        "expected_dtmf": "1",
-        "reasoning": "..."
-      }
-    ]
-  }
-]
-</test_cases>
-
-Generate exactly """ + str(num_cases) + """ dead-end scenarios."""
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=5000,
-            temperature=1.0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        content = response.content[0].text
-        test_cases_str = content[content.find("["):content.rfind("]")+1]
-        return json.loads(test_cases_str)
-
-
-SAMPLE_PATIENT_DATA = {
-    "patient_id": "507f1f77bcf86cd799439011",
-    "patient_name": "John Smith",
-    "date_of_birth": "1985-03-15",
-    "facility": "Adam's Medical Practice",
-    "insurance_company": "Blue Cross Blue Shield",
-    "insurance_member_id": "BCBS123456789",
-    "insurance_phone": "1-800-555-0123",
-    "cpt_code": "99213",
-    "provider_npi": "1234567890",
-    "provider_name": "Dr. Sarah Johnson",
-    "appointment_time": "2025-11-15T14:30:00",
+```json
+{
+  "scenario_id": "provider_eligibility_3step",
+  "description": "Navigation from main menu to provider eligibility verification",
+  "steps": [
+    {
+      "user_utterance": "Thank you for calling Blue Cross Insurance. For member services, press 1. For provider services, press 2. For claims, press 3. To hear this menu again, press 9.",
+      "expected_dtmf": "2",
+      "reasoning": "Selecting provider services as we are calling as a healthcare provider, not a patient"
+    },
+    {
+      "user_utterance": "Provider services. For eligibility verification, press 1. For claims status, press 2. For prior authorizations, press 3. To speak with a representative, press 0.",
+      "expected_dtmf": "1",
+      "reasoning": "Selecting eligibility verification which is our target department"
+    },
+    {
+      "user_utterance": "Connecting you to eligibility verification. Please hold while we transfer your call.",
+      "expected_dtmf": "",
+      "reasoning": "No action needed - call is being transferred to a representative"
+    }
+  ]
 }
+```
+
+**FIELD SPECIFICATIONS:**
+
+- **scenario_id**: Use snake_case naming (e.g., "prior_auth_4step", "eligibility_dead_end"). Make each ID unique and descriptive.
+- **description**: Brief summary of what the navigation accomplishes. Do NOT include step numbers (code adds those automatically).
+- **steps**: Array of 2-5 navigation steps. Each step:
+  - **user_utterance**: Complete IVR prompt with realistic insurance company language
+  - **expected_dtmf**: Single character "0"-"9", "*", "#", or "" (empty when no action needed)
+  - **reasoning**: Why this DTMF choice is correct for reaching Provider Services
+
+**CREATING REALISTIC IVR PROMPTS:**
+
+1. **Opening prompts**: Include company greeting, optional quality notices, optional language selection
+2. **Menu prompts**: List 3-5 options with realistic terminology, include helpers like "press * to return"
+3. **Final prompts**: Indicate success ("Connecting you to...", "Please hold...")
+4. **Vary companies**: Blue Cross, Aetna, United Healthcare, Cigna, Humana, etc.
+5. **Realistic departments**: Provider Services, Eligibility Verification, Prior Authorization, etc.
+
+**SCENARIO VARIETY REQUIREMENTS:**
+
+Distribute test cases across these categories:
+
+1. **Successful straight-path (40-50% of cases)**: 2-3 steps, direct navigation to target
+2. **Dead-end with backtracking (20-30% of cases)**: 3-5 steps, wrong option → press * → correct option
+3. **Multi-level deep menus (20-30% of cases)**: 4-5 steps, multiple navigation layers
+4. **Vary menu structures**: Different option counts, ordering, companies, with/without language selection
+
+**IMPORTANT RULES:**
+
+1. Never number steps in descriptions
+2. Provider perspective only - avoid Member Services unless correcting error
+3. All sequences should reach or attempt to reach target
+4. Empty DTMF ("") for terminal transfer messages
+5. Valid JSON with proper escaping
+
+Output your response as a JSON array inside <test_cases> tags:
+
+<test_cases>
+[
+  { test case 1 },
+  { test case 2 },
+  ...
+]
+</test_cases>"""
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=8000,
+            temperature=1.0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        content = response.content[0].text
+        test_cases_str = content[content.find("["):content.rfind("]")+1]
+        return json.loads(test_cases_str)

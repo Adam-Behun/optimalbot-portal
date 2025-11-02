@@ -109,19 +109,19 @@ class PipelineFactory:
         # Link state manager to context aggregators
         state_manager.set_context_aggregators(context_aggregators)
         
-        # Get formatted data for prompt rendering
+        # Get formatted data for prompt rendering (for conversation states only)
         formatted_data = client_config.data_formatter.format_patient_data(
             session_data['patient_data']
         )
-        
-        # Render IVR classifier prompt from YAML
-        ivr_classifier_prompt = client_config.prompt_renderer.render_prompt(
-            "ivr_classifier", "system", {}
+
+        # Render call classifier prompt from YAML
+        call_classifier_prompt = client_config.prompt_renderer.render_prompt(
+            "call_classifier", "system", {}
         )
 
-        # Create IVR navigator
+        # Create IVR navigator (IVR navigation doesn't need patient data)
         ivr_goal = client_config.prompt_renderer.render_prompt(
-            "ivr_navigation", "task", formatted_data
+            "ivr_navigation", "task", {}  # No patient data needed for IVR navigation
         ) or "Navigate to provider services for eligibility verification"
 
         # Configure IVRNavigator with LLM switcher (starts with classifier_llm active)
@@ -132,9 +132,9 @@ class PipelineFactory:
         )
 
         # Override the classifier prompt with our custom one from YAML
-        if ivr_classifier_prompt:
-            ivr_navigator._classifier_prompt = ivr_classifier_prompt
-            ivr_navigator._ivr_processor._classifier_prompt = ivr_classifier_prompt
+        if call_classifier_prompt:
+            ivr_navigator._classifier_prompt = call_classifier_prompt
+            ivr_navigator._ivr_processor._classifier_prompt = call_classifier_prompt
         
         return {
             'context': context,
