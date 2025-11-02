@@ -1,30 +1,14 @@
-# Backend API only - for Fly.io deployment
-# Frontend is deployed separately to Vercel
 FROM python:3.11-slim-bookworm
-
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
 COPY requirements.txt .
-
-# Install Python dependencies
-# Note: Backend doesn't need audio processing (torch, torchaudio, VAD)
-# Those are only needed by bot.py which runs on Pipecat Cloud
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend application code only (no frontend, no bot code)
-# Backend only needs: app.py, backend/, utils/
-# Bot code (core/, pipeline/, handlers/, services/, clients/) is NOT used by backend
 COPY app.py .
 COPY backend/ ./backend/
 COPY utils/ ./utils/
 
-# Use PORT environment variable with default fallback to 8000
 ENV PORT=8000
-
-# Expose the port (informational)
 EXPOSE 8000
 
-# Run the FastAPI application
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT}"]

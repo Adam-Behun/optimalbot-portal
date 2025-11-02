@@ -1,48 +1,16 @@
 #!/bin/bash
-# Deploy bot to PRODUCTION environment on Pipecat Cloud
-
 set -e
 
-echo "🚀 ============================================"
-echo "   PRODUCTION DEPLOYMENT"
-echo "============================================"
-echo ""
-echo "⚠️  WARNING: This will update the PRODUCTION agent!"
-echo ""
-read -p "Are you sure you want to deploy to production? (yes/no): " confirm
+echo "⚠️  PRODUCTION DEPLOYMENT"
+read -p "Deploy to production? (yes/no): " confirm
+[ "$confirm" != "yes" ] && echo "❌ Cancelled" && exit 0
 
-if [ "$confirm" != "yes" ]; then
-    echo "❌ Deployment cancelled."
-    exit 0
-fi
-
-echo ""
-
-# Build Docker image for ARM64
-# BuildKit automatically uses Dockerfile.bot.dockerignore
-echo "📦 Building optimized Docker image (latest tag)..."
+echo "📦 Building image..."
 DOCKER_BUILDKIT=1 docker buildx build \
   --platform linux/arm64 \
   -f Dockerfile.bot \
   -t adambehun/healthcare-bot:latest \
-  --push \
-  .
+  --push . && echo "✅ Image built"
 
-echo ""
-echo "🚀 Deploying to Pipecat Cloud (production agent)..."
-# CLI automatically reads pcc-deploy.toml
-pipecat cloud deploy --force
-
-echo ""
-echo "✅ ============================================"
-echo "   Production Deployment Complete!"
-echo "============================================"
-echo ""
-echo "📋 Agent Name: healthcare-voice-ai"
-echo "🏷️  Image Tag: adambehun/healthcare-bot:latest"
-echo ""
-echo "Next steps:"
-echo "1. Update .env: PIPECAT_AGENT_NAME=healthcare-voice-ai"
-echo "2. Restart backend if needed"
-echo "3. Monitor logs: pipecat cloud agent logs healthcare-voice-ai"
-echo ""
+echo "🚀 Deploying to Pipecat Cloud..."
+pipecat cloud deploy --force && echo "✅ Deployed: healthcare-voice-ai"

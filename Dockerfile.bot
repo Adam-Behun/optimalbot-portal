@@ -1,37 +1,24 @@
-# Optimized Pipecat Cloud bot image
-# Base image (207MB) includes: fastapi, loguru, pipecatcloud SDK
-# We install: pipecat-ai + voice services + minimal dependencies
-
 FROM dailyco/pipecat-base:latest
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Install dependencies
-# Base image only has fastapi/loguru/pipecatcloud - we need everything else
 COPY requirements.bot.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r requirements.bot.txt && \
-    # Remove pip cache and unnecessary files
     rm -rf /root/.cache/pip && \
     find /usr/local/lib/python*/site-packages -name '*.pyc' -delete && \
     find /usr/local/lib/python*/site-packages -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 
-# Copy bot code
 COPY bot.py .
-
-# Copy minimal backend modules
 COPY backend/__init__.py backend/
 COPY backend/functions.py backend/
 COPY backend/models.py backend/
 COPY backend/sessions.py backend/
-
-# Copy bot modules (order for better caching)
 COPY services/ ./services/
 COPY clients/ ./clients/
 COPY handlers/ ./handlers/
 COPY core/ ./core/
 COPY pipeline/ ./pipeline/
 
-# Verify bot.py
 RUN python -c "import bot; assert hasattr(bot, 'bot'), 'bot() function missing'"

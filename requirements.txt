@@ -1,48 +1,29 @@
-# Pipecat and AI services
-pipecat-ai[daily,silero,elevenlabs,deepgram,groq,tracing]
+pipecat-ai[daily,elevenlabs,deepgram,groq,tracing]
 openai
 anthropic
 cartesia
 daily-python
-
-# Database and storage
 pymongo
 motor
-
-# Web framework and server
 uvicorn
 fastapi
 requests
 httpx
 pipecatcloud
-
-# Environment and configuration
 python-dotenv
-
-# Testing
 pytest
 pytest-asyncio
-
-# Audio processing
 numpy
 scipy
-
-# Observability
 langfuse
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
-
-# Schema and templating
 jinja2
 pyyaml
 pydantic
-
-# Authentication and security
 passlib[bcrypt]
 python-jose[cryptography]
 phonenumbers
-
-# Rate limiting and retry logic
 slowapi
 tenacity
