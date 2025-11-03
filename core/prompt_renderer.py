@@ -1,8 +1,7 @@
-# Takes loaded objects from schema_loader and renders Jinja2 templates with data
-from jinja2 import Environment, BaseLoader, Template
-from typing import Dict, Any, Optional
 import logging
 import time
+from jinja2 import Environment, BaseLoader, Template
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,28 +18,24 @@ class PromptRenderer:
         self._cache: Dict[str, Template] = {}
         self._global_instructions_template: Optional[Template] = None
         self._precompile_all()
-    
+
     def _precompile_all(self):
-        """Precompile all prompts from schema for performance."""
         start_time = time.perf_counter()
-        
+
         prompts_dict = self.schema.prompts if hasattr(self.schema, 'prompts') else {}
-        
-        # Precompile global instructions
+
         if '_global_instructions' in prompts_dict:
             self._global_instructions_template = self.env.from_string(
                 prompts_dict['_global_instructions']
             )
-        
-        # Precompile all state prompts
+
         for state_def in self.schema.states.definitions:
             prompts = self.schema.get_prompts_for_state(state_def.name)
             for section, text in prompts.items():
                 if text:
                     key = f"{state_def.name}.{section}"
                     self._cache[key] = self.env.from_string(text)
-        
-        # Precompile all utility prompts
+
         if isinstance(prompts_dict, dict):
             for prompt_name, config in prompts_dict.get("prompts", {}).items():
                 if isinstance(config, dict):
@@ -48,74 +43,62 @@ class PromptRenderer:
                         if text and isinstance(text, str):
                             key = f"{prompt_name}.{field}"
                             self._cache[key] = self.env.from_string(text)
-        
+
         compile_time_ms = (time.perf_counter() - start_time) * 1000
         if compile_time_ms > 5.0:
             logger.debug(f"Prompts compiled ({compile_time_ms:.1f}ms, {len(self._cache)} prompts)")
-    
+
     def render_state_prompt(self, state_name: str, data: Dict[str, Any]) -> str:
-        """Render state prompt (system + task sections combined)."""
         context = self._build_context(state_name, data)
-        
-        # Render global instructions
+
         global_text = ""
         if self._global_instructions_template:
             global_text = self._global_instructions_template.render(**context)
-        
-        # Render state sections
+
         sections = []
         for section in ['system', 'task']:
             key = f"{state_name}.{section}"
             if key in self._cache:
                 rendered = self._cache[key].render(**context)
-                # Replace global instructions placeholder
                 rendered = rendered.replace('{{ _global_instructions }}', global_text)
                 if rendered.strip():
                     sections.append(rendered.strip())
-        
+
         return "\n\n".join(sections)
-    
+
     def render_prompt(self, prompt_name: str, field: str, data: Dict[str, Any]) -> str:
-        """Render utility prompt (IVR)."""
         key = f"{prompt_name}.{field}"
         if key not in self._cache:
             return ""
-        
+
         context = self._build_simple_context(data)
         rendered = self._cache[key].render(**context)
-        
-        # Replace global instructions if present
+
         if self._global_instructions_template:
             global_text = self._global_instructions_template.render(**context)
             rendered = rendered.replace('{{ _global_instructions }}', global_text)
-        
+
         return rendered
-    
+
     def _build_context(self, state_name: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Build context for state prompts with data access filtering."""
         state = self.schema.get_state(state_name)
-        
+
         context = {
             'voice_name': self.schema.voice.persona.name,
             'voice_role': self.schema.voice.persona.role,
             'voice_company': self.schema.voice.persona.company,
         }
-        
-        # Add only accessible fields for this state
+
         for field in state.data_access:
             if field in data:
                 context[field] = data[field]
             spoken_field = f"{field}_spoken"
             if spoken_field in data:
                 context[spoken_field] = data[spoken_field]
-        
-        # Safety net: add all precomputed fields
-        context.update(data)
-        
+
         return context
-    
+
     def _build_simple_context(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Build context for utility prompts (no filtering)."""
         return {
             'voice_name': self.schema.voice.persona.name,
             'voice_role': self.schema.voice.persona.role,

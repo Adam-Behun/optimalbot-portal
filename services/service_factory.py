@@ -1,11 +1,10 @@
-"""Service Factory - Creates service instances from configuration"""
-
 from typing import Dict, Any, Union
 from loguru import logger
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq.llm import GroqLLMService
+from pipecat.services.anthropic import AnthropicLLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
@@ -13,8 +12,6 @@ from backend.functions import PATIENT_TOOLS, update_prior_auth_status_handler
 
 
 class ServiceFactory:
-    """Creates Pipecat service instances from parsed YAML configuration"""
-
     @staticmethod
     def create_transport(
         config: Dict[str, Any],
@@ -22,8 +19,8 @@ class ServiceFactory:
         room_token: str,
         room_name: str
     ) -> DailyTransport:
-        """Create Daily transport with telephony support"""
-        return DailyTransport(
+        logger.info("📞 Creating Daily transport service")
+        transport = DailyTransport(
             room_url,
             room_token,
             room_name,
@@ -39,16 +36,12 @@ class ServiceFactory:
                 phone_number_id=config['phone_number_id']
             )
         )
+        logger.info("✅ Daily transport service created")
+        return transport
     
     @staticmethod
     def create_stt(config: Dict[str, Any]) -> DeepgramFluxSTTService:
-        """Create Deepgram Flux STT service from YAML configuration
-
-        Flux provides built-in turn detection via EagerEndOfTurn and EndOfTurn events.
-        """
         logger.info("🎤 Creating Deepgram Flux STT service")
-
-        # Build InputParams from config
         params = DeepgramFluxSTTService.InputParams(
             eager_eot_threshold=config.get('eager_eot_threshold'),
             eot_threshold=config.get('eot_threshold'),
@@ -58,7 +51,6 @@ class ServiceFactory:
             tag=config.get('tag', [])
         )
 
-        # Create service
         service = DeepgramFluxSTTService(
             api_key=config['api_key'],
             model=config.get('model', 'flux-general-en'),
@@ -70,8 +62,8 @@ class ServiceFactory:
     
     @staticmethod
     def create_llm(config: Dict[str, Any]):
-        """Create main LLM with function registration"""
         provider = config.get('provider', 'openai')
+        logger.info(f"🤖 Creating {provider.upper()} main LLM service")
 
         if provider == 'groq':
             llm = GroqLLMService(
@@ -79,77 +71,86 @@ class ServiceFactory:
                 model=config['model'],
                 temperature=config.get('temperature', 0.4)
             )
-        else:  # default to openai
+        elif provider == 'anthropic':
+            llm = AnthropicLLMService(
+                api_key=config['api_key'],
+                model=config['model'],
+                temperature=config.get('temperature', 0.4)
+            )
+        elif provider == 'openai':
             llm = OpenAILLMService(
                 api_key=config['api_key'],
                 model=config['model'],
-                temperature=config['temperature']
+                temperature=config.get('temperature', 0.4)
             )
+        else:
+            raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: openai, groq, anthropic")
 
         llm.register_function("update_prior_auth_status", update_prior_auth_status_handler)
+        logger.info(f"✅ {provider.upper()} main LLM service created")
         return llm
 
     @staticmethod
     def create_classifier_llm(config: Dict[str, Any]):
-        """Create fast classifier LLM without tools for IVR detection"""
         provider = config.get('provider', 'openai')
+        logger.info(f"⚡ Creating {provider.upper()} classifier LLM service")
 
         if provider == 'groq':
             llm = GroqLLMService(
                 api_key=config['api_key'],
                 model=config['model'],
-                temperature=0,  # Deterministic classification
-                max_tokens=10   # Only need "<mode>conversation</mode>"
+                temperature=0,
+                max_tokens=10
             )
-        else:  # default to openai
+        elif provider == 'anthropic':
+            llm = AnthropicLLMService(
+                api_key=config['api_key'],
+                model=config['model'],
+                temperature=0,
+                max_tokens=10
+            )
+        elif provider == 'openai':
             llm = OpenAILLMService(
                 api_key=config['api_key'],
                 model=config['model'],
-                temperature=0,  # Deterministic classification
-                max_tokens=10   # Only need "<mode>conversation</mode>"
+                temperature=0,
+                max_tokens=10
             )
+        else:
+            raise ValueError(f"Unsupported classifier LLM provider: {provider}. Supported providers: openai, groq, anthropic")
 
-        # No function registration for classifier - it only does IVR vs Human detection
+        logger.info(f"✅ {provider.upper()} classifier LLM service created")
         return llm
 
     @staticmethod
     def create_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
-        """Create ElevenLabs TTS service with SSML support"""
-        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService as ElevenLabsService
-
-        params = ElevenLabsService.InputParams(
+        logger.info("🗣️ Creating ElevenLabs TTS service")
+        params = ElevenLabsTTSService.InputParams(
             stability=config.get('stability'),
             similarity_boost=config.get('similarity_boost'),
             style=config.get('style', 0.0),
-            enable_ssml_parsing=True  # Enable SSML for code pronunciation control
+            enable_ssml_parsing=True
         )
 
-        return ElevenLabsTTSService(
+        service = ElevenLabsTTSService(
             api_key=config['api_key'],
             voice_id=config['voice_id'],
             model=config['model'],
             params=params
         )
+        logger.info("✅ ElevenLabs TTS service created")
+        return service
 
     @staticmethod
     def create_llm_switcher(config: Dict[str, Any]) -> tuple:
-        """Create LLM switcher managing classifier and main LLM
-
-        The switcher starts with classifier_llm active (for initial IVR/CONVERSATION detection).
-        To switch to main_llm, push ManuallySwitchServiceFrame(service=main_llm) to pipeline.
-
-        Returns:
-            tuple: (llm_switcher, classifier_llm, main_llm)
-        """
-        # Create both LLMs separately
+        logger.info("🔀 Creating LLM switcher")
         classifier_llm = ServiceFactory.create_classifier_llm(config['classifier_llm'])
         main_llm = ServiceFactory.create_llm(config['llm'])
 
-        # Create switcher with both LLMs
-        # Manual strategy defaults to first LLM (classifier_llm) as active
         llm_switcher = LLMSwitcher(
             llms=[classifier_llm, main_llm],
             strategy_type=ServiceSwitcherStrategyManual
         )
 
+        logger.info("✅ LLM switcher created")
         return llm_switcher, classifier_llm, main_llm

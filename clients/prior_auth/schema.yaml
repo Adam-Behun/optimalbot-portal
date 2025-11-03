@@ -72,32 +72,13 @@ data_schema:
     - provider_name
     - appointment_time
   
-  global_access: true  # All fields accessible from any state
-  
-  preformat_rules:
-    date_of_birth:
-      format: "natural_speech"
-      example: "March 15th, 1985"
+  global_access: true
 
-    insurance_member_id:
-      format: "spoken_format"
-      example: "H . L . T . H . four five six, seven eight nine, zero one two"
-
-    cpt_code:
-      format: "spoken_format"
-      example: "nine nine two one three"
-
-    provider_npi:
-      format: "spoken_format"
-      example: "one five seven, eight nine four, three two five one, six four seven eight"
-
-    provider_name:
-      format: "spoken_format"
-      example: "Doctor Raj Singh"
-
-    appointment_time:
-      format: "natural_speech"
-      example: "October 22nd, 2025 at 3:30 PM"
+  # Speech formatting is automatic based on field names
+  # All transformed fields get a "{field_name}_spoken" version
+  # To override defaults, use speech_overrides (optional):
+  # speech_overrides:
+  #   confirmation_code: "nato_phonetic"
 
 # State machine
 states:

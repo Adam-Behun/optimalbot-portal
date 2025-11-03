@@ -1,9 +1,3 @@
-"""
-Conversation pipeline runner.
-Orchestrates loading client config, building pipeline, and running calls.
-"""
-
-import sys
 import logging
 from typing import Dict, Any
 
@@ -22,24 +16,7 @@ from handlers import (
 logger = logging.getLogger(__name__)
 
 
-class CustomPipelineRunner(PipelineRunner):
-    """Custom runner handling Windows signal issues"""
-    def _setup_sigint(self):
-        if sys.platform == 'win32':
-            return
-        super()._setup_sigint()
-
-
 class ConversationPipeline:
-    """
-    Schema-driven voice AI pipeline orchestrator.
-    
-    Handles:
-    - Loading client configuration
-    - Building Pipecat pipeline
-    - Running voice conversations
-    - Managing handlers and state
-    """
     
     def __init__(
         self,
@@ -82,10 +59,7 @@ class ConversationPipeline:
         self.transfer_in_progress = False
 
     async def run(self, room_url: str, room_token: str, room_name: str):
-        logger.info(
-            f"Starting pipeline - Client: {self.client_name}, "
-            f"Session: {self.session_id}, Phone: {self.phone_number}"
-        )
+        logger.info(f"🎬 Starting call - Client: {self.client_name}, Session: {self.session_id}, Phone: {self.phone_number}")
 
         # Build pipeline
         session_data = {
@@ -101,19 +75,15 @@ class ConversationPipeline:
             'room_name': room_name
         }
 
-        logger.info(f"📋 Building pipeline with session_data keys: {list(session_data.keys())}")
-        logger.info(f"📋 Room config: {room_name}")
-        logger.info("📋 Calling PipelineFactory.build()...")
+        logger.debug(f"Session data keys: {list(session_data.keys())}")
+        logger.debug(f"Room: {room_name}")
 
+        # Build pipeline (services and components log their own creation)
         self.pipeline, self.transport, components = PipelineFactory.build(
             self.client_config,
             session_data,
             room_config
         )
-
-        logger.info("✅ Pipeline built successfully")
-        logger.info(f"✅ Pipeline object: {type(self.pipeline).__name__}")
-        logger.info(f"✅ Transport object: {type(self.transport).__name__}")
 
         # Extract components
         self.conversation_context = components['context']
@@ -124,77 +94,58 @@ class ConversationPipeline:
         self.llm_switcher = components['llm_switcher']
         self.main_llm = components['main_llm']
 
-        logger.info(f"✅ Components extracted - State: {self.conversation_context.current_state}")
-        logger.info(f"✅ LLM switcher: {type(self.llm_switcher).__name__}")
-        logger.info(f"✅ Active LLM: {type(self.llm_switcher.active_llm).__name__}")
-        logger.info(f"✅ Transport: {type(self.transport).__name__}")
+        logger.debug(f"Initial state: {self.conversation_context.current_state}")
+        logger.debug(f"Active LLM: {type(self.llm_switcher.active_llm).__name__}")
 
-        # CRITICAL: Setup handlers BEFORE creating task
-        # The task will join the Daily room immediately, so handlers must be ready
-        logger.info("🔧 Setting up dialout handlers...")
+        # Setup handlers before creating task
+        logger.info("🔧 Setting up handlers")
         setup_dialout_handlers(self)
-
-        logger.info("🔧 Setting up transcript handler...")
         setup_transcript_handler(self)
-
-        logger.info("🔧 Setting up IVR handlers...")
         setup_ivr_handlers(self, components['ivr_navigator'])
-
-        logger.info("🔧 Setting up function call handler...")
         setup_function_call_handler(self)
 
-        logger.info("✅ All handlers configured")
-
-        # Create task with OpenTelemetry enabled
-        # NOTE: Task will trigger transport.join() immediately
-        # Pipecat will automatically create the conversation span and all child spans
+        logger.debug("Creating pipeline task with tracing enabled")
         self.task = PipelineTask(
             self.pipeline,
             params=PipelineParams(
                 allow_interruptions=True,
                 enable_metrics=True,
-                enable_usage_metrics=True,  # ✅ ADDED: Required for token tracking
+                enable_usage_metrics=True,
             ),
-            enable_tracing=True,  # Enable tracing for this task
-            enable_turn_tracking=True,  # Enable turn tracking
-            conversation_id=self.session_id,  # Use session_id as conversation_id
+            enable_tracing=True,
+            enable_turn_tracking=True,
+            conversation_id=self.session_id,
             additional_span_attributes={
                 "patient.id": self.patient_id,
                 "phone.number": self.phone_number,
                 "client.name": self.client_name,
             }
         )
-        
-        self.state_manager.set_task(self.task)
-        self.runner = CustomPipelineRunner()
 
-        logger.info("=" * 60)
-        logger.info("🚀 STARTING PIPELINE RUNNER")
-        logger.info(f"🚀 Initial state: {self.conversation_context.current_state}")
-        logger.info(f"🚀 Session: {self.session_id}")
-        logger.info(f"🚀 Phone: {self.phone_number}")
-        logger.info("=" * 60)
+        self.state_manager.set_task(self.task)
+        self.runner = PipelineRunner()
+
+        logger.info(f"🚀 Starting pipeline runner - Initial state: {self.conversation_context.current_state}")
 
         try:
             await self.runner.run(self.task)
-            logger.info("✅ Pipeline completed successfully")
+            logger.info("✅ Call completed successfully")
 
         except Exception as e:
-            logger.error(f"Pipeline error: {e}")
+            logger.error(f"❌ Pipeline error: {e}")
             import traceback
             logger.error(traceback.format_exc())
             raise
 
         finally:
-            # Ensure pipeline cleanup on all exit paths (#16)
-            logger.info("Cleaning up pipeline resources...")
+            logger.debug("Cleaning up pipeline resources")
             try:
                 if self.task:
                     await self.task.cancel()
                 if self.transport:
                     # Daily transport cleanup handled by Pipecat
                     pass
-                logger.info("Pipeline cleanup complete")
+                logger.debug("Cleanup complete")
             except Exception as cleanup_error:
                 logger.error(f"Error during cleanup: {cleanup_error}")
     

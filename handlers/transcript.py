@@ -74,12 +74,10 @@ def setup_transcript_handler(pipeline):
             }
             pipeline.transcripts.append(transcript_entry)
             logger.info(f"[TRANSCRIPT] {message.role}: {message.content}")
-            
-            if message.role == "user":
-                await pipeline.state_manager.check_user_transition(message.content)
-            elif message.role == "assistant":
+
+            if message.role == "assistant":
                 await pipeline.state_manager.check_assistant_transition(message.content)
-        
+
         await pipeline.state_manager.check_completion(pipeline.transcripts)
 
 

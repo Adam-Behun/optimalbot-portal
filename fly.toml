@@ -1,6 +1,3 @@
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
 app = 'prior-auth-agent-v2'
 primary_region = 'ewr'
 kill_signal = 'SIGINT'

@@ -1,8 +1,4 @@
-"""
-Pipeline factory for assembling Pipecat pipelines.
-Creates services, handlers, and wires them into a complete pipeline.
-"""
-
+import logging
 from typing import Dict, Any
 from openai._types import NOT_GIVEN
 from pipecat.pipeline.pipeline import Pipeline
@@ -17,9 +13,10 @@ from core.context import ConversationContext
 from core.state_manager import StateManager
 from backend.functions import PATIENT_TOOLS
 
+logger = logging.getLogger(__name__)
+
 
 class PipelineFactory:
-    """Builds Pipecat pipeline instances for voice conversations"""
     
     @staticmethod
     def build(
@@ -27,29 +24,18 @@ class PipelineFactory:
         session_data: Dict[str, Any],
         room_config: Dict[str, str]
     ) -> tuple:
-        """
-        Build complete pipeline with all services and handlers.
-        
-        Args:
-            client_config: ClientConfig with schema, prompts, services
-            session_data: session_id, patient_id, patient_data, phone_number
-            room_config: room_url, room_token, room_name
-            
-        Returns:
-            tuple: (pipeline, transport, components)
-        """
+        logger.info("🏗️  Building pipeline")
         services_config = client_config.services_config
 
-        # Create LLM switcher (manages classifier_llm and main llm)
+        # Service creation (individual services log their own creation)
         llm_switcher, classifier_llm, main_llm = ServiceFactory.create_llm_switcher(services_config['services'])
 
-        # Create services
         services = {
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
             'tts': ServiceFactory.create_tts(services_config['services']['tts']),
             'llm_switcher': llm_switcher,
-            'classifier_llm': classifier_llm,  # Keep reference for IVRNavigator
-            'main_llm': main_llm,  # Keep reference for switching
+            'classifier_llm': classifier_llm,
+            'main_llm': main_llm,
             'transport': ServiceFactory.create_transport(
                 services_config['services']['transport'],
                 room_config['room_url'],
@@ -57,17 +43,18 @@ class PipelineFactory:
                 room_config['room_name']
             )
         }
-        
-        # Create conversation components
+
+        logger.info("🧩 Creating conversation components")
         components = PipelineFactory._create_conversation_components(
             client_config,
             session_data,
             services
         )
-        
-        # Assemble pipeline
+
+        logger.info("🔗 Assembling pipeline")
         pipeline = PipelineFactory._assemble_pipeline(services, components)
-        
+
+        logger.info("✅ Pipeline build complete")
         return pipeline, services['transport'], components
     
     @staticmethod
@@ -77,7 +64,7 @@ class PipelineFactory:
         services: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Create conversation context, state manager, and handlers"""
-        # Create conversation context
+        logger.debug("Creating conversation context")
         context = ConversationContext(
             schema=client_config.schema,
             patient_data=session_data['patient_data'],
@@ -85,57 +72,58 @@ class PipelineFactory:
             prompt_renderer=client_config.prompt_renderer,
             data_formatter=client_config.data_formatter
         )
-        
-        # Create state manager
+
+        logger.debug("Creating state manager")
         state_manager = StateManager(
             conversation_context=context,
             schema=client_config.schema,
             session_id=session_data['session_id'],
             patient_id=session_data['patient_id']
         )
-        
-        # Create transcript processor
+
+        logger.debug("Creating transcript processor")
         transcript_processor = TranscriptProcessor()
-        
-        # Create LLM context aggregator using main_llm
-        # Note: Context aggregator routes messages through IVRNavigator → LLMSwitcher → active LLM
+
+        logger.debug("Setting up LLM context")
         initial_prompt = context.render_prompt()
         llm_context = OpenAILLMContext(
             messages=[{"role": "system", "content": initial_prompt}],
             tools=NOT_GIVEN  # Start with no tools - classifier_llm is active initially
         )
         context_aggregators = services['main_llm'].create_context_aggregator(llm_context)
-        
+
         # Link state manager to context aggregators
         state_manager.set_context_aggregators(context_aggregators)
-        
+
         # Get formatted data for prompt rendering (for conversation states only)
         formatted_data = client_config.data_formatter.format_patient_data(
             session_data['patient_data']
         )
 
+        logger.debug("Configuring IVR navigator")
         # Render call classifier prompt from YAML
         call_classifier_prompt = client_config.prompt_renderer.render_prompt(
             "call_classifier", "system", {}
         )
 
-        # Create IVR navigator (IVR navigation doesn't need patient data)
+        # Create IVR navigator
         ivr_goal = client_config.prompt_renderer.render_prompt(
             "ivr_navigation", "task", {}  # No patient data needed for IVR navigation
         ) or "Navigate to provider services for eligibility verification"
 
-        # Configure IVRNavigator with LLM switcher (starts with classifier_llm active)
+        # Configure IVRNavigator with LLM switcher
         ivr_navigator = IVRNavigator(
             llm=services['llm_switcher'],  # LLM switcher (classifier active initially)
             ivr_prompt=ivr_goal,
-            ivr_vad_params=VADParams(stop_secs=2.0)  # Longer wait for IVR menus
+            ivr_vad_params=VADParams(stop_secs=2.0)
         )
 
         # Override the classifier prompt with our custom one from YAML
         if call_classifier_prompt:
             ivr_navigator._classifier_prompt = call_classifier_prompt
             ivr_navigator._ivr_processor._classifier_prompt = call_classifier_prompt
-        
+
+        logger.debug(f"Components created - Initial state: {context.current_state}")
         return {
             'context': context,
             'state_manager': state_manager,
@@ -151,7 +139,6 @@ class PipelineFactory:
         services: Dict[str, Any],
         components: Dict[str, Any]
     ) -> Pipeline:
-        """Wire all components into Pipecat pipeline"""
         return Pipeline([
             services['transport'].input(),
             AudioResampler(target_sample_rate=16000),
