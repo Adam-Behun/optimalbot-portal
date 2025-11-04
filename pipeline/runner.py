@@ -50,6 +50,7 @@ class ConversationPipeline:
         self.ivr_navigator = None
         self.llm_switcher = None
         self.main_llm = None
+        self.classifier_llm = None
         self.runner = None
         
         # Transcript tracking
@@ -93,6 +94,7 @@ class ConversationPipeline:
         self.ivr_navigator = components['ivr_navigator']
         self.llm_switcher = components['llm_switcher']
         self.main_llm = components['main_llm']
+        self.classifier_llm = components['classifier_llm']
 
         logger.debug(f"Initial state: {self.conversation_context.current_state}")
         logger.debug(f"Active LLM: {type(self.llm_switcher.active_llm).__name__}")

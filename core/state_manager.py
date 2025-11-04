@@ -1,8 +1,9 @@
 import logging
 import re
 from typing import Optional, List, Dict, Any
-from pipecat.frames.frames import LLMMessagesUpdateFrame, EndFrame
+from pipecat.frames.frames import LLMMessagesUpdateFrame, EndFrame, ManuallySwitchServiceFrame
 from backend.models import get_async_patient_db
+from backend.functions import PATIENT_TOOLS
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +16,9 @@ class StateManager:
         session_id: str,
         patient_id: str,
         context_aggregators=None,
-        task=None
+        task=None,
+        main_llm=None,
+        classifier_llm=None
     ):
         self.conversation_context = conversation_context
         self.schema = schema
@@ -23,6 +26,8 @@ class StateManager:
         self.patient_id = patient_id
         self.context_aggregators = context_aggregators
         self.task = task
+        self.main_llm = main_llm
+        self.classifier_llm = classifier_llm
 
     def set_task(self, task):
         self.task = task
@@ -94,6 +99,32 @@ class StateManager:
             return
 
         self.conversation_context.transition_to(new_state, reason=reason)
+
+        # Switch LLMs based on state transition
+        if new_state == "verification":
+            # Switch to main_llm and enable function calling
+            if self.main_llm:
+                switch_frame = ManuallySwitchServiceFrame(service=self.main_llm)
+                await self.task.queue_frames([switch_frame])
+                logger.debug("Switched to main_llm for verification state")
+
+            # Enable tools for function calling
+            context = self.context_aggregators.user().context
+            context.set_tools(PATIENT_TOOLS)
+            logger.debug("Enabled function calling tools for verification")
+
+        elif new_state == "greeting":
+            # Switch to classifier_llm (fast, no tools)
+            if self.classifier_llm:
+                switch_frame = ManuallySwitchServiceFrame(service=self.classifier_llm)
+                await self.task.queue_frames([switch_frame])
+                logger.debug("Switched to classifier_llm for greeting state")
+
+            # Clear tools - classifier_llm doesn't need them
+            context = self.context_aggregators.user().context
+            context.set_tools([])
+            logger.debug("Cleared tools for greeting state")
+
         new_prompt = self.conversation_context.render_prompt()
 
         if new_state == "verification":
@@ -111,8 +142,12 @@ class StateManager:
             if msg.get("role") != "system"
         ])
 
+        # For greeting state, run LLM immediately to generate greeting
+        # For other states, just update context without running LLM
+        run_llm = (new_state == "greeting")
+
         await self.task.queue_frames([
-            LLMMessagesUpdateFrame(messages=new_messages, run_llm=False)
+            LLMMessagesUpdateFrame(messages=new_messages, run_llm=run_llm)
         ])
 
         logger.info(f"✅ Transitioned to {new_state}")

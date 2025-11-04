@@ -78,7 +78,9 @@ class PipelineFactory:
             conversation_context=context,
             schema=client_config.schema,
             session_id=session_data['session_id'],
-            patient_id=session_data['patient_id']
+            patient_id=session_data['patient_id'],
+            main_llm=services['main_llm'],
+            classifier_llm=services['classifier_llm']
         )
 
         logger.debug("Creating transcript processor")
@@ -90,7 +92,8 @@ class PipelineFactory:
             messages=[{"role": "system", "content": initial_prompt}],
             tools=NOT_GIVEN  # Start with no tools - classifier_llm is active initially
         )
-        context_aggregators = services['main_llm'].create_context_aggregator(llm_context)
+        # IMPORTANT: Use llm_switcher (not main_llm) so ManuallySwitchServiceFrame works correctly
+        context_aggregators = services['llm_switcher'].create_context_aggregator(llm_context)
 
         # Link state manager to context aggregators
         state_manager.set_context_aggregators(context_aggregators)
@@ -131,7 +134,8 @@ class PipelineFactory:
             'context_aggregators': context_aggregators,
             'ivr_navigator': ivr_navigator,
             'llm_switcher': services['llm_switcher'],
-            'main_llm': services['main_llm']
+            'main_llm': services['main_llm'],
+            'classifier_llm': services['classifier_llm']
         }
     
     @staticmethod

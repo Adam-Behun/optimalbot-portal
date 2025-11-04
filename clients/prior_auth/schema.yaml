@@ -74,24 +74,24 @@ data_schema:
   
   global_access: true
 
-  # Speech formatting is automatic based on field names
-  # All transformed fields get a "{field_name}_spoken" version
-  # To override defaults, use speech_overrides (optional):
-  # speech_overrides:
-  #   confirmation_code: "nato_phonetic"
-
 # State machine
 states:
-  initial_state: "verification"  # IVRNavigator handles classification, handlers transition directly to verification
+  initial_state: "call_classifier"
 
   definitions:
-    # Event-driven states - DO NOT MODIFY BEHAVIOR
+    - name: "call_classifier"
+      description: "Classify if call is answered by IVR system or human"
+      prompts_ref: "call_classifier"
+      allowed_transitions: ["ivr_navigation", "greeting"]
+      llm_directed: false
+      data_access: []
+
     - name: "ivr_navigation"
       description: "Navigating IVR system to reach human representative"
       prompts_ref: "ivr_navigation"
       allowed_transitions: []
       llm_directed: false
-      data_access: []  # IVR navigation doesn't need patient data
+      data_access: []
     
     - name: "ivr_stuck"
       description: "IVR navigation failed - unable to reach human"
@@ -99,9 +99,18 @@ states:
       terminal: true
       allowed_transitions: []
       llm_directed: false
-      data_access: []  # IVR stuck doesn't need patient data
+      data_access: []
     
-    # Conversation states - ENABLE LLM DIRECTION
+    - name: "greeting"
+      description: "Greet the human representative briefly"
+      prompts_ref: "greeting"
+      data_access:
+        - patient_name
+        - cpt_code
+        - facility
+      allowed_transitions: ["verification"]
+      llm_directed: true
+
     - name: "verification"
       description: "Provide patient information and verify insurance coverage"
       prompts_ref: "verification"
@@ -122,7 +131,7 @@ states:
       allowed_transitions: ["closing"]
       llm_directed: true
       required_before_closing: true
-    
+
     - name: "closing"
       description: "Close the call politely"
       prompts_ref: "closing"
@@ -159,7 +168,6 @@ transitions:
     reason: "ivr_navigation_complete"
     description: "Successfully navigated IVR to reach human, transition to verification"
 
-  # Transition 2: ivr_navigation → ivr_stuck (via event handler - IVR stuck)
   - from_state: "ivr_navigation"
     to_state: "ivr_stuck"
     trigger:

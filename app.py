@@ -1,4 +1,3 @@
-"""Main application entry point"""
 import os
 import asyncio
 import uvicorn
