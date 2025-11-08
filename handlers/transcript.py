@@ -6,27 +6,6 @@ from backend.models import get_async_patient_db
 
 
 def assemble_transcript(raw_messages: list) -> list:
-    """
-    Assemble fragmented transcript messages into coherent conversation.
-
-    Merges consecutive messages from the same role if they occur within
-    a time threshold (3 seconds), reducing fragmentation from streaming STT.
-
-    Args:
-        raw_messages: List of transcript entries with role, content, timestamp
-
-    Returns:
-        List of assembled messages with merged content
-
-    Example:
-        Input:  [
-            {"role": "user", "content": "Yes. What is the", "timestamp": "..."},
-            {"role": "user", "content": "date of birth?", "timestamp": "..."}
-        ]
-        Output: [
-            {"role": "user", "content": "Yes. What is the date of birth?", "timestamp": "..."}
-        ]
-    """
     if not raw_messages:
         return []
 
@@ -61,8 +40,8 @@ def assemble_transcript(raw_messages: list) -> list:
 
 
 def setup_transcript_handler(pipeline):
-    """Monitor transcripts for state transitions and completion"""
-    
+    """Monitor transcripts for call completion"""
+
     @pipeline.transcript_processor.event_handler("on_transcript_update")
     async def handle_transcript_update(processor, frame):
         for message in frame.messages:
@@ -75,19 +54,10 @@ def setup_transcript_handler(pipeline):
             pipeline.transcripts.append(transcript_entry)
             logger.info(f"[TRANSCRIPT] {message.role}: {message.content}")
 
-            if message.role == "assistant":
-                await pipeline.state_manager.check_assistant_transition(message.content)
-
         await pipeline.state_manager.check_completion(pipeline.transcripts)
 
 
 async def delete_daily_recording(room_name: str):
-    """
-    Delete Daily.co recording for HIPAA compliance.
-
-    After transcript is saved to our database, we delete the Daily recording
-    to minimize PHI storage duration per HIPAA best practices.
-    """
     try:
         daily_api_key = os.getenv("DAILY_API_KEY")
         if not daily_api_key:
@@ -138,14 +108,6 @@ async def delete_daily_recording(room_name: str):
         return False
 
 async def save_transcript_to_db(pipeline):
-    """
-    Save collected transcripts to MongoDB when conversation ends.
-
-    Assembles fragmented messages before saving to improve readability.
-    This runs post-call, so no latency impact on the conversation.
-
-    Also deletes Daily.co recordings for HIPAA compliance after transcript is saved.
-    """
     if not pipeline.transcripts:
         logger.warning("No transcripts to save")
         return

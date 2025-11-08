@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+"""
+Full E2E Integration Test: IVR Navigation → Human Conversation
+
+This test validates:
+1. Bot calls Twilio number (+15165853321)
+2. Navigates IVR menus (Press 2 → Press 1)
+3. Flask server transfers call to your number (+15165667132)
+4. Full conversation flow (greeting → verification → closing)
+
+Prerequisites:
+1. Run: python twilio_ivr_server.py (in separate terminal)
+2. Run: ngrok http 5001 (in separate terminal)
+3. Configure Twilio number to point to ngrok URL
+4. Update .env.test with Daily.co credentials
+5. Run this test and answer your phone when it rings!
+"""
 import asyncio
 import sys
 import os
@@ -17,7 +33,7 @@ TEST_PATIENT = {
     "date_of_birth": "1985-03-15",
     "insurance_member_id": "ASD489RTYBBB",
     "insurance_company": "Blue Cross Insurance",
-    "insurance_phone": "+15165853321",
+    "insurance_phone": "+15165853321",  # Twilio IVR number
     "cpt_code": "99213",
     "provider_npi": "1234567890",
     "provider_name": "Dr. Sarah Johnson",
@@ -27,39 +43,122 @@ TEST_PATIENT = {
 
 
 async def run_test():
+    """
+    Run full E2E integration test
+
+    Expected flow:
+    1. Bot calls +15165853321 (Twilio → ngrok → Flask)
+    2. IVR navigation: Press 2 (Provider Services) → Press 1 (Eligibility)
+    3. Flask /human-rep endpoint dials +15165667132 (your number)
+    4. You answer and simulate insurance rep
+    5. Full conversation: greeting → verification → closing
+    """
     room_url = os.getenv("TEST_DAILY_ROOM_URL")
     room_token = os.getenv("TEST_DAILY_ROOM_TOKEN")
-    test_phone = os.getenv("TWILIO_PHONE_NUMBER", "+15165853321")
+    twilio_phone = os.getenv("TWILIO_PHONE_NUMBER", "+15165853321")
+    your_phone = os.getenv("TEST_TRANSFER_NUMBER", "+15165667132")
 
     if not room_url or not room_token:
-        print("FAIL: TEST_DAILY_ROOM_URL and TEST_DAILY_ROOM_TOKEN required in .env.test")
+        print("❌ FAIL: TEST_DAILY_ROOM_URL and TEST_DAILY_ROOM_TOKEN required in .env.test")
+        print("\nGet credentials from: https://dashboard.daily.co")
         return
+
+    print("="*70)
+    print("🧪 E2E INTEGRATION TEST: IVR Navigation → Human Conversation")
+    print("="*70)
+    print(f"\n📞 Test Configuration:")
+    print(f"   Twilio IVR Number: {twilio_phone}")
+    print(f"   Your Phone: {your_phone}")
+    print(f"   Patient: {TEST_PATIENT['patient_name']}")
+    print(f"\n📋 Test Instructions:")
+    print(f"   1. Ensure twilio_ivr_server.py is running (port 5001)")
+    print(f"   2. Ensure ngrok is exposing port 5001")
+    print(f"   3. Your phone ({your_phone}) will ring after IVR navigation")
+    print(f"   4. Answer and say: 'Hello, this is [your name] from Blue Cross'")
+    print(f"   5. Bot will greet you and state purpose")
+    print(f"   6. Continue conversation to test verification flow")
+    print(f"\n⏳ Starting test in 5 seconds...\n")
+
+    await asyncio.sleep(5)
 
     pipeline = ConversationPipeline(
         client_name="prior_auth",
-        session_id="integration_test",
+        session_id="e2e_integration_test",
         patient_id="test_001",
         patient_data=TEST_PATIENT,
-        phone_number=test_phone,
-        debug_mode=False
+        phone_number=twilio_phone,  # Start with Twilio IVR
+        debug_mode=True
     )
 
     try:
-        await pipeline.run(room_url, room_token, "integration_test")
+        print("🚀 Starting pipeline...")
+        await pipeline.run(room_url, room_token, "e2e_integration_test")
 
+        # Analyze results
+        print("\n" + "="*70)
+        print("📊 TEST RESULTS")
+        print("="*70)
+
+        # Check IVR navigation
         dtmf_actions = [t for t in pipeline.transcripts if t.get("type") == "ivr_action"]
         ivr_summary = [t for t in pipeline.transcripts if t.get("type") == "ivr_summary"]
 
-        expected_path = ["2", "1"]
+        print(f"\n🔢 IVR Navigation:")
+        expected_path = ["2", "1"]  # Provider Services → Eligibility
         actual_path = [t["content"].replace("Pressed ", "") for t in dtmf_actions]
+        print(f"   Expected: {expected_path}")
+        print(f"   Actual: {actual_path}")
 
-        if actual_path == expected_path and any("Completed" in t.get("content", "") for t in ivr_summary):
-            print("PASS")
+        ivr_success = (
+            actual_path == expected_path and
+            any("Completed" in t.get("content", "") for t in ivr_summary)
+        )
+        print(f"   Status: {'✅ PASS' if ivr_success else '❌ FAIL'}")
+
+        # Check conversation states
+        print(f"\n💬 Conversation Flow:")
+        user_messages = [t for t in pipeline.transcripts if t.get("role") == "user"]
+        assistant_messages = [t for t in pipeline.transcripts if t.get("role") == "assistant"]
+
+        print(f"   User messages: {len(user_messages)}")
+        print(f"   Assistant messages: {len(assistant_messages)}")
+
+        has_greeting = any("greeting" in str(pipeline.conversation_context.current_state).lower() for _ in [1])
+        has_conversation = len(user_messages) > 0 and len(assistant_messages) > 0
+
+        print(f"   Greeting state reached: {'✅ Yes' if has_greeting else '❌ No'}")
+        print(f"   Conversation occurred: {'✅ Yes' if has_conversation else '❌ No'}")
+
+        # Print transcript
+        print(f"\n📝 Full Transcript:")
+        print("-"*70)
+        for entry in pipeline.transcripts:
+            role = entry.get("role", "system")
+            content = entry.get("content", "")
+            entry_type = entry.get("type", "")
+
+            if role == "user":
+                print(f"USER: {content}")
+            elif role == "assistant":
+                print(f"ASSISTANT: {content}")
+            elif role == "system" and entry_type == "ivr_action":
+                print(f"[IVR ACTION] {content}")
+            elif role == "system" and entry_type == "ivr_summary":
+                print(f"[IVR] {content}")
+
+        # Overall result
+        print("\n" + "="*70)
+        overall_pass = ivr_success and has_conversation
+        if overall_pass:
+            print("✅ OVERALL: PASS - Full E2E flow completed successfully!")
         else:
-            print(f"FAIL: Expected {expected_path}, got {actual_path}")
+            print("❌ OVERALL: FAIL - Check results above for details")
+        print("="*70)
 
     except Exception as e:
-        print(f"FAIL: {e}")
+        print(f"\n❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

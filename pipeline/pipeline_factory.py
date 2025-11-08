@@ -24,10 +24,9 @@ class PipelineFactory:
         session_data: Dict[str, Any],
         room_config: Dict[str, str]
     ) -> tuple:
-        logger.info("🏗️  Building pipeline")
+        logger.info("Building pipeline")
         services_config = client_config.services_config
 
-        # Service creation (individual services log their own creation)
         llm_switcher, classifier_llm, main_llm = ServiceFactory.create_llm_switcher(services_config['services'])
 
         services = {
@@ -44,17 +43,17 @@ class PipelineFactory:
             )
         }
 
-        logger.info("🧩 Creating conversation components")
+        logger.info("Creating conversation components")
         components = PipelineFactory._create_conversation_components(
             client_config,
             session_data,
             services
         )
 
-        logger.info("🔗 Assembling pipeline")
+        logger.info("Assembling pipeline")
         pipeline = PipelineFactory._assemble_pipeline(services, components)
 
-        logger.info("✅ Pipeline build complete")
+        logger.info("Pipeline build complete")
         return pipeline, services['transport'], components
     
     @staticmethod
@@ -90,38 +89,31 @@ class PipelineFactory:
         initial_prompt = context.render_prompt()
         llm_context = OpenAILLMContext(
             messages=[{"role": "system", "content": initial_prompt}],
-            tools=NOT_GIVEN  # Start with no tools - classifier_llm is active initially
+            tools=NOT_GIVEN
         )
-        # IMPORTANT: Use llm_switcher (not main_llm) so ManuallySwitchServiceFrame works correctly
-        context_aggregators = services['llm_switcher'].create_context_aggregator(llm_context)
+        context_aggregators = services['main_llm'].create_context_aggregator(llm_context)
 
-        # Link state manager to context aggregators
         state_manager.set_context_aggregators(context_aggregators)
 
-        # Get formatted data for prompt rendering (for conversation states only)
         formatted_data = client_config.data_formatter.format_patient_data(
             session_data['patient_data']
         )
 
         logger.debug("Configuring IVR navigator")
-        # Render call classifier prompt from YAML
         call_classifier_prompt = client_config.prompt_renderer.render_prompt(
             "call_classifier", "system", {}
         )
 
-        # Create IVR navigator
         ivr_goal = client_config.prompt_renderer.render_prompt(
-            "ivr_navigation", "task", {}  # No patient data needed for IVR navigation
+            "ivr_navigation", "task", {}
         ) or "Navigate to provider services for eligibility verification"
 
-        # Configure IVRNavigator with LLM switcher
         ivr_navigator = IVRNavigator(
-            llm=services['llm_switcher'],  # LLM switcher (classifier active initially)
+            llm=services['llm_switcher'],
             ivr_prompt=ivr_goal,
             ivr_vad_params=VADParams(stop_secs=2.0)
         )
 
-        # Override the classifier prompt with our custom one from YAML
         if call_classifier_prompt:
             ivr_navigator._classifier_prompt = call_classifier_prompt
             ivr_navigator._ivr_processor._classifier_prompt = call_classifier_prompt
@@ -151,8 +143,8 @@ class PipelineFactory:
             components['transcript_processor'].user(),
             components['context_aggregators'].user(),
             components['ivr_navigator'],
-            StateTagStripper(),
-            CodeFormatter(),  # Format hyphenated codes before TTS
+            StateTagStripper(state_manager=components['state_manager']),
+            CodeFormatter(),
             services['tts'],
             components['transcript_processor'].assistant(),
             components['context_aggregators'].assistant(),

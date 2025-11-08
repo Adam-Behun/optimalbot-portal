@@ -27,6 +27,8 @@ def convert_spoken_to_numeric(text: str) -> str:
 async def update_prior_auth_status_handler(params: FunctionCallParams):
     """Handler for updating prior authorization status via LLM function call"""
 
+    logger.info("🔧 Function call: update_prior_auth_status")
+
     patient_id = params.arguments.get("patient_id")
     status = params.arguments.get("status")
     reference_number = params.arguments.get("reference_number")
@@ -60,11 +62,8 @@ async def update_prior_auth_status_handler(params: FunctionCallParams):
 
 
 async def dial_supervisor_handler(params: FunctionCallParams, transport, patient_data, pipeline):
-    """Handler for transferring call to supervisor"""
-
     supervisor_phone = patient_data.get("supervisor_phone")
 
-    # Validate supervisor phone exists
     if not supervisor_phone:
         logger.warning("Transfer requested but no supervisor phone configured")
         result = {
@@ -74,7 +73,6 @@ async def dial_supervisor_handler(params: FunctionCallParams, transport, patient
         await params.result_callback(result)
         return
 
-    # Validate phone format
     import re
     if not re.match(r'^\+\d{10,15}$', supervisor_phone):
         logger.error(f"Invalid supervisor phone format: {supervisor_phone}")
@@ -88,10 +86,25 @@ async def dial_supervisor_handler(params: FunctionCallParams, transport, patient
     logger.info(f"Initiating transfer to supervisor: {supervisor_phone}")
 
     try:
-        # Set transfer flag
         pipeline.transfer_in_progress = True
 
-        # Execute SIP call transfer
+        patient_id = patient_data.get("patient_id")
+        if patient_id:
+            patient_db = get_async_patient_db()
+            await patient_db.update_call_status(patient_id, "Supervisor Requested")
+            logger.info(f"Updated call_status to 'Supervisor Requested' for patient {patient_id}")
+
+        if hasattr(pipeline, 'transcripts'):
+            from datetime import datetime
+            system_message = {
+                "role": "system",
+                "content": "Supervisor Requested",
+                "timestamp": datetime.now().isoformat(),
+                "type": "system_event"
+            }
+            pipeline.transcripts.append(system_message)
+            logger.info("Added 'Supervisor Requested' to transcript")
+
         transfer_params = {"toEndPoint": supervisor_phone}
         await transport.sip_call_transfer(transfer_params)
 
@@ -99,7 +112,7 @@ async def dial_supervisor_handler(params: FunctionCallParams, transport, patient
             "success": True,
             "transferred_to": supervisor_phone
         }
-        logger.info(f"✅ Transfer initiated to {supervisor_phone}")
+        logger.info(f"Transfer initiated to {supervisor_phone}")
 
     except Exception as e:
         logger.error(f"Transfer failed: {e}")

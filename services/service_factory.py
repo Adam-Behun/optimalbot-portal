@@ -4,7 +4,7 @@ from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq.llm import GroqLLMService
-from pipecat.services.anthropic import AnthropicLLMService
+from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
@@ -87,7 +87,8 @@ class ServiceFactory:
             raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: openai, groq, anthropic")
 
         llm.register_function("update_prior_auth_status", update_prior_auth_status_handler)
-        logger.info(f"✅ {provider.upper()} main LLM service created")
+
+        logger.info(f"✅ {provider.upper()} main LLM service created with update_prior_auth_status handler registered")
         return llm
 
     @staticmethod

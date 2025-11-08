@@ -48,10 +48,21 @@ class DataFormatter:
         self.schema = schema
         self.overrides = getattr(schema.data_schema, 'speech_overrides', {})
 
+    FIELD_MAPPINGS = {
+        "facility_name": "facility",
+        "insurance_company_name": "insurance_company"
+    }
+
     def format_patient_data(self, patient_data: Dict[str, Any]) -> Dict[str, Any]:
         formatted_data = patient_data.copy()
 
-        for field_name, value in patient_data.items():
+        # Normalize database field names to schema field names
+        for db_field, schema_field in self.FIELD_MAPPINGS.items():
+            if db_field in formatted_data:
+                formatted_data[schema_field] = formatted_data[db_field]
+
+        # Create a snapshot of keys to iterate over (avoid "dict changed size during iteration")
+        for field_name, value in list(formatted_data.items()):
             if value is None:
                 continue
 

@@ -6,7 +6,6 @@ from backend.models import get_async_patient_db
 from backend.functions import PATIENT_TOOLS
 logger = logging.getLogger(__name__)
 
-
 class StateManager:
 
     def __init__(
@@ -137,14 +136,30 @@ class StateManager:
         current_messages = current_context.messages if current_context else []
 
         new_messages = [{"role": "system", "content": new_prompt}]
-        new_messages.extend([
-            msg for msg in current_messages
-            if msg.get("role") != "system"
-        ])
 
-        # For greeting state, run LLM immediately to generate greeting
-        # For other states, just update context without running LLM
-        run_llm = (new_state == "greeting")
+        if new_state == "greeting":
+            if reason == "ivr_complete":
+                logger.info("🧹 Clearing all IVR navigation context - fresh greeting prompt only")
+                run_llm = False
+            elif reason == "human_answered":
+                logger.debug("Preserving conversation - waiting for human to finish greeting")
+                new_messages.extend([
+                    msg for msg in current_messages
+                    if msg.get("role") != "system"
+                ])
+                run_llm = False
+            else:
+                new_messages.extend([
+                    msg for msg in current_messages
+                    if msg.get("role") != "system"
+                ])
+                run_llm = False
+        else:
+            new_messages.extend([
+                msg for msg in current_messages
+                if msg.get("role") != "system"
+            ])
+            run_llm = False
 
         await self.task.queue_frames([
             LLMMessagesUpdateFrame(messages=new_messages, run_llm=run_llm)

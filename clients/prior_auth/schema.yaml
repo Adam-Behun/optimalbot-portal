@@ -127,10 +127,19 @@ states:
         - appointment_time
       functions:
         - update_prior_auth_status
-        - dial_supervisor
-      allowed_transitions: ["closing"]
+      allowed_transitions: ["supervisor_confirmation", "closing"]
       llm_directed: true
       required_before_closing: true
+
+    - name: "supervisor_confirmation"
+      description: "Confirm if caller wants to speak with supervisor"
+      prompts_ref: "supervisor_confirmation"
+      data_access:
+        - patient_id
+      functions:
+        - dial_supervisor
+      allowed_transitions: ["verification"]
+      llm_directed: true
 
     - name: "closing"
       description: "Close the call politely"

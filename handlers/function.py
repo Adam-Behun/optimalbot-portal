@@ -1,25 +1,12 @@
-"""LLM function call execution"""
-
 from loguru import logger
-from backend.functions import update_prior_auth_status_handler, dial_supervisor_handler
+from backend.functions import dial_supervisor_handler
 
 
 def setup_function_call_handler(pipeline):
-    """Setup handler for LLM function calls"""
+    async def dial_supervisor_wrapper(params):
+        """Wrapper that provides access to pipeline context"""
+        logger.info(f"🔧 Function call: dial_supervisor")
+        await dial_supervisor_handler(params, pipeline.transport, pipeline.patient_data, pipeline)
+    pipeline.main_llm.register_function("dial_supervisor", dial_supervisor_wrapper)
 
-    @pipeline.main_llm.event_handler("on_function_call")
-    async def handle_function_call(llm, function_name, params):
-        logger.info(f"🔧 Function call: {function_name}")
-
-        # Add patient_id to arguments if missing
-        if "patient_id" not in params.arguments:
-            params.arguments["patient_id"] = pipeline.patient_id
-
-        # Route to appropriate handler
-        if function_name == "update_prior_auth_status":
-            await update_prior_auth_status_handler(params)
-        elif function_name == "dial_supervisor":
-            await dial_supervisor_handler(params, pipeline.transport, pipeline.patient_data, pipeline)
-        else:
-            logger.error(f"Unknown function: {function_name}")
-            await params.result_callback({"error": f"Function {function_name} not found"})
+    logger.debug("✅ dial_supervisor function handler registered on main_llm")

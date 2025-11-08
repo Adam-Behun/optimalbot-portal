@@ -8,6 +8,7 @@ from pipecat.frames.frames import (
     EndFrame,
     ManuallySwitchServiceFrame
 )
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
 from backend.models import get_async_patient_db
@@ -78,7 +79,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             # Transition to greeting state (StateManager handles: LLM switching, tools, and greeting generation)
             await pipeline.state_manager.transition_to("greeting", "human_answered")
 
-            logger.info("✅ Greeting transition complete - <1s response achieved")
+            logger.info("✅ Greeting transition complete")
 
         except Exception as e:
             logger.error(f"❌ Error in conversation handler: {e}")
@@ -89,15 +90,11 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
         """Handle IVR navigation status changes"""
         try:
             if status == IVRStatus.DETECTED:
-                logger.info("🤖 IVR system detected - auto-navigation starting")
-
-                # Switch to main LLM for IVR navigation (needs smarter model)
+                logger.info("IVR system detected - auto-navigation starting")
                 switch_frame = ManuallySwitchServiceFrame(service=pipeline.main_llm)
-                await pipeline.task.queue_frames([switch_frame])
-
-                # Enable tools for IVR navigation (though IVR shouldn't call functions)
-                context = pipeline.context_aggregators.user().context
-                context.set_tools(PATIENT_TOOLS)
+                await pipeline.context_aggregators.assistant().push_frame(
+                    switch_frame, FrameDirection.UPSTREAM
+                )
 
                 logger.info("✅ Switched to main LLM for IVR navigation")
 

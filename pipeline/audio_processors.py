@@ -75,15 +75,25 @@ class DropEmptyAudio(FrameProcessor):
         await self.push_frame(frame, direction)
 
 class StateTagStripper(FrameProcessor):
-    """Strips <next_state> tags from LLM responses before TTS"""
+    """Strips <next_state> tags from LLM responses before TTS.
 
-    def __init__(self, **kwargs):
+    Also detects and triggers state transitions when tags are found,
+    before stripping them from the text.
+    """
+
+    def __init__(self, state_manager=None, **kwargs):
         super().__init__(**kwargs)
+        self.state_manager = state_manager
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TextFrame):
+            # First, check for state transitions BEFORE stripping
+            if self.state_manager:
+                await self.state_manager.check_assistant_transition(frame.text)
+
+            # Then strip the tags for TTS
             cleaned_text = re.sub(
                 r'<next_state>\w+</next_state>',
                 '',
