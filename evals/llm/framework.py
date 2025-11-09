@@ -100,7 +100,7 @@ class LLMEvaluationFramework:
         context = {
             'voice_name': self.schema.voice.persona.name,
             'voice_role': self.schema.voice.persona.role,
-            'voice_company': self.schema.voice.persona.company,
+            'client_company': self.schema.voice.persona.client_company,
         }
 
         # Add only accessible fields for this state (same as PromptRenderer._build_context)

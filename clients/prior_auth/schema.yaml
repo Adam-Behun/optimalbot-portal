@@ -46,8 +46,8 @@ guardrails:
 voice:
   persona:
     name: "Alexandra"
-    role: "Medical office assistant"
-    company: "Adam's Medical Practice"
+    role: "Virtual Assistant"
+    client_company: "Adam's Medical Practice"
   
   speaking_style:
     tone: "professional, friendly"
@@ -106,8 +106,14 @@ states:
       prompts_ref: "greeting"
       data_access:
         - patient_name
+        - date_of_birth
+        - insurance_member_id
         - cpt_code
+        - provider_npi
+        - provider_name
         - facility
+        - insurance_company
+        - appointment_time
       allowed_transitions: ["verification"]
       llm_directed: true
 

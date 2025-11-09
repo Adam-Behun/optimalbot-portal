@@ -15,7 +15,7 @@ class ConversationMetadata(BaseModel):
 class VoicePersona(BaseModel):
     name: str
     role: str
-    company: str
+    client_company: str
 
 
 class SpeakingStyle(BaseModel):

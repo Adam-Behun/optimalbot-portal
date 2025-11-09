@@ -86,7 +86,7 @@ class PromptRenderer:
         context = {
             'voice_name': self.schema.voice.persona.name,
             'voice_role': self.schema.voice.persona.role,
-            'voice_company': self.schema.voice.persona.company,
+            'client_company': self.schema.voice.persona.client_company,
         }
 
         for field in state.data_access:
@@ -102,6 +102,6 @@ class PromptRenderer:
         return {
             'voice_name': self.schema.voice.persona.name,
             'voice_role': self.schema.voice.persona.role,
-            'voice_company': self.schema.voice.persona.company,
+            'client_company': self.schema.voice.persona.client_company,
             **data
         }

@@ -4,7 +4,7 @@ services:
     model: flux-general-en
     # Optional Flux parameters for turn detection tuning:
     # eager_eot_threshold: 0.55
-    # eot_threshold: 0.65
+    eot_threshold: 0.9
     # eot_timeout_ms: 3500
     # keyterm: ["prior authorization", "CPT code", "NPI"]
 
@@ -26,13 +26,32 @@ services:
     provider: elevenlabs
     model: eleven_turbo_v2_5
     voice_id: aMSt68OGf4xUZAnLpTU8
-    stability: 0.5
     api_key: ${ELEVENLABS_API_KEY}
-    similarity_boost: 0.75
-    optimize_streaming_latency: 0
-    output_format: pcm_24000
-    style: 0.0
-    speed: 0.95  # TEST: Slightly faster speech for testing
+
+    # Voice Quality & Character Settings (0.0 - 1.0)
+    stability: 0.55                    # Voice consistency; 0.5-0.6 = natural with slight variation; higher = more robotic but clearer
+    similarity_boost: 0.80             # Voice fidelity to original; 0.75-0.85 = high quality; higher may add artifacts
+    style: 0.15                        # Expressiveness; 0.1-0.3 = professional with subtle emotion; 0 = monotone
+    use_speaker_boost: true            # Enhanced clarity for phone calls; recommended for telephony
+
+    # Speed & Timing (0.7 - 1.2 for turbo models)
+    speed: 0.92                        # Slightly slower for clarity on IDs; 0.9-0.95 = professional pace; 1.0 = default
+
+    # Text Processing
+    apply_text_normalization: auto     # 'auto' | 'on' | 'off'; auto intelligently handles numbers/dates
+    enable_ssml_parsing: true          # Enable SSML tags for granular control (breaks, emphasis, prosody)
+
+    # Performance Optimization
+    auto_mode: true                    # Automatic latency optimization; recommended for real-time
+    aggregate_sentences: true          # Buffer sentences for natural prosody; improves flow
+
+    # Optional: Enable for debugging
+    # enable_logging: false            # ElevenLabs API logging
+
+    # Optional: Pronunciation Dictionaries (create via ElevenLabs dashboard)
+    # pronunciation_dictionary_locators:
+    #   - pronunciation_dictionary_id: "your_dict_id_here"
+    #     version_id: "latest"
 
   transport:
     provider: daily  # The transport/telephony provider (e.g., daily, twilio).

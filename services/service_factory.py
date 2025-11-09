@@ -126,18 +126,40 @@ class ServiceFactory:
     @staticmethod
     def create_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
         logger.info("🗣️ Creating ElevenLabs TTS service")
+
+        # Build pronunciation dictionary locators if provided
+        pronunciation_dict_locators = None
+        if config.get('pronunciation_dictionary_locators'):
+            from pipecat.services.elevenlabs.tts import PronunciationDictionaryLocator
+            pronunciation_dict_locators = [
+                PronunciationDictionaryLocator(
+                    pronunciation_dictionary_id=locator['pronunciation_dictionary_id'],
+                    version_id=locator['version_id']
+                )
+                for locator in config['pronunciation_dictionary_locators']
+            ]
+
+        # Build input params with all available settings
         params = ElevenLabsTTSService.InputParams(
+            language=config.get('language'),  # Language enum if specified
             stability=config.get('stability'),
             similarity_boost=config.get('similarity_boost'),
-            style=config.get('style', 0.0),
-            enable_ssml_parsing=True
+            style=config.get('style'),
+            use_speaker_boost=config.get('use_speaker_boost'),
+            speed=config.get('speed'),
+            auto_mode=config.get('auto_mode', True),  # Default to True for optimal performance
+            enable_ssml_parsing=config.get('enable_ssml_parsing', True),  # Default to True for SSML support
+            enable_logging=config.get('enable_logging'),
+            apply_text_normalization=config.get('apply_text_normalization', 'auto'),  # 'auto', 'on', or 'off'
+            pronunciation_dictionary_locators=pronunciation_dict_locators
         )
 
         service = ElevenLabsTTSService(
             api_key=config['api_key'],
             voice_id=config['voice_id'],
             model=config['model'],
-            params=params
+            params=params,
+            aggregate_sentences=config.get('aggregate_sentences', True)
         )
         logger.info("✅ ElevenLabs TTS service created")
         return service
