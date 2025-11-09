@@ -54,8 +54,6 @@ def setup_transcript_handler(pipeline):
             pipeline.transcripts.append(transcript_entry)
             logger.info(f"[TRANSCRIPT] {message.role}: {message.content}")
 
-        await pipeline.state_manager.check_completion(pipeline.transcripts)
-
 
 async def delete_daily_recording(room_name: str):
     try:

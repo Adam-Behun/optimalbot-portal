@@ -6,13 +6,41 @@ from pipecat.frames.frames import (
     VADParamsUpdateFrame,
     TTSSpeakFrame,
     EndFrame,
-    ManuallySwitchServiceFrame
+    ManuallySwitchServiceFrame,
+    TextFrame,
+    Frame
 )
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
 from backend.models import get_async_patient_db
 from backend.functions import PATIENT_TOOLS
+
+
+class IVRTranscriptProcessor(FrameProcessor):
+
+    def __init__(self, transcripts_list):
+        super().__init__()
+        self._transcripts = transcripts_list
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TextFrame) and hasattr(frame, 'skip_tts') and frame.skip_tts:
+            content = frame.text
+
+            dtmf_match = re.search(r'<dtmf>(\d+)</dtmf>', content)
+            if dtmf_match:
+                self._transcripts.append({
+                    "role": "assistant",
+                    "content": f"Pressed {dtmf_match.group(1)}",
+                    "timestamp": datetime.now().isoformat(),
+                    "type": "ivr_action"
+                })
+                logger.debug(f"[IVR TRANSCRIPT] assistant: Pressed {dtmf_match.group(1)}")
+
+        await self.push_frame(frame, direction)
+
 
 def _process_ivr_conversation(conversation_history, pipeline):
     if not conversation_history:

@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""
-Test IVR system to validate voicemail/IVR detection and navigation
-Simulates real insurance company phone system
-
-Usage:
-    python twilio_ivr_server.py
-
-Then expose via ngrok:
-    ngrok http 5001
-
-Configure Twilio number to point to: https://YOUR_NGROK_URL/voice
-"""
 from flask import Flask, request
 from twilio.twiml.voice_response import VoiceResponse
 import logging
@@ -192,12 +179,33 @@ def human_rep():
 
     # Dial your actual phone number
     # Twilio will bridge the bot call with your phone
-    response.dial(TRANSFER_NUMBER, timeout=30, caller_id="+15165853321")
+    dial = response.dial(TRANSFER_NUMBER, timeout=30, caller_id="+15165853321", action="/dial-status")
 
-    # If no answer, go to voicemail
-    response.say("The representative is unavailable.", voice="Polly.Joanna")
-    response.redirect('/voicemail')
+    return str(response)
 
+
+@app.route("/dial-status", methods=['POST'])
+def dial_status():
+    """Handle dial outcome - end call gracefully regardless of result"""
+    dial_status = request.values.get('DialCallStatus')
+    logger.info(f"📞 Dial completed with status: {dial_status}")
+
+    response = VoiceResponse()
+
+    if dial_status == 'completed':
+        # Human answered and conversation happened - call ends naturally
+        logger.info("✅ Human conversation completed - ending call")
+        response.say("Thank you for calling. Goodbye.", voice="Polly.Joanna")
+    elif dial_status == 'no-answer':
+        # No answer - go to voicemail
+        logger.info("⏰ No answer - redirecting to voicemail")
+        response.redirect('/voicemail')
+    else:
+        # Busy, failed, or canceled - just end the call
+        logger.info(f"❌ Dial unsuccessful ({dial_status}) - ending call")
+        response.say("The representative is unavailable. Goodbye.", voice="Polly.Joanna")
+
+    response.hangup()
     return str(response)
 
 
@@ -215,6 +223,7 @@ def voicemail():
     )
     response.play("http://com.twilio.sounds.music.s3.amazonaws.com/MARKOVICHAMP-Borghestral.mp3")
     response.record(timeout=30, maxLength=60)
+    response.hangup()
 
     return str(response)
 

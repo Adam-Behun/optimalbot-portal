@@ -67,7 +67,8 @@ class ConversationPipeline:
             'session_id': self.session_id,
             'patient_id': self.patient_id,
             'patient_data': self.patient_data,
-            'phone_number': self.phone_number
+            'phone_number': self.phone_number,
+            'transcripts': self.transcripts
         }
 
         room_config = {

@@ -49,6 +49,14 @@ class StateManager:
         if not self.schema.is_llm_directed(current_state):
             return
 
+        # Special handling for end_call pseudo-state (graceful shutdown)
+        if requested_state == "end_call":
+            logger.info("🔚 LLM requested call termination via end_call")
+            await get_async_patient_db().update_call_status(self.patient_id, "Completed")
+            if self.task:
+                await self.task.queue_frames([EndFrame()])
+            return
+
         allowed_transitions = self.schema.get_allowed_transitions(current_state)
 
         if requested_state in allowed_transitions:
@@ -59,28 +67,6 @@ class StateManager:
                 f"⚠️ LLM transition blocked: {requested_state} "
                 f"not in {allowed_transitions}"
             )
-
-    async def check_completion(self, transcripts: List[Dict[str, Any]]):
-        if self.conversation_context.current_state != "closing":
-            return
-
-        assistant_messages = [t for t in transcripts if t["role"] == "assistant"]
-        if not assistant_messages:
-            return
-
-        last_msg = assistant_messages[-1]["content"].lower()
-        goodbye_phrases = ["goodbye", "have a great day", "thank you"]
-
-        if any(phrase in last_msg for phrase in goodbye_phrases):
-            logger.info("👋 Call complete - terminating")
-
-            await get_async_patient_db().update_call_status(
-                self.patient_id,
-                "Completed"
-            )
-
-            if self.task:
-                await self.task.queue_frames([EndFrame()])
 
     async def transition_to(self, new_state: str, reason: str):
         if not self.task:
@@ -100,17 +86,17 @@ class StateManager:
         self.conversation_context.transition_to(new_state, reason=reason)
 
         # Switch LLMs based on state transition
-        if new_state == "verification":
+        if new_state in ["verification", "closing"]:
             # Switch to main_llm and enable function calling
             if self.main_llm:
                 switch_frame = ManuallySwitchServiceFrame(service=self.main_llm)
                 await self.task.queue_frames([switch_frame])
-                logger.debug("Switched to main_llm for verification state")
+                logger.debug(f"Switched to main_llm for {new_state} state")
 
             # Enable tools for function calling
             context = self.context_aggregators.user().context
             context.set_tools(PATIENT_TOOLS)
-            logger.debug("Enabled function calling tools for verification")
+            logger.debug(f"Enabled function calling tools for {new_state}")
 
         elif new_state == "greeting":
             # Switch to classifier_llm (fast, no tools)
@@ -126,7 +112,7 @@ class StateManager:
 
         new_prompt = self.conversation_context.render_prompt()
 
-        if new_state == "verification":
+        if new_state in ["verification", "closing"]:
             new_prompt += (
                 f"\n\nIMPORTANT: The patient_id for function calls is: "
                 f"{self.patient_id}"

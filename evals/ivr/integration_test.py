@@ -1,20 +1,3 @@
-#!/usr/bin/env python3
-"""
-Full E2E Integration Test: IVR Navigation → Human Conversation
-
-This test validates:
-1. Bot calls Twilio number (+15165853321)
-2. Navigates IVR menus (Press 2 → Press 1)
-3. Flask server transfers call to your number (+15165667132)
-4. Full conversation flow (greeting → verification → closing)
-
-Prerequisites:
-1. Run: python twilio_ivr_server.py (in separate terminal)
-2. Run: ngrok http 5001 (in separate terminal)
-3. Configure Twilio number to point to ngrok URL
-4. Update .env.test with Daily.co credentials
-5. Run this test and answer your phone when it rings!
-"""
 import asyncio
 import sys
 import os
@@ -43,16 +26,6 @@ TEST_PATIENT = {
 
 
 async def run_test():
-    """
-    Run full E2E integration test
-
-    Expected flow:
-    1. Bot calls +15165853321 (Twilio → ngrok → Flask)
-    2. IVR navigation: Press 2 (Provider Services) → Press 1 (Eligibility)
-    3. Flask /human-rep endpoint dials +15165667132 (your number)
-    4. You answer and simulate insurance rep
-    5. Full conversation: greeting → verification → closing
-    """
     room_url = os.getenv("TEST_DAILY_ROOM_URL")
     room_token = os.getenv("TEST_DAILY_ROOM_TOKEN")
     twilio_phone = os.getenv("TWILIO_PHONE_NUMBER", "+15165853321")

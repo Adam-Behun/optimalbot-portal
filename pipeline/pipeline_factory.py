@@ -12,6 +12,7 @@ from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagSt
 from core.context import ConversationContext
 from core.state_manager import StateManager
 from backend.functions import PATIENT_TOOLS
+from handlers.ivr import IVRTranscriptProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,9 @@ class PipelineFactory:
             ivr_navigator._classifier_prompt = call_classifier_prompt
             ivr_navigator._ivr_processor._classifier_prompt = call_classifier_prompt
 
+        logger.debug("Creating IVR transcript processor")
+        ivr_transcript_processor = IVRTranscriptProcessor(session_data['transcripts'])
+
         logger.debug(f"Components created - Initial state: {context.current_state}")
         return {
             'context': context,
@@ -125,6 +129,7 @@ class PipelineFactory:
             'transcript_processor': transcript_processor,
             'context_aggregators': context_aggregators,
             'ivr_navigator': ivr_navigator,
+            'ivr_transcript_processor': ivr_transcript_processor,
             'llm_switcher': services['llm_switcher'],
             'main_llm': services['main_llm'],
             'classifier_llm': services['classifier_llm']
@@ -143,6 +148,7 @@ class PipelineFactory:
             components['transcript_processor'].user(),
             components['context_aggregators'].user(),
             components['ivr_navigator'],
+            components['ivr_transcript_processor'],
             StateTagStripper(state_manager=components['state_manager']),
             CodeFormatter(),
             services['tts'],

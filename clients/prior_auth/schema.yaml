@@ -142,11 +142,11 @@ states:
       llm_directed: true
 
     - name: "closing"
-      description: "Close the call politely"
+      description: "Ask if there's anything else needed before ending call"
       prompts_ref: "closing"
-      terminal: true
-      allowed_transitions: []
-      llm_directed: false
+      terminal: false
+      allowed_transitions: ["verification"]
+      llm_directed: true
       data_access:
         - patient_id
         - patient_name
