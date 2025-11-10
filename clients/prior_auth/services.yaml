@@ -2,11 +2,12 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    # Optional Flux parameters for turn detection tuning:
-    # eager_eot_threshold: 0.55
-    eot_threshold: 0.9
-    # eot_timeout_ms: 3500
-    # keyterm: ["prior authorization", "CPT code", "NPI"]
+    # Increased thresholds to prevent LLM from responding before human finishes speaking
+    # Lower values = more aggressive interruption (faster but incomplete utterances)
+    # Higher values = wait for complete utterances (slower but more accurate)
+    eager_eot_threshold: 0.75    # Raised from 0.5 - wait for higher confidence before eager turn end
+    eot_threshold: 0.8           # Raised from 0.7 - ensure complete utterances
+    eot_timeout_ms: 3000         # Raised from 2500ms - allow more time for complex introductions
 
   llm:
     provider: openai  # Main LLM for conversation and IVR navigation
@@ -20,7 +21,7 @@ services:
     model: llama-3.1-8b-instant  # Fastest production model for classification (560 t/s)
     temperature: 0  # Deterministic classification
     api_key: ${GROQ_API_KEY}
-    max_tokens: 10  # Only need "<mode>conversation</mode>"
+    max_tokens: 150
 
   tts:
     provider: elevenlabs

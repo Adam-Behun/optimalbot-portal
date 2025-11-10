@@ -168,3 +168,92 @@ class CodeFormatter(FrameProcessor):
 
         return re.sub(pattern, replace_code, text)
 
+
+class LLMTransitionMonitor(FrameProcessor):
+
+    def __init__(self, state_manager=None, **kwargs):
+        super().__init__(**kwargs)
+        self.state_manager = state_manager
+        self.accumulated_response = ""
+        self.transition_triggered = False
+        self._drop_remaining = False
+
+    def reset(self):
+        self.accumulated_response = ""
+        self.transition_triggered = False
+        self._drop_remaining = False
+        logger.debug("LLMTransitionMonitor: Reset for new greeting")
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        frame_class = frame.__class__.__name__
+        if frame_class == 'LLMFullResponseEndFrame':
+            logger.debug(f"Monitor: Response end (triggered={self.transition_triggered}, buffer={len(self.accumulated_response)} chars)")
+            self.accumulated_response = ""
+            self.transition_triggered = False
+            self._drop_remaining = False
+            await self.push_frame(frame, direction)
+            return
+
+        if self._drop_remaining and isinstance(frame, TextFrame):
+            logger.debug(f"Monitor: Dropping buffered frame: '{frame.text[:30]}...'")
+            return
+
+        if not self.state_manager:
+            await self.push_frame(frame, direction)
+            return
+
+        current_state = self.state_manager.conversation_context.current_state
+        if current_state != "greeting":
+            if isinstance(frame, TextFrame) and self.accumulated_response:
+                logger.debug(f"Monitor: Clearing buffer due to state change from greeting")
+                self.accumulated_response = ""
+                self.transition_triggered = False
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, TextFrame):
+            self.accumulated_response += frame.text
+            logger.debug(f"Monitor: Accumulated ({len(self.accumulated_response)} chars): '{frame.text[:30]}...'")
+
+            match = re.search(
+                r'<next_state>(\w+)</next_state>',
+                self.accumulated_response,
+                re.IGNORECASE
+            )
+
+            if match and not self.transition_triggered:
+                requested_state = match.group(1).lower()
+                logger.info(f"🎯 Monitor: Tag detected → {requested_state}")
+
+                if requested_state == "verification":
+                    clean_greeting = self.accumulated_response[:match.start()].strip()
+
+                    if clean_greeting:
+                        await self.push_frame(
+                            TextFrame(clean_greeting),
+                            FrameDirection.DOWNSTREAM
+                        )
+                        logger.info(f"✅ Monitor: Pushed clean greeting ({len(clean_greeting)} chars)")
+                    else:
+                        logger.warning("⚠️ Monitor: Clean greeting is empty after tag extraction")
+
+                    self._drop_remaining = True
+
+                    logger.debug("Monitor: Sending upstream interruption")
+                    from pipecat.frames.frames import StartInterruptionFrame
+                    await self.push_frame(
+                        StartInterruptionFrame(),
+                        FrameDirection.UPSTREAM
+                    )
+
+                    logger.info("Monitor: Triggering transition to verification")
+                    await self.state_manager.transition_to("verification", "llm_directed")
+
+                    self.transition_triggered = True
+                    self.accumulated_response = ""
+                    return
+
+        await self.push_frame(frame, direction)
+

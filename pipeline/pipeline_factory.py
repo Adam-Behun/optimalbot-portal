@@ -8,7 +8,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.transcript_processor import TranscriptProcessor
 
 from services.service_factory import ServiceFactory
-from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper, CodeFormatter
+from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper, CodeFormatter, LLMTransitionMonitor
 from core.context import ConversationContext
 from core.state_manager import StateManager
 from backend.functions import PATIENT_TOOLS
@@ -122,6 +122,10 @@ class PipelineFactory:
         logger.debug("Creating IVR transcript processor")
         ivr_transcript_processor = IVRTranscriptProcessor(session_data['transcripts'])
 
+        logger.debug("Creating LLM transition monitor")
+        monitor = LLMTransitionMonitor(state_manager=state_manager)
+        state_manager.monitor = monitor
+
         logger.debug(f"Components created - Initial state: {context.current_state}")
         return {
             'context': context,
@@ -130,6 +134,7 @@ class PipelineFactory:
             'context_aggregators': context_aggregators,
             'ivr_navigator': ivr_navigator,
             'ivr_transcript_processor': ivr_transcript_processor,
+            'monitor': monitor,
             'llm_switcher': services['llm_switcher'],
             'main_llm': services['main_llm'],
             'classifier_llm': services['classifier_llm']
@@ -149,6 +154,7 @@ class PipelineFactory:
             components['context_aggregators'].user(),
             components['ivr_navigator'],
             components['ivr_transcript_processor'],
+            components['monitor'],
             StateTagStripper(state_manager=components['state_manager']),
             CodeFormatter(),
             services['tts'],

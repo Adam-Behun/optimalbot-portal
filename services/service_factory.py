@@ -42,14 +42,22 @@ class ServiceFactory:
     @staticmethod
     def create_stt(config: Dict[str, Any]) -> DeepgramFluxSTTService:
         logger.info("🎤 Creating Deepgram Flux STT service")
-        params = DeepgramFluxSTTService.InputParams(
-            eager_eot_threshold=config.get('eager_eot_threshold'),
-            eot_threshold=config.get('eot_threshold'),
-            eot_timeout_ms=config.get('eot_timeout_ms'),
-            keyterm=config.get('keyterm', []),
-            mip_opt_out=config.get('mip_opt_out'),
-            tag=config.get('tag', [])
-        )
+
+        params_dict = {}
+        if 'eager_eot_threshold' in config and config['eager_eot_threshold'] is not None:
+            params_dict['eager_eot_threshold'] = config['eager_eot_threshold']
+        if 'eot_threshold' in config and config['eot_threshold'] is not None:
+            params_dict['eot_threshold'] = config['eot_threshold']
+        if 'eot_timeout_ms' in config and config['eot_timeout_ms'] is not None:
+            params_dict['eot_timeout_ms'] = config['eot_timeout_ms']
+        if 'keyterm' in config and config['keyterm']:
+            params_dict['keyterm'] = config['keyterm']
+        if 'mip_opt_out' in config and config['mip_opt_out'] is not None:
+            params_dict['mip_opt_out'] = config['mip_opt_out']
+        if 'tag' in config and config['tag']:
+            params_dict['tag'] = config['tag']
+
+        params = DeepgramFluxSTTService.InputParams(**params_dict)
 
         service = DeepgramFluxSTTService(
             api_key=config['api_key'],

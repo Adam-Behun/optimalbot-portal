@@ -49,18 +49,22 @@ class PromptRenderer:
             logger.debug(f"Prompts compiled ({compile_time_ms:.1f}ms, {len(self._cache)} prompts)")
 
     def render_state_prompt(self, state_name: str, data: Dict[str, Any]) -> str:
-        context = self._build_context(state_name, data)
+        # Build full context for global instructions (unrestricted access)
+        full_context = self._build_simple_context(data)
 
         global_text = ""
         if self._global_instructions_template:
-            global_text = self._global_instructions_template.render(**context)
+            global_text = self._global_instructions_template.render(**full_context)
+
+        # Build restricted context for state-specific prompts
+        context = self._build_context(state_name, data)
+        context['_global_instructions'] = global_text
 
         sections = []
         for section in ['system', 'task']:
             key = f"{state_name}.{section}"
             if key in self._cache:
                 rendered = self._cache[key].render(**context)
-                rendered = rendered.replace('{{ _global_instructions }}', global_text)
                 if rendered.strip():
                     sections.append(rendered.strip())
 
@@ -72,11 +76,12 @@ class PromptRenderer:
             return ""
 
         context = self._build_simple_context(data)
-        rendered = self._cache[key].render(**context)
 
         if self._global_instructions_template:
             global_text = self._global_instructions_template.render(**context)
-            rendered = rendered.replace('{{ _global_instructions }}', global_text)
+            context['_global_instructions'] = global_text
+
+        rendered = self._cache[key].render(**context)
 
         return rendered
 

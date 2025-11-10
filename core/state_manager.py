@@ -27,6 +27,7 @@ class StateManager:
         self.task = task
         self.main_llm = main_llm
         self.classifier_llm = classifier_llm
+        self.monitor = None
 
     def set_task(self, task):
         self.task = task
@@ -77,6 +78,11 @@ class StateManager:
             return
 
         old_state = self.conversation_context.current_state
+
+        if old_state == new_state:
+            logger.debug(f"Already in {new_state}, skipping transition (reason: {reason})")
+            return
+
         logger.info(f"🔄 {old_state} → {new_state} ({reason})")
 
         if new_state in ["connection", "ivr_stuck"]:
@@ -99,13 +105,14 @@ class StateManager:
             logger.debug(f"Enabled function calling tools for {new_state}")
 
         elif new_state == "greeting":
-            # Switch to classifier_llm (fast, no tools)
+            if self.monitor:
+                self.monitor.reset()
+
             if self.classifier_llm:
                 switch_frame = ManuallySwitchServiceFrame(service=self.classifier_llm)
                 await self.task.queue_frames([switch_frame])
                 logger.debug("Switched to classifier_llm for greeting state")
 
-            # Clear tools - classifier_llm doesn't need them
             context = self.context_aggregators.user().context
             context.set_tools([])
             logger.debug("Cleared tools for greeting state")
@@ -123,23 +130,42 @@ class StateManager:
 
         new_messages = [{"role": "system", "content": new_prompt}]
 
+        # Determine whether to run LLM immediately after transition
         if new_state == "greeting":
             if reason == "ivr_complete":
                 logger.info("🧹 Clearing all IVR navigation context - fresh greeting prompt only")
                 run_llm = False
             elif reason == "human_answered":
-                logger.debug("Preserving conversation - waiting for human to finish greeting")
+                logger.debug("Preserving conversation - human answered, preparing to respond")
                 new_messages.extend([
                     msg for msg in current_messages
                     if msg.get("role") != "system"
                 ])
                 run_llm = False
+                logger.debug("Greeting state ready - waiting for human to finish speaking before generating response")
             else:
+                # Preserve existing conversation messages
                 new_messages.extend([
                     msg for msg in current_messages
                     if msg.get("role") != "system"
                 ])
-                run_llm = False
+                # If there are user messages in the context, run LLM to respond to them
+                has_user_messages = any(msg.get("role") == "user" for msg in new_messages)
+                run_llm = has_user_messages
+                if run_llm:
+                    logger.debug("Running LLM immediately - user messages detected in greeting state")
+                else:
+                    logger.debug("Not running LLM - no user messages yet")
+        elif new_state in ["verification", "closing"]:
+            # When transitioning TO verification/closing FROM greeting via LLM,
+            # we need to run the LLM immediately with the new verification prompt
+            # to generate the first verification response
+            new_messages.extend([
+                msg for msg in current_messages
+                if msg.get("role") != "system"
+            ])
+            run_llm = True
+            logger.debug(f"Will run LLM immediately after transition to {new_state}")
         else:
             new_messages.extend([
                 msg for msg in current_messages
