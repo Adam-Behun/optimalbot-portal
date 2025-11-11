@@ -1,9 +1,9 @@
 import logging
 from typing import Dict, Any
-from pipecat_flows import FlowManager, NodeConfig
+from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat.frames.frames import ManuallySwitchServiceFrame, LLMMessagesAppendFrame
 from pipecat.processors.frame_processor import FrameDirection
-from backend.models import AsyncPatientRecord
+from backend.models import get_async_patient_db
 
 logger = logging.getLogger(__name__)
 
@@ -83,22 +83,21 @@ EXAMPLES:
 - They said "Hello?" → You respond: "Hi, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
 
 CRITICAL RULES:
-- Output EXACTLY ONE response containing only the greeting
-- Do NOT add commentary, explanations, rephrasing, or additional sentences
-- Keep it brief and professional
-
-AFTER GREETING:
-- Immediately call proceed_to_verification() to continue the conversation"""
+- FIRST: Speak the greeting message out loud (this will be converted to speech)
+- THEN: After the greeting text is complete, call the proceed_to_verification() function
+- You must output text before calling any function"""
             }],
-            functions=[self.proceed_to_verification],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_verification",
+                description="Transition from greeting to verification node after initial greeting is complete.",
+                properties={},
+                required=[],
+                handler=self._proceed_to_verification_handler
+            )],
             respond_immediately=True,
             pre_actions=[{
                 "type": "function",
                 "handler": self._switch_to_classifier_llm
-            }],
-            post_actions=[{
-                "type": "function",
-                "handler": self._switch_to_main_llm_post_greeting
             }]
         )
 
@@ -182,10 +181,26 @@ CONVERSATION GUIDELINES:
             }],
             functions=[
                 self.update_prior_auth_status,
-                self.request_supervisor,
-                self.proceed_to_closing
+                FlowsFunctionSchema(
+                    name="request_supervisor",
+                    description="Request to speak with a supervisor when representative asks for transfer.",
+                    properties={},
+                    required=[],
+                    handler=self._request_supervisor_handler
+                ),
+                FlowsFunctionSchema(
+                    name="proceed_to_closing",
+                    description="Transition to closing node after verification is complete.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_closing_handler
+                )
             ],
-            respond_immediately=True
+            respond_immediately=False,
+            pre_actions=[{
+                "type": "function",
+                "handler": self._switch_to_main_llm
+            }]
         )
 
     def create_supervisor_confirmation_node(self) -> NodeConfig:
@@ -216,8 +231,20 @@ IF THEY DECLINE (no, nevermind):
    - Call return_to_verification()"""
             }],
             functions=[
-                self.dial_supervisor,
-                self.return_to_verification
+                FlowsFunctionSchema(
+                    name="dial_supervisor",
+                    description="Execute supervisor transfer via SIP call transfer.",
+                    properties={},
+                    required=[],
+                    handler=self._dial_supervisor_handler
+                ),
+                FlowsFunctionSchema(
+                    name="return_to_verification",
+                    description="Return to verification node from supervisor confirmation.",
+                    properties={},
+                    required=[],
+                    handler=self._return_to_verification_handler
+                )
             ],
             respond_immediately=True
         )
@@ -270,8 +297,20 @@ IMPORTANT:
 - Only say the final goodbye phrase when they confirm nothing else is needed"""
             }],
             functions=[
-                self.return_to_verification,
-                self.end_call
+                FlowsFunctionSchema(
+                    name="return_to_verification",
+                    description="Return to verification node from closing state.",
+                    properties={},
+                    required=[],
+                    handler=self._return_to_verification_handler
+                ),
+                FlowsFunctionSchema(
+                    name="end_call",
+                    description="End the conversation and terminate the call.",
+                    properties={},
+                    required=[],
+                    handler=self._end_call_handler
+                )
             ],
             respond_immediately=True
         )
@@ -284,30 +323,29 @@ IMPORTANT:
         logger.info("✅ LLM: classifier (fast greeting)")
 
     async def _switch_to_main_llm(self, action: dict, flow_manager: FlowManager):
-        await self.context_aggregator.assistant().push_frame(
-            ManuallySwitchServiceFrame(service=self.main_llm),
-            FrameDirection.UPSTREAM
-        )
-        logger.info("✅ LLM: main (function calling)")
+        """Pre-action: Switch to main_llm before node starts.
 
-    async def _switch_to_main_llm_post_greeting(self, action: dict, flow_manager: FlowManager):
-        """Post-action: Switch to main_llm after greeting completes.
-
-        This runs AFTER the greeting TTS completes, ensuring:
-        1. The greeting is fully spoken
-        2. LLM switch happens cleanly without context pollution
+        Used by verification node to enable function calling capabilities.
         """
-        logger.info("✅ Post-action: Switching to main LLM")
         await self.context_aggregator.assistant().push_frame(
             ManuallySwitchServiceFrame(service=self.main_llm),
             FrameDirection.UPSTREAM
         )
         logger.info("✅ LLM: main (function calling)")
 
-    async def proceed_to_verification(self, flow_manager: FlowManager):
-        """Function: Transition from greeting to verification.
+    async def _proceed_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
+        """
+        Handler for proceed_to_verification function.
 
-        This function is called by the LLM to progress the conversation.
+        This function moves the conversation forward after the initial greeting,
+        transitioning to the verification node where patient information collection begins.
+
+        Args:
+            args: Function arguments (may be None/empty dict).
+            flow_manager: The flow manager instance controlling conversation flow.
+
+        Returns:
+            tuple[None, NodeConfig]: Returns (None, verification_node_config).
         """
         logger.info("✅ Flow: greeting → verification")
         return None, self.create_verification_node()
@@ -317,29 +355,76 @@ IMPORTANT:
         status: str,
         reference_number: str = ""
     ) -> tuple[str, None]:
-        """Update patient record with authorization status.
+        """
+        Update patient record with prior authorization status and reference number.
+
+        This function stores the authorization decision (Approved/Denied/Pending) and
+        optional reference number from the insurance company in the MongoDB database.
+        It remains in the current verification node after updating.
 
         Args:
-            status: Authorization status (Approved/Denied/Pending)
-            reference_number: Reference number from insurance
+            flow_manager (FlowManager): The flow manager instance controlling conversation flow.
+            status (str): Authorization status. Must be one of: "Approved", "Denied", or "Pending". REQUIRED.
+            reference_number (str, optional): Reference or authorization number provided by insurance representative.
+                Defaults to empty string if not provided.
+
+        Returns:
+            tuple[str, None]: Returns (result_message, None).
+                - str: Confirmation message for LLM context (e.g., "Updated status to Approved").
+                - None: Stays in current verification node, does not transition.
         """
-        patient_id = self.patient_data.get('patient_id')
-        if patient_id:
-            patient = AsyncPatientRecord(patient_id)
-            await patient.update({
+        try:
+            patient_id = self.patient_data.get('patient_id')
+            if not patient_id:
+                logger.error("❌ No patient_id found in patient_data")
+                return "Error: No patient ID available", None
+
+            db = get_async_patient_db()
+            update_fields = {
                 'prior_auth_status': status,
                 'reference_number': reference_number
-            })
+            }
+            await db.update_patient(patient_id, update_fields)
             logger.info(f"✅ Authorization recorded: {status}")
+            return f"Updated status to {status}", None
 
-        return f"Updated status to {status}", None
+        except Exception as e:
+            import traceback
+            logger.error(f"❌ Failed to update prior auth status: {traceback.format_exc()}")
+            return f"Error updating status: {str(e)}", None
 
-    async def request_supervisor(self, flow_manager: FlowManager):
-        """Transition to supervisor confirmation."""
+    async def _request_supervisor_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
+        """
+        Handler for request_supervisor function.
+
+        This function transitions the conversation to the supervisor confirmation node,
+        where the LLM will confirm the transfer request before executing it.
+
+        Args:
+            args: Function arguments (may be None/empty dict).
+            flow_manager: The flow manager instance controlling conversation flow.
+
+        Returns:
+            tuple[None, NodeConfig]: Returns (None, supervisor_confirmation_node_config).
+        """
         logger.info("✅ Flow: verification → supervisor_confirmation")
         return None, self.create_supervisor_confirmation_node()
 
-    async def dial_supervisor(self, flow_manager: FlowManager):
+    async def _dial_supervisor_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, None]:
+        """
+        Handler for dial_supervisor function.
+
+        This function performs a cold transfer to the configured supervisor phone number.
+        It validates the phone format, speaks a goodbye message, then initiates the SIP
+        transfer. The bot will exit when the supervisor answers.
+
+        Args:
+            args: Function arguments (may be None/empty dict).
+            flow_manager: The flow manager instance controlling conversation flow.
+
+        Returns:
+            tuple[str, None]: Returns (result_message, None).
+        """
         supervisor_phone = self.patient_data.get("supervisor_phone")
 
         if not supervisor_phone:
@@ -347,7 +432,9 @@ IMPORTANT:
                 "role": "system",
                 "content": "I apologize, I don't have a supervisor number available. Let's continue with the verification."
             }
-            await flow_manager.push_frame(LLMMessagesAppendFrame([error_msg], run_llm=True))
+            await self.context_aggregator.assistant().push_frame(
+                LLMMessagesAppendFrame([error_msg], run_llm=True)
+            )
             return "No supervisor available", None
 
         import re
@@ -357,16 +444,17 @@ IMPORTANT:
                 "role": "system",
                 "content": "I apologize, the supervisor phone number is not configured correctly. Let's continue."
             }
-            await flow_manager.push_frame(LLMMessagesAppendFrame([error_msg], run_llm=True))
+            await self.context_aggregator.assistant().push_frame(
+                LLMMessagesAppendFrame([error_msg], run_llm=True)
+            )
             return "Invalid phone format", None
 
         try:
             # Update patient status
             patient_id = self.patient_data.get('patient_id')
             if patient_id:
-                from backend.models import AsyncPatientRecord
-                patient = AsyncPatientRecord(patient_id)
-                await patient.update({'call_status': 'Supervisor Requested'})
+                db = get_async_patient_db()
+                await db.update_call_status(patient_id, 'Supervisor Requested')
 
             # Add to transcript
             if self.pipeline and hasattr(self.pipeline, 'transcripts'):
@@ -383,7 +471,9 @@ IMPORTANT:
                 "role": "system",
                 "content": "I'm transferring you to my supervisor now. Please hold while I connect you. Goodbye."
             }
-            await flow_manager.push_frame(LLMMessagesAppendFrame([goodbye_msg], run_llm=True))
+            await self.context_aggregator.assistant().push_frame(
+                LLMMessagesAppendFrame([goodbye_msg], run_llm=True)
+            )
 
             # Set transfer flag before initiating transfer
             if self.pipeline:
@@ -399,7 +489,8 @@ IMPORTANT:
             return "Transfer initiated", None
 
         except Exception as e:
-            logger.error(f"❌ Transfer failed: {e}")
+            import traceback
+            logger.error(f"❌ Transfer failed: {traceback.format_exc()}")
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False
 
@@ -407,21 +498,62 @@ IMPORTANT:
                 "role": "system",
                 "content": "I apologize, the transfer failed. Let's continue with the verification."
             }
-            await flow_manager.push_frame(LLMMessagesAppendFrame([error_msg], run_llm=True))
+            await self.context_aggregator.assistant().push_frame(
+                LLMMessagesAppendFrame([error_msg], run_llm=True)
+            )
             return "Transfer failed", None
 
-    async def return_to_verification(self, flow_manager: FlowManager):
-        """Return to verification node."""
-        logger.info("✅ Flow: closing → verification")
+    async def _return_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
+        """
+        Handler for return_to_verification function.
+
+        This function allows the conversation to loop back to the verification node,
+        useful when the representative indicates they need to provide more information
+        after reaching the closing node.
+
+        Args:
+            args: Function arguments (may be None/empty dict).
+            flow_manager: The flow manager instance controlling conversation flow.
+
+        Returns:
+            tuple[None, NodeConfig]: Returns (None, verification_node_config).
+        """
+        logger.info("✅ Flow: returning to verification")
         return None, self.create_verification_node()
 
-    async def proceed_to_closing(self, flow_manager: FlowManager):
-        """Transition to closing node."""
+    async def _proceed_to_closing_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
+        """
+        Handler for proceed_to_closing function.
+
+        This function moves the conversation to the closing state after verification is complete,
+        where the LLM will ask if the representative needs anything else before ending the call.
+
+        Args:
+            args: Function arguments (may be None/empty dict).
+            flow_manager: The flow manager instance controlling conversation flow.
+
+        Returns:
+            tuple[None, NodeConfig]: Returns (None, closing_node_config).
+        """
         logger.info("✅ Flow: verification → closing")
         return None, self.create_closing_node()
 
-    async def end_call(self, flow_manager: FlowManager):
-        """End the call."""
+    async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:
+        """
+        Handler for end_call function.
+
+        This function gracefully ends the call by queueing an EndFrame
+        to signal the pipeline to terminate.
+
+        Args:
+            args: Function arguments (may be None/empty dict).
+            flow_manager: The flow manager instance controlling conversation flow.
+
+        Returns:
+            tuple[None, None]: Returns (None, None).
+        """
+        from pipecat.frames.frames import EndFrame
         logger.info("✅ Call ended by flow")
-        await flow_manager.end_conversation("Thank you. Goodbye!")
+        if self.pipeline:
+            await self.pipeline.task.queue_frames([EndFrame()])
         return None, None

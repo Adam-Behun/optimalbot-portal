@@ -36,21 +36,33 @@ class IVRTranscriptProcessor(FrameProcessor):
 def setup_ivr_handlers(pipeline, ivr_navigator):
     @ivr_navigator.event_handler("on_conversation_detected")
     async def on_conversation_detected(processor, conversation_history):
-        """Human answered - stay on classifier_llm and transition to greeting node."""
-        try:
-            await pipeline.context_aggregator.assistant().push_frame(
-                ManuallySwitchServiceFrame(service=pipeline.flow.classifier_llm),
-                FrameDirection.UPSTREAM
-            )
+        """Human answered - transition to greeting node.
 
+        Note: LLM switching is handled by greeting node's pre-action.
+        """
+        try:
             await pipeline.task.queue_frames([
                 VADParamsUpdateFrame(VADParams(stop_secs=0.8))
             ])
 
+            # Inject the detected user utterance into the greeting context
             greeting_node = pipeline.flow.create_greeting_node()
+
+            # If we have conversation history, append the last user message to the greeting node
+            # NodeConfig is a dictionary, so we use key access instead of attribute access
+            if conversation_history:
+                # Extract the string content from the last user message
+                last_content = conversation_history[-1]['content'] if conversation_history else ""
+                user_msg = {"role": "user", "content": last_content}
+
+                greeting_node['task_messages'].append(user_msg)
+
+                # Log the truncated string safely
+                logger.info(f"✅ Injected user utterance into greeting: {last_content[:50]}...")
+
             await pipeline.flow_manager.initialize(greeting_node)
 
-            logger.info("✅ Human detected → greeting (classifier_llm)")
+            logger.info("✅ Human detected → greeting")
 
         except Exception as e:
             logger.error(f"❌ Error in conversation handler: {e}")
@@ -58,40 +70,27 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
 
     @ivr_navigator.event_handler("on_ivr_status_changed")
     async def on_ivr_status_changed(processor, status):
-        """Handle IVR navigation status changes with LLM switching."""
+        """Handle IVR navigation status changes.
+
+        Note: LLM switching for navigation is handled by IVRNavigator's internal logic.
+        LLM switching for conversation is handled by node pre-actions.
+        """
         try:
             if status == IVRStatus.DETECTED:
-                # SWITCH TO MAIN_LLM for complex IVR navigation
-                await pipeline.context_aggregator.assistant().push_frame(
-                    ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
-                    FrameDirection.UPSTREAM
-                )
-
-                # Update IVRNavigator's internal LLM reference so it uses main_llm for navigation
-                pipeline.ivr_navigator._llm = pipeline.flow.main_llm
-
-                logger.info("✅ IVR detected → navigating (main_llm)")
+                # IVRNavigator will use main_llm for navigation (configured in pipeline_factory)
+                logger.info("✅ IVR detected → navigating")
 
                 pipeline.transcripts.append({
                     "role": "system",
-                    "content": "IVR system detected - switched to main_llm for navigation",
+                    "content": "IVR system detected - navigating menus",
                     "timestamp": datetime.now().isoformat(),
                     "type": "ivr_summary"
                 })
 
             elif status == IVRStatus.COMPLETED:
-                # SWITCH BACK TO CLASSIFIER_LLM for greeting
-                await pipeline.context_aggregator.assistant().push_frame(
-                    ManuallySwitchServiceFrame(service=pipeline.flow.classifier_llm),
-                    FrameDirection.UPSTREAM
-                )
-
-                # Update IVRNavigator's internal LLM reference back to classifier_llm
-                pipeline.ivr_navigator._llm = pipeline.flow.classifier_llm
-
                 pipeline.transcripts.append({
                     "role": "system",
-                    "content": "IVR navigation completed - switched to classifier_llm",
+                    "content": "IVR navigation completed",
                     "timestamp": datetime.now().isoformat(),
                     "type": "ivr_summary"
                 })
@@ -103,7 +102,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                 greeting_node = pipeline.flow.create_greeting_node()
                 await pipeline.flow_manager.initialize(greeting_node)
 
-                logger.info("✅ IVR complete → greeting (classifier_llm)")
+                logger.info("✅ IVR complete → greeting")
 
             elif status == IVRStatus.STUCK:
                 logger.error("❌ IVR navigation failed - ending call")

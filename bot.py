@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from pipecat.runner.types import DailyRunnerArguments
 from pipeline.runner import ConversationPipeline
@@ -83,7 +83,7 @@ async def bot(args: DailyRunnerArguments):
 
         await session_db.update_session(session_id, {
             "status": "completed",
-            "completed_at": datetime.utcnow()
+            "completed_at": datetime.now(timezone.utc)
         })
 
     except Exception as e:
@@ -92,7 +92,7 @@ async def bot(args: DailyRunnerArguments):
         try:
             await session_db.update_session(session_id, {
                 "status": "failed",
-                "completed_at": datetime.utcnow(),
+                "completed_at": datetime.now(timezone.utc),
                 "error": str(e)
             })
         except Exception:
@@ -165,4 +165,21 @@ if __name__ == "__main__":
         logger.info("=" * 60)
         logger.info("LOCAL DEVELOPMENT MODE")
         logger.info("=" * 60)
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        logger.info("Press Ctrl+C to stop the server")
+
+        # Configure uvicorn with proper signal handling
+        config = uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+            timeout_graceful_shutdown=5  # Give 5 seconds for graceful shutdown
+        )
+        server = uvicorn.Server(config)
+
+        try:
+            import asyncio
+            asyncio.run(server.serve())
+        except KeyboardInterrupt:
+            logger.info("Shutting down bot server...")
+            sys.exit(0)

@@ -120,13 +120,6 @@ class ConversationPipeline:
             logger.error(traceback.format_exc())
             raise
 
-        finally:
-            try:
-                if self.task:
-                    await self.task.cancel()
-            except Exception as cleanup_error:
-                logger.error(f"❌ Error during cleanup: {cleanup_error}")
-
     def get_conversation_state(self) -> Dict[str, Any]:
         return {
             "workflow_state": "active" if self.flow_manager else "inactive",

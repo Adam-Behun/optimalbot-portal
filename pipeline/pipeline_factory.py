@@ -37,8 +37,10 @@ class PipelineFactory:
             services_config['services']['classifier_llm']
         )
 
+        # LLMSwitcher starts with classifier_llm as default (first in list)
+        # Flow pre_actions will switch to main_llm when function calling is needed
         llm_switcher = LLMSwitcher(
-            llms=[main_llm, classifier_llm],
+            llms=[classifier_llm, main_llm],
             strategy_type=ServiceSwitcherStrategyManual
         )
 
@@ -107,10 +109,11 @@ class PipelineFactory:
         flow_loader = FlowLoader(client_name)
         FlowClass = flow_loader.load_flow_class()
 
-        # IVRNavigator starts with classifier_llm for fast IVR vs conversation detection
-        # Will switch to main_llm only when IVR system is actually detected
+        # IVRNavigator uses llm_switcher to support dynamic LLM switching
+        # Starts with classifier_llm for fast IVR vs conversation detection
+        # Flow can switch to main_llm when function calling is needed
         ivr_navigator = FixedIVRNavigator(
-            llm=services['classifier_llm'],
+            llm=services['llm_switcher'],
             ivr_prompt="Navigate to provider services for prior authorization verification",
             ivr_vad_params=VADParams(stop_secs=2.0)
         )

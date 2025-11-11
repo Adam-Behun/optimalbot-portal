@@ -51,13 +51,16 @@ def setup_dialout_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
+        """Handle dialout stopped - save transcript and end pipeline gracefully."""
         await save_transcript_to_db(pipeline)
 
+        # Signal pipeline to end gracefully
         if pipeline.task:
-            await pipeline.task.cancel()
+            await pipeline.task.queue_frames([EndFrame()])
 
     @pipeline.transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant, data):
+        """Handle participant leaving - update status, save transcript, end pipeline gracefully."""
         # Update call status if not already terminal
         try:
             patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
@@ -72,9 +75,9 @@ def setup_dialout_handlers(pipeline):
         # Save transcript before terminating
         await save_transcript_to_db(pipeline)
 
-        # Terminate pipeline
+        # Signal pipeline to end gracefully (EndFrame will trigger cleanup)
         if pipeline.task:
-            await pipeline.task.cancel()
+            await pipeline.task.queue_frames([EndFrame()])
 
     @pipeline.transport.event_handler("on_dialout_error")
     async def on_dialout_error(transport, data):
@@ -103,6 +106,6 @@ def setup_dialout_handlers(pipeline):
             # Save transcript even on error (may have partial conversation)
             await save_transcript_to_db(pipeline)
 
-            # Terminate pipeline
+            # Signal pipeline to end gracefully
             if pipeline.task:
-                await pipeline.task.cancel()
+                await pipeline.task.queue_frames([EndFrame()])
