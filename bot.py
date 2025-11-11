@@ -12,7 +12,8 @@ try:
 except ImportError:
     TRACING_AVAILABLE = False
 
-load_dotenv()
+# Load .env for local dev only - won't override Pipecat Cloud secrets
+load_dotenv(override=False)
 
 # Determine log level from DEBUG environment variable
 DEBUG_MODE = os.getenv("DEBUG", "false").lower() in ["true", "1", "yes"]
@@ -54,41 +55,42 @@ async def bot(args: DailyRunnerArguments):
     pipeline = None
 
     try:
+        session_id = args.body.get("session_id")
         patient_id = args.body.get("patient_id")
         patient_data = args.body.get("patient_data")
         phone_number = args.body.get("phone_number")
         client_name = args.body.get("client_name", "prior_auth")
 
-        if not all([patient_id, patient_data, phone_number]):
-            raise ValueError("Missing required: patient_id, patient_data, phone_number")
+        if not all([session_id, patient_id, patient_data, phone_number]):
+            raise ValueError("Missing required: session_id, patient_id, patient_data, phone_number")
 
-        await session_db.update_session(args.session_id, {
+        await session_db.update_session(session_id, {
             "status": "running",
             "pid": os.getpid()
         })
 
         pipeline = ConversationPipeline(
             client_name=client_name,
-            session_id=args.session_id,
+            session_id=session_id,
             patient_id=patient_id,
             patient_data=patient_data,
             phone_number=phone_number,
             debug_mode=DEBUG_MODE
         )
 
-        room_name = f"call_{args.session_id}"
+        room_name = f"call_{session_id}"
         await pipeline.run(args.room_url, args.token, room_name)
 
-        await session_db.update_session(args.session_id, {
+        await session_db.update_session(session_id, {
             "status": "completed",
             "completed_at": datetime.utcnow()
         })
 
     except Exception as e:
-        logger.error(f"Bot error - Session: {args.session_id}, Error: {e}")
+        logger.error(f"Bot error - Session: {session_id}, Error: {e}")
 
         try:
-            await session_db.update_session(args.session_id, {
+            await session_db.update_session(session_id, {
                 "status": "failed",
                 "completed_at": datetime.utcnow(),
                 "error": str(e)
@@ -99,8 +101,68 @@ async def bot(args: DailyRunnerArguments):
         raise
 
     finally:
-        try:
-            if hasattr(session_db, 'client'):
-                session_db.client.close()
-        except Exception:
-            pass
+        # Don't close Motor client - connection pooling handles cleanup
+        # Pipecat Cloud manages container lifecycle
+        pass
+
+
+# Local development mode - runs FastAPI server with /start endpoint
+if __name__ == "__main__":
+    import sys
+    import uvicorn
+    from fastapi import FastAPI, HTTPException
+    from pydantic import BaseModel
+
+    # Check if running in Pipecat runner mode (e.g., uv run bot.py -t daily)
+    if any(arg.startswith("-") for arg in sys.argv[1:]):
+        from pipecat.runner.run import main
+        main()
+    else:
+        # Default: run local FastAPI server for development
+        app = FastAPI()
+
+        class BotStartRequest(BaseModel):
+            createDailyRoom: bool = False
+            body: dict
+
+        @app.post("/start")
+        async def start_bot(request: BotStartRequest):
+            """Local bot start endpoint - mimics Pipecat Cloud API"""
+            import asyncio
+
+            try:
+                patient_id = request.body.get('patient_id')
+                session_id = request.body.get('session_id')
+                logger.info(f"Received local bot start request for patient {patient_id}, session {session_id}")
+
+                # Create DailyRunnerArguments object
+                # We need to create it the same way Pipecat Cloud does
+                args = DailyRunnerArguments(
+                    room_url=request.body.get("room_url"),
+                    token=request.body.get("token"),
+                    body=request.body
+                )
+                # session_id is set as an attribute after construction
+                args.session_id = session_id
+
+                # Run bot in background task
+                asyncio.create_task(bot(args))
+
+                return {"status": "started", "session_id": session_id}
+
+            except Exception as e:
+                logger.error(f"Error starting bot locally: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/health")
+        async def health():
+            return {"status": "healthy"}
+
+        port = int(os.getenv("BOT_PORT", "7860"))
+        logger.info(f"Starting local bot server on port {port}")
+        logger.info("=" * 60)
+        logger.info("LOCAL DEVELOPMENT MODE")
+        logger.info("=" * 60)
+        uvicorn.run(app, host="0.0.0.0", port=port)

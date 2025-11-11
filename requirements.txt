@@ -1,4 +1,4 @@
-pipecat-ai[daily,elevenlabs,deepgram,groq,tracing]
+pipecat-ai[daily,elevenlabs,deepgram,groq,tracing]>=0.0.93
 openai
 anthropic
 cartesia
@@ -19,9 +19,8 @@ langfuse
 opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
-jinja2
-pyyaml
-pydantic
+pyyaml  # For configuration parsing
+pydantic  # For backend API schemas
 passlib[bcrypt]
 python-jose[cryptography]
 phonenumbers

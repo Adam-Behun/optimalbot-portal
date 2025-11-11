@@ -1,164 +1,166 @@
 import logging
+import os
+import yaml
+from pathlib import Path
 from typing import Dict, Any
-from openai._types import NOT_GIVEN
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.extensions.ivr.ivr_navigator import IVRNavigator
+from pipecat.pipeline.task import PipelineParams
+from pipecat.pipeline.llm_switcher import LLMSwitcher
+from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.transcript_processor import TranscriptProcessor
+from pipecat_flows import FlowManager
 
 from services.service_factory import ServiceFactory
-from pipeline.audio_processors import AudioResampler, DropEmptyAudio, StateTagStripper, CodeFormatter, LLMTransitionMonitor
-from core.context import ConversationContext
-from core.state_manager import StateManager
-from backend.functions import PATIENT_TOOLS
-from handlers.ivr import IVRTranscriptProcessor
+from pipeline.fixed_ivr_navigator import FixedIVRNavigator
+from core.flow_loader import FlowLoader
 
 logger = logging.getLogger(__name__)
 
 
 class PipelineFactory:
-    
+
     @staticmethod
     def build(
-        client_config: Any,
+        client_name: str,
         session_data: Dict[str, Any],
         room_config: Dict[str, str]
     ) -> tuple:
-        logger.info("Building pipeline")
-        services_config = client_config.services_config
+        services_config = PipelineFactory._load_services_config(client_name)
 
-        llm_switcher, classifier_llm, main_llm = ServiceFactory.create_llm_switcher(services_config['services'])
+        main_llm = ServiceFactory.create_llm(
+            services_config['services']['llm']
+        )
+        classifier_llm = ServiceFactory.create_classifier_llm(
+            services_config['services']['classifier_llm']
+        )
+
+        llm_switcher = LLMSwitcher(
+            llms=[main_llm, classifier_llm],
+            strategy_type=ServiceSwitcherStrategyManual
+        )
 
         services = {
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
             'tts': ServiceFactory.create_tts(services_config['services']['tts']),
-            'llm_switcher': llm_switcher,
-            'classifier_llm': classifier_llm,
-            'main_llm': main_llm,
             'transport': ServiceFactory.create_transport(
                 services_config['services']['transport'],
                 room_config['room_url'],
                 room_config['room_token'],
                 room_config['room_name']
-            )
+            ),
+            'main_llm': main_llm,
+            'classifier_llm': classifier_llm,
+            'llm_switcher': llm_switcher
         }
 
-        logger.info("Creating conversation components")
         components = PipelineFactory._create_conversation_components(
-            client_config,
+            client_name,
             session_data,
             services
         )
 
-        logger.info("Assembling pipeline")
-        pipeline = PipelineFactory._assemble_pipeline(services, components)
+        pipeline, params = PipelineFactory._assemble_pipeline(services, components)
 
-        logger.info("Pipeline build complete")
-        return pipeline, services['transport'], components
-    
+        return pipeline, params, services['transport'], components
+
+    @staticmethod
+    def _load_services_config(client_name: str) -> Dict[str, Any]:
+        """Load and parse services.yaml for a client."""
+        client_path = Path(f"clients/{client_name}")
+        services_path = client_path / "services.yaml"
+
+        with open(services_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        return PipelineFactory._substitute_env_vars(config)
+
+    @staticmethod
+    def _substitute_env_vars(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Substitute ${ENV_VAR} placeholders with environment variables."""
+        for key, value in config.items():
+            if isinstance(value, dict):
+                config[key] = PipelineFactory._substitute_env_vars(value)
+            elif isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                env_var_name = value[2:-1]
+                env_value = os.getenv(env_var_name)
+                if env_value is None:
+                    raise ValueError(f"Required environment variable '{env_var_name}' is not set")
+                config[key] = env_value
+        return config
+
     @staticmethod
     def _create_conversation_components(
-        client_config,
+        client_name: str,
         session_data: Dict[str, Any],
         services: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Create conversation context, state manager, and handlers"""
-        logger.debug("Creating conversation context")
-        context = ConversationContext(
-            schema=client_config.schema,
-            patient_data=session_data['patient_data'],
-            session_id=session_data['session_id'],
-            prompt_renderer=client_config.prompt_renderer,
-            data_formatter=client_config.data_formatter
-        )
+        """Create FlowManager and conversation components."""
 
-        logger.debug("Creating state manager")
-        state_manager = StateManager(
-            conversation_context=context,
-            schema=client_config.schema,
-            session_id=session_data['session_id'],
-            patient_id=session_data['patient_id'],
-            main_llm=services['main_llm'],
-            classifier_llm=services['classifier_llm']
-        )
+        context = LLMContext()
+        context_aggregator = LLMContextAggregatorPair(context)
 
-        logger.debug("Creating transcript processor")
         transcript_processor = TranscriptProcessor()
 
-        logger.debug("Setting up LLM context")
-        initial_prompt = context.render_prompt()
-        llm_context = OpenAILLMContext(
-            messages=[{"role": "system", "content": initial_prompt}],
-            tools=NOT_GIVEN
-        )
-        context_aggregators = services['main_llm'].create_context_aggregator(llm_context)
+        flow_loader = FlowLoader(client_name)
+        FlowClass = flow_loader.load_flow_class()
 
-        state_manager.set_context_aggregators(context_aggregators)
-
-        formatted_data = client_config.data_formatter.format_patient_data(
-            session_data['patient_data']
-        )
-
-        logger.debug("Configuring IVR navigator")
-        call_classifier_prompt = client_config.prompt_renderer.render_prompt(
-            "call_classifier", "system", {}
-        )
-
-        ivr_goal = client_config.prompt_renderer.render_prompt(
-            "ivr_navigation", "task", {}
-        ) or "Navigate to provider services for eligibility verification"
-
-        ivr_navigator = IVRNavigator(
-            llm=services['llm_switcher'],
-            ivr_prompt=ivr_goal,
+        # IVRNavigator starts with classifier_llm for fast IVR vs conversation detection
+        # Will switch to main_llm only when IVR system is actually detected
+        ivr_navigator = FixedIVRNavigator(
+            llm=services['classifier_llm'],
+            ivr_prompt="Navigate to provider services for prior authorization verification",
             ivr_vad_params=VADParams(stop_secs=2.0)
         )
 
-        if call_classifier_prompt:
-            ivr_navigator._classifier_prompt = call_classifier_prompt
-            ivr_navigator._ivr_processor._classifier_prompt = call_classifier_prompt
+        flow = FlowClass(
+            patient_data=session_data['patient_data'],
+            flow_manager=None,
+            main_llm=services['main_llm'],
+            classifier_llm=services['classifier_llm'],
+            context_aggregator=context_aggregator
+        )
 
-        logger.debug("Creating IVR transcript processor")
-        ivr_transcript_processor = IVRTranscriptProcessor(session_data['transcripts'])
-
-        logger.debug("Creating LLM transition monitor")
-        monitor = LLMTransitionMonitor(state_manager=state_manager)
-        state_manager.monitor = monitor
-
-        logger.debug(f"Components created - Initial state: {context.current_state}")
         return {
-            'context': context,
-            'state_manager': state_manager,
+            'context_aggregator': context_aggregator,
             'transcript_processor': transcript_processor,
-            'context_aggregators': context_aggregators,
             'ivr_navigator': ivr_navigator,
-            'ivr_transcript_processor': ivr_transcript_processor,
-            'monitor': monitor,
-            'llm_switcher': services['llm_switcher'],
+            'flow': flow,
             'main_llm': services['main_llm'],
-            'classifier_llm': services['classifier_llm']
+            'classifier_llm': services['classifier_llm'],
+            'llm_switcher': services['llm_switcher']
         }
-    
+
     @staticmethod
     def _assemble_pipeline(
         services: Dict[str, Any],
         components: Dict[str, Any]
-    ) -> Pipeline:
-        return Pipeline([
+    ) -> tuple[Pipeline, PipelineParams]:
+        # IVRNavigator replaces the LLM in the pipeline (it contains the LLM internally)
+        # See: https://docs.pipecat.ai/guides/fundamentals/ivr-navigator
+        pipeline = Pipeline([
             services['transport'].input(),
-            AudioResampler(target_sample_rate=16000),
-            DropEmptyAudio(),
             services['stt'],
             components['transcript_processor'].user(),
-            components['context_aggregators'].user(),
-            components['ivr_navigator'],
-            components['ivr_transcript_processor'],
-            components['monitor'],
-            StateTagStripper(state_manager=components['state_manager']),
-            CodeFormatter(),
+            components['context_aggregator'].user(),
+            components['ivr_navigator'],  # Contains llm_switcher internally, replaces LLM
             services['tts'],
             components['transcript_processor'].assistant(),
-            components['context_aggregators'].assistant(),
+            components['context_aggregator'].assistant(),
             services['transport'].output()
         ])
+
+        # Configure pipeline-wide audio sample rates
+        # Deepgram Flux STT expects 16kHz input (telephony standard)
+        # ElevenLabs TTS outputs 24kHz (high quality)
+        params = PipelineParams(
+            audio_in_sample_rate=16000,
+            audio_out_sample_rate=24000,
+            allow_interruptions=True,
+            enable_metrics=True,
+            enable_usage_metrics=True
+        )
+
+        return pipeline, params

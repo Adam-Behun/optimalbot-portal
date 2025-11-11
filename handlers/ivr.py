@@ -1,26 +1,19 @@
 import re
+import logging
 from datetime import datetime
-from loguru import logger
-from pipecat.frames.frames import (
-    LLMMessagesUpdateFrame,
-    VADParamsUpdateFrame,
-    TTSSpeakFrame,
-    EndFrame,
-    ManuallySwitchServiceFrame,
-    TextFrame,
-    Frame
-)
+from pipecat.frames.frames import Frame, TextFrame, VADParamsUpdateFrame, EndFrame, ManuallySwitchServiceFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
 from backend.models import get_async_patient_db
-from backend.functions import PATIENT_TOOLS
+
+logger = logging.getLogger(__name__)
 
 
 class IVRTranscriptProcessor(FrameProcessor):
 
-    def __init__(self, transcripts_list):
-        super().__init__()
+    def __init__(self, transcripts_list, **kwargs):
+        super().__init__(**kwargs)
         self._transcripts = transcripts_list
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -28,7 +21,6 @@ class IVRTranscriptProcessor(FrameProcessor):
 
         if isinstance(frame, TextFrame) and hasattr(frame, 'skip_tts') and frame.skip_tts:
             content = frame.text
-
             dtmf_match = re.search(r'<dtmf>(\d+)</dtmf>', content)
             if dtmf_match:
                 self._transcripts.append({
@@ -37,109 +29,69 @@ class IVRTranscriptProcessor(FrameProcessor):
                     "timestamp": datetime.now().isoformat(),
                     "type": "ivr_action"
                 })
-                logger.debug(f"[IVR TRANSCRIPT] assistant: Pressed {dtmf_match.group(1)}")
 
         await self.push_frame(frame, direction)
 
 
-def _process_ivr_conversation(conversation_history, pipeline):
-    if not conversation_history:
-        return
-
-    for msg in conversation_history:
-        content = msg.get('content', '')
-        role = msg.get('role', 'assistant')
-
-        # Extract DTMF tags (e.g., <dtmf>2</dtmf>)
-        dtmf_match = re.search(r'<dtmf>(\d+)</dtmf>', content)
-
-        if dtmf_match:
-            # Log DTMF selection explicitly
-            pipeline.transcripts.append({
-                "role": "system",
-                "content": f"Pressed {dtmf_match.group(1)}",
-                "timestamp": datetime.now().isoformat(),
-                "type": "ivr_action"
-            })
-
-            # Also add clean content without DTMF tags if any
-            clean_content = re.sub(r'<dtmf>\d+</dtmf>', '', content).strip()
-            if clean_content:
-                pipeline.transcripts.append({
-                    "role": role,
-                    "content": clean_content,
-                    "timestamp": datetime.now().isoformat(),
-                    "type": "ivr"
-                })
-        else:
-            # Regular IVR message (menu prompts, verbal responses)
-            pipeline.transcripts.append({
-                "role": role,
-                "content": content,
-                "timestamp": datetime.now().isoformat(),
-                "type": "ivr"
-            })
-
-
 def setup_ivr_handlers(pipeline, ivr_navigator):
-    pipeline.ivr_navigator = ivr_navigator
-
-    logger.info(f"🔧 IVR handlers configured for session: {pipeline.session_id}")
-
     @ivr_navigator.event_handler("on_conversation_detected")
     async def on_conversation_detected(processor, conversation_history):
+        """Human answered - stay on classifier_llm and transition to greeting node."""
         try:
-            logger.info(f"👤 Human detected - Session: {pipeline.session_id}")
-            logger.debug(f"Conversation history length: {len(conversation_history) if conversation_history else 0}")
+            await pipeline.context_aggregator.assistant().push_frame(
+                ManuallySwitchServiceFrame(service=pipeline.flow.classifier_llm),
+                FrameDirection.UPSTREAM
+            )
 
-            _process_ivr_conversation(conversation_history, pipeline)
-
-            # Optional: Log human's initial greeting for debugging
-            if conversation_history:
-                last_msg = conversation_history[-1].get('content', '')
-                logger.debug(f"Human said: {last_msg}")
-
-            # Set faster VAD for human conversation
             await pipeline.task.queue_frames([
                 VADParamsUpdateFrame(VADParams(stop_secs=0.8))
             ])
 
-            # Transition to greeting state (StateManager handles: LLM switching, tools, and greeting generation)
-            await pipeline.state_manager.transition_to("greeting", "human_answered")
+            greeting_node = pipeline.flow.create_greeting_node()
+            await pipeline.flow_manager.initialize(greeting_node)
 
-            logger.info("✅ Greeting transition complete")
+            logger.info("✅ Human detected → greeting (classifier_llm)")
 
         except Exception as e:
             logger.error(f"❌ Error in conversation handler: {e}")
             raise
-    
+
     @ivr_navigator.event_handler("on_ivr_status_changed")
     async def on_ivr_status_changed(processor, status):
-        """Handle IVR navigation status changes"""
+        """Handle IVR navigation status changes with LLM switching."""
         try:
             if status == IVRStatus.DETECTED:
-                logger.info("IVR system detected - auto-navigation starting")
-                switch_frame = ManuallySwitchServiceFrame(service=pipeline.main_llm)
-                await pipeline.context_aggregators.assistant().push_frame(
-                    switch_frame, FrameDirection.UPSTREAM
+                # SWITCH TO MAIN_LLM for complex IVR navigation
+                await pipeline.context_aggregator.assistant().push_frame(
+                    ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
+                    FrameDirection.UPSTREAM
                 )
 
-                logger.info("✅ Switched to main LLM for IVR navigation")
+                # Update IVRNavigator's internal LLM reference so it uses main_llm for navigation
+                pipeline.ivr_navigator._llm = pipeline.flow.main_llm
 
-                # Add IVR detection summary to transcript
+                logger.info("✅ IVR detected → navigating (main_llm)")
+
                 pipeline.transcripts.append({
                     "role": "system",
-                    "content": "IVR system detected - navigating automatically",
+                    "content": "IVR system detected - switched to main_llm for navigation",
                     "timestamp": datetime.now().isoformat(),
                     "type": "ivr_summary"
                 })
 
             elif status == IVRStatus.COMPLETED:
-                logger.info("✅ IVR navigation complete - human reached")
+                # SWITCH BACK TO CLASSIFIER_LLM for greeting
+                await pipeline.context_aggregator.assistant().push_frame(
+                    ManuallySwitchServiceFrame(service=pipeline.flow.classifier_llm),
+                    FrameDirection.UPSTREAM
+                )
+
+                # Update IVRNavigator's internal LLM reference back to classifier_llm
+                pipeline.ivr_navigator._llm = pipeline.flow.classifier_llm
 
                 pipeline.transcripts.append({
                     "role": "system",
-                    "content": "Completed",
+                    "content": "IVR navigation completed - switched to classifier_llm",
                     "timestamp": datetime.now().isoformat(),
                     "type": "ivr_summary"
                 })
@@ -148,27 +100,23 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                     VADParamsUpdateFrame(VADParams(stop_secs=0.8))
                 ])
 
-                await pipeline.state_manager.transition_to("greeting", "ivr_complete")
+                greeting_node = pipeline.flow.create_greeting_node()
+                await pipeline.flow_manager.initialize(greeting_node)
 
-                logger.info("✅ Greeting transition complete after IVR - <1s response achieved")
-            
+                logger.info("✅ IVR complete → greeting (classifier_llm)")
+
             elif status == IVRStatus.STUCK:
-                logger.warning("⚠️ IVR navigation stuck - ending call")
+                logger.error("❌ IVR navigation failed - ending call")
 
-                # Add IVR stuck summary to transcript
                 pipeline.transcripts.append({
                     "role": "system",
-                    "content": "Failed - navigation stuck",
+                    "content": "IVR navigation failed",
                     "timestamp": datetime.now().isoformat(),
                     "type": "ivr_summary"
                 })
 
-                pipeline.conversation_context.transition_to("ivr_stuck", "navigation_failed")
-
                 await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
                 await pipeline.task.queue_frames([EndFrame()])
 
-                logger.info("❌ Call ended - IVR stuck")
-        
         except Exception as e:
             logger.error(f"❌ Error in IVR status handler: {e}")

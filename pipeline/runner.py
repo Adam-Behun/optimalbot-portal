@@ -1,23 +1,20 @@
 import logging
 from typing import Dict, Any
-
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
-
-from core.client_loader import ClientLoader
+from pipecat_flows import FlowManager
 from pipeline.pipeline_factory import PipelineFactory
 from handlers import (
     setup_dialout_handlers,
     setup_transcript_handler,
     setup_ivr_handlers,
-    setup_function_call_handler,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class ConversationPipeline:
-    
+
     def __init__(
         self,
         client_name: str,
@@ -33,36 +30,23 @@ class ConversationPipeline:
         self.patient_data = patient_data
         self.phone_number = phone_number
         self.debug_mode = debug_mode
-        
-        # Load client configuration
-        loader = ClientLoader(client_name)
-        self.client_config = loader.load_all()
-        self.conversation_schema = self.client_config.schema
-        
-        # Pipeline components (initialized in run())
+
         self.pipeline = None
         self.transport = None
         self.task = None
-        self.conversation_context = None
-        self.state_manager = None
-        self.context_aggregators = None
-        self.transcript_processor = None
+        self.flow_manager = None
+        self.flow = None
         self.ivr_navigator = None
-        self.llm_switcher = None
-        self.main_llm = None
-        self.classifier_llm = None
+        self.context_aggregator = None
+        self.transcript_processor = None
         self.runner = None
-        
-        # Transcript tracking
-        self.transcripts = []
 
-        # Transfer state
+        self.transcripts = []
         self.transfer_in_progress = False
 
     async def run(self, room_url: str, room_token: str, room_name: str):
-        logger.info(f"🎬 Starting call - Client: {self.client_name}, Session: {self.session_id}, Phone: {self.phone_number}")
+        logger.info(f"✅ Starting call session - Client: {self.client_name}, Phone: {self.phone_number}")
 
-        # Build pipeline
         session_data = {
             'session_id': self.session_id,
             'patient_id': self.patient_id,
@@ -77,44 +61,23 @@ class ConversationPipeline:
             'room_name': room_name
         }
 
-        logger.debug(f"Session data keys: {list(session_data.keys())}")
-        logger.debug(f"Room: {room_name}")
-
-        # Build pipeline (services and components log their own creation)
-        self.pipeline, self.transport, components = PipelineFactory.build(
-            self.client_config,
+        self.pipeline, params, self.transport, components = PipelineFactory.build(
+            self.client_name,
             session_data,
             room_config
         )
 
-        # Extract components
-        self.conversation_context = components['context']
-        self.state_manager = components['state_manager']
-        self.transcript_processor = components['transcript_processor']
-        self.context_aggregators = components['context_aggregators']
+        self.flow = components['flow']
         self.ivr_navigator = components['ivr_navigator']
-        self.llm_switcher = components['llm_switcher']
-        self.main_llm = components['main_llm']
-        self.classifier_llm = components['classifier_llm']
+        self.context_aggregator = components['context_aggregator']
+        self.transcript_processor = components['transcript_processor']
 
-        logger.debug(f"Initial state: {self.conversation_context.current_state}")
-        logger.debug(f"Active LLM: {type(self.llm_switcher.active_llm).__name__}")
+        logger.info("✅ Pipeline components assembled")
 
-        # Setup handlers before creating task
-        logger.info("🔧 Setting up handlers")
-        setup_dialout_handlers(self)
-        setup_transcript_handler(self)
-        setup_ivr_handlers(self, components['ivr_navigator'])
-        setup_function_call_handler(self)
-
-        logger.debug("Creating pipeline task with tracing enabled")
+        # Use params from factory, which includes audio sample rates and other settings
         self.task = PipelineTask(
             self.pipeline,
-            params=PipelineParams(
-                allow_interruptions=True,
-                enable_metrics=True,
-                enable_usage_metrics=True,
-            ),
+            params=params,
             enable_tracing=True,
             enable_turn_tracking=True,
             conversation_id=self.session_id,
@@ -125,10 +88,27 @@ class ConversationPipeline:
             }
         )
 
-        self.state_manager.set_task(self.task)
-        self.runner = PipelineRunner()
+        self.flow_manager = FlowManager(
+            task=self.task,
+            llm=components['llm_switcher'],
+            context_aggregator=self.context_aggregator,
+            transport=self.transport
+        )
 
-        logger.info(f"🚀 Starting pipeline runner - Initial state: {self.conversation_context.current_state}")
+        self.flow.flow_manager = self.flow_manager
+        self.flow.context_aggregator = self.context_aggregator
+        self.flow.transport = self.transport
+        self.flow.pipeline = self
+
+        logger.info("✅ FlowManager initialized")
+
+        setup_dialout_handlers(self)
+        setup_transcript_handler(self)
+        setup_ivr_handlers(self, self.ivr_navigator)
+
+        logger.info("✅ Event handlers registered")
+
+        self.runner = PipelineRunner()
 
         try:
             await self.runner.run(self.task)
@@ -141,32 +121,16 @@ class ConversationPipeline:
             raise
 
         finally:
-            logger.debug("Cleaning up pipeline resources")
             try:
                 if self.task:
                     await self.task.cancel()
-                if self.transport:
-                    # Daily transport cleanup handled by Pipecat
-                    pass
-                logger.debug("Cleanup complete")
             except Exception as cleanup_error:
-                logger.error(f"Error during cleanup: {cleanup_error}")
-    
+                logger.error(f"❌ Error during cleanup: {cleanup_error}")
+
     def get_conversation_state(self) -> Dict[str, Any]:
-        """Get current conversation state for monitoring/debugging"""
-        if not self.conversation_context:
-            return {
-                "workflow_state": "inactive",
-                "client": self.client_name,
-                "patient_data": self.patient_data,
-                "phone_number": self.phone_number,
-                "transcripts": []
-            }
-        
         return {
-            "workflow_state": "active",
+            "workflow_state": "active" if self.flow_manager else "inactive",
             "client": self.client_name,
-            "current_state": self.conversation_context.current_state,
             "patient_data": self.patient_data,
             "phone_number": self.phone_number,
             "transcripts": self.transcripts,

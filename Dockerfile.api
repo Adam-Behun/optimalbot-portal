@@ -6,7 +6,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY backend/ ./backend/
-COPY utils/ ./utils/
+
+# Validate FastAPI app can be imported
+RUN python -c "from backend.main import app; assert app is not None, 'FastAPI app failed to initialize'"
 
 ENV PORT=8000
 EXPOSE 8000

@@ -52,14 +52,12 @@ def setup_transcript_handler(pipeline):
                 "type": "transcript"
             }
             pipeline.transcripts.append(transcript_entry)
-            logger.info(f"[TRANSCRIPT] {message.role}: {message.content}")
 
 
 async def delete_daily_recording(room_name: str):
     try:
         daily_api_key = os.getenv("DAILY_API_KEY")
         if not daily_api_key:
-            logger.warning("DAILY_API_KEY not set, cannot delete recording")
             return False
 
         # List recordings for the room
@@ -76,14 +74,12 @@ async def delete_daily_recording(room_name: str):
                 params={"room_name": room_name}
             ) as response:
                 if response.status != 200:
-                    logger.warning(f"Failed to list recordings: {response.status}")
                     return False
 
                 data = await response.json()
                 recordings = data.get("data", [])
 
                 if not recordings:
-                    logger.info("No recordings found to delete")
                     return True
 
                 # Delete each recording
@@ -95,19 +91,18 @@ async def delete_daily_recording(room_name: str):
                             headers=headers
                         ) as del_response:
                             if del_response.status in [200, 204]:
-                                logger.info(f"✅ Deleted Daily recording: {recording_id}")
+                                logger.info(f"✅ Daily recording deleted (HIPAA compliance)")
                             else:
-                                logger.warning(f"Failed to delete recording {recording_id}: {del_response.status}")
+                                logger.error(f"❌ Failed to delete recording {recording_id}")
 
                 return True
 
     except Exception as e:
-        logger.error(f"Error deleting Daily recordings: {e}")
+        logger.error(f"❌ Error deleting Daily recordings: {e}")
         return False
 
 async def save_transcript_to_db(pipeline):
     if not pipeline.transcripts:
-        logger.warning("No transcripts to save")
         return
 
     try:
@@ -128,19 +123,14 @@ async def save_transcript_to_db(pipeline):
         )
 
         if success:
-            logger.info(
-                f"✅ Saved transcript to MongoDB: "
-                f"{len(pipeline.transcripts)} raw messages → {len(assembled_messages)} assembled"
-            )
+            logger.info(f"✅ Transcript saved ({len(assembled_messages)} messages)")
 
             # Delete Daily recording for HIPAA compliance (minimize PHI retention)
             if hasattr(pipeline, 'transport') and hasattr(pipeline.transport, '_room_name'):
                 room_name = pipeline.transport._room_name
                 await delete_daily_recording(room_name)
-            else:
-                logger.warning("Could not determine room name for recording deletion")
         else:
             logger.error("❌ Failed to save transcript to MongoDB")
 
     except Exception as e:
-        logger.error(f"Error saving transcript: {e}")
+        logger.error(f"❌ Error saving transcript: {e}")

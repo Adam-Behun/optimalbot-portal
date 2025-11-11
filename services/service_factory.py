@@ -1,4 +1,4 @@
-from typing import Dict, Any, Union
+from typing import Dict, Any
 from loguru import logger
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
@@ -8,7 +8,6 @@ from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
-from backend.functions import PATIENT_TOOLS, update_prior_auth_status_handler
 
 
 class ServiceFactory:
@@ -19,30 +18,22 @@ class ServiceFactory:
         room_token: str,
         room_name: str
     ) -> DailyTransport:
-        logger.info("📞 Creating Daily transport service")
         transport = DailyTransport(
             room_url,
             room_token,
             room_name,
             params=DailyParams(
-                audio_in_enabled=True,
-                audio_in_sample_rate=16000,
-                audio_in_channels=1,
-                audio_out_enabled=True,
-                audio_out_sample_rate=24000,
-                audio_out_channels=1,
-                transcription_enabled=False,
                 api_key=config['api_key'],
-                phone_number_id=config['phone_number_id']
+                phone_number_id=config['phone_number_id'],
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                transcription_enabled=False
             )
         )
-        logger.info("✅ Daily transport service created")
         return transport
-    
+
     @staticmethod
     def create_stt(config: Dict[str, Any]) -> DeepgramFluxSTTService:
-        logger.info("🎤 Creating Deepgram Flux STT service")
-
         params_dict = {}
         if 'eager_eot_threshold' in config and config['eager_eot_threshold'] is not None:
             params_dict['eager_eot_threshold'] = config['eager_eot_threshold']
@@ -65,13 +56,11 @@ class ServiceFactory:
             params=params
         )
 
-        logger.info("✅ Deepgram Flux STT service created")
         return service
-    
+
     @staticmethod
     def create_llm(config: Dict[str, Any]):
         provider = config.get('provider', 'openai')
-        logger.info(f"🤖 Creating {provider.upper()} main LLM service")
 
         if provider == 'groq':
             llm = GroqLLMService(
@@ -94,15 +83,11 @@ class ServiceFactory:
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: openai, groq, anthropic")
 
-        llm.register_function("update_prior_auth_status", update_prior_auth_status_handler)
-
-        logger.info(f"✅ {provider.upper()} main LLM service created with update_prior_auth_status handler registered")
         return llm
 
     @staticmethod
     def create_classifier_llm(config: Dict[str, Any]):
         provider = config.get('provider', 'openai')
-        logger.info(f"⚡ Creating {provider.upper()} classifier LLM service")
 
         if provider == 'groq':
             llm = GroqLLMService(
@@ -128,13 +113,10 @@ class ServiceFactory:
         else:
             raise ValueError(f"Unsupported classifier LLM provider: {provider}. Supported providers: openai, groq, anthropic")
 
-        logger.info(f"✅ {provider.upper()} classifier LLM service created")
         return llm
 
     @staticmethod
     def create_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
-        logger.info("🗣️ Creating ElevenLabs TTS service")
-
         # Build pronunciation dictionary locators if provided
         pronunciation_dict_locators = None
         if config.get('pronunciation_dictionary_locators'):
@@ -169,12 +151,10 @@ class ServiceFactory:
             params=params,
             aggregate_sentences=config.get('aggregate_sentences', True)
         )
-        logger.info("✅ ElevenLabs TTS service created")
         return service
 
     @staticmethod
     def create_llm_switcher(config: Dict[str, Any]) -> tuple:
-        logger.info("🔀 Creating LLM switcher")
         classifier_llm = ServiceFactory.create_classifier_llm(config['classifier_llm'])
         main_llm = ServiceFactory.create_llm(config['llm'])
 
@@ -183,5 +163,4 @@ class ServiceFactory:
             strategy_type=ServiceSwitcherStrategyManual
         )
 
-        logger.info("✅ LLM switcher created")
         return llm_switcher, classifier_llm, main_llm

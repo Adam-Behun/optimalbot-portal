@@ -2,12 +2,9 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    # Increased thresholds to prevent LLM from responding before human finishes speaking
-    # Lower values = more aggressive interruption (faster but incomplete utterances)
-    # Higher values = wait for complete utterances (slower but more accurate)
-    eager_eot_threshold: 0.75    # Raised from 0.5 - wait for higher confidence before eager turn end
-    eot_threshold: 0.8           # Raised from 0.7 - ensure complete utterances
-    eot_timeout_ms: 3000         # Raised from 2500ms - allow more time for complex introductions
+    eager_eot_threshold: 0.55
+    eot_threshold: 0.65
+    eot_timeout_ms: 3500
 
   llm:
     provider: openai  # Main LLM for conversation and IVR navigation
