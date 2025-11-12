@@ -130,25 +130,31 @@ class PatientCreate(BaseModel):
     @field_validator('date_of_birth')
     @classmethod
     def validate_dob(cls, v: str) -> str:
-        """Validate date is at least yesterday and in the past"""
+        """Validate date is at least yesterday and in the past, store in MM/DD/YYYY format"""
         try:
-            dob = datetime.strptime(v, '%Y-%m-%d')
+            # Accept both formats for input
+            if '/' in v:
+                dob = datetime.strptime(v, '%m/%d/%Y')
+            else:
+                dob = datetime.strptime(v, '%Y-%m-%d')
+
             yesterday = datetime.now() - timedelta(days=1)
             yesterday = yesterday.replace(hour=23, minute=59, second=59)
 
             if dob > yesterday:
                 raise ValueError('Date of birth must be at least yesterday or earlier')
 
-            return v
+            # Store in MM/DD/YYYY format for better pronunciation
+            return dob.strftime('%m/%d/%Y')
         except ValueError as e:
             if 'does not match format' in str(e):
-                raise ValueError('Date must be in YYYY-MM-DD format')
+                raise ValueError('Date must be in YYYY-MM-DD or MM/DD/YYYY format')
             raise
 
     @field_validator('appointment_time')
     @classmethod
     def validate_appointment_time(cls, v: str) -> str:
-        """Validate appointment is between 1 hour from now and 3 months out"""
+        """Validate appointment is between 1 hour from now and 3 months out, store in MM/DD/YYYY HH:MM AM/PM format"""
         try:
             # Try parsing ISO format with T
             if 'T' in v:
@@ -167,7 +173,8 @@ class PatientCreate(BaseModel):
             if appt > max_time:
                 raise ValueError('Appointment must be within 3 months from now')
 
-            return v
+            # Store in MM/DD/YYYY HH:MM AM/PM format for better pronunciation
+            return appt.strftime('%m/%d/%Y %I:%M %p')
         except ValueError as e:
             if 'does not match' in str(e) or 'Invalid' in str(e):
                 raise ValueError('Appointment time must be in valid datetime format (YYYY-MM-DDTHH:MM)')

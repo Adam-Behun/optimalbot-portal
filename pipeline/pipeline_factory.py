@@ -112,7 +112,8 @@ class PipelineFactory:
 
         # IVRNavigator uses llm_switcher to support dynamic LLM switching
         # Starts with classifier_llm for fast IVR vs conversation detection
-        # Flow can switch to main_llm when function calling is needed
+        # Switches to main_llm when IVR is detected (for complex navigation)
+        # handlers/ivr.py manages the LLM switches based on IVR status
         ivr_navigator = FixedIVRNavigator(
             llm=services['llm_switcher'],
             ivr_prompt="Navigate to provider services for prior authorization verification",

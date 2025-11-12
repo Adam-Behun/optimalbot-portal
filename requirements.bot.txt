@@ -1,5 +1,5 @@
 # Core pipecat with required providers (includes openai, daily-python, opentelemetry packages)
-pipecat-ai[daily,elevenlabs,deepgram,groq,tracing]
+pipecat-ai[daily,cartesia,elevenlabs,deepgram,groq,tracing]
 pipecat-ai-flows
 
 # Duplicates - already included in pipecat-ai[tracing]

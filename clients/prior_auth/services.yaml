@@ -21,35 +21,35 @@ services:
     max_tokens: 512
 
   tts:
-    provider: elevenlabs
-    model: eleven_turbo_v2_5
-    voice_id: aMSt68OGf4xUZAnLpTU8
-    api_key: ${ELEVENLABS_API_KEY}
+    provider: cartesia  # Switch between 'cartesia' or 'elevenlabs' per client
+    model: sonic-3-2025-10-27
+    voice_id: 829ccd10-f8b3-43cd-b8a0-4aeaa81f3b30
+    api_key: ${CARTESIA_API_KEY}
 
-    # Voice Quality & Character Settings (0.0 - 1.0)
-    stability: 0.55                    # Voice consistency; 0.5-0.6 = natural with slight variation; higher = more robotic but clearer
-    similarity_boost: 0.80             # Voice fidelity to original; 0.75-0.85 = high quality; higher may add artifacts
-    style: 0.15                        # Expressiveness; 0.1-0.3 = professional with subtle emotion; 0 = monotone
-    use_speaker_boost: true            # Enhanced clarity for phone calls; recommended for telephony
-
-    # Speed & Timing (0.7 - 1.2 for turbo models)
-    speed: 0.92                        # Slightly slower for clarity on IDs; 0.9-0.95 = professional pace; 1.0 = default
-
-    # Text Processing
-    apply_text_normalization: auto     # 'auto' | 'on' | 'off'; auto intelligently handles numbers/dates
-    enable_ssml_parsing: true          # Enable SSML tags for granular control (breaks, emphasis, prosody)
+    # Cartesia Sonic-3 Generation Config
+    # Sonic-3 interprets these parameters as guidance for natural speech
+    generation_config:
+      speed: 0.95        # Speed multiplier; valid range: [0.6, 1.5]; default = 1.0; roughly multiplies default speed (e.g., 1.5 = 1.5x faster)
+      volume: 1.0        # Volume multiplier; valid range: [0.5, 2.0]; default = 1.0; roughly multiplies default volume (e.g., 1.5 = 1.5x louder)
+      emotion: neutral   # Single emotion string (neutral, angry, excited, content, sad, scared, etc.)
 
     # Performance Optimization
-    auto_mode: true                    # Automatic latency optimization; recommended for real-time
-    aggregate_sentences: true          # Buffer sentences for natural prosody; improves flow
+    aggregate_sentences: true  # Buffer sentences for natural prosody; improves flow
 
-    # Optional: Enable for debugging
-    # enable_logging: false            # ElevenLabs API logging
-
-    # Optional: Pronunciation Dictionaries (create via ElevenLabs dashboard)
-    # pronunciation_dictionary_locators:
-    #   - pronunciation_dictionary_id: "your_dict_id_here"
-    #     version_id: "latest"
+    # --- ElevenLabs Alternative Configuration (uncomment to switch back) ---
+    # provider: elevenlabs
+    # model: eleven_turbo_v2_5
+    # voice_id: aMSt68OGf4xUZAnLpTU8
+    # api_key: ${ELEVENLABS_API_KEY}
+    # stability: 0.55
+    # similarity_boost: 0.80
+    # style: 0.15
+    # use_speaker_boost: true
+    # speed: 0.92
+    # apply_text_normalization: auto
+    # enable_ssml_parsing: true
+    # auto_mode: true
+    # aggregate_sentences: true
 
   transport:
     provider: daily  # The transport/telephony provider (e.g., daily, twilio).

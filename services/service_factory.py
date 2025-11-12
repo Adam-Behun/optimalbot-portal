@@ -2,6 +2,7 @@ from typing import Dict, Any
 from loguru import logger
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.anthropic.llm import AnthropicLLMService
@@ -116,7 +117,46 @@ class ServiceFactory:
         return llm
 
     @staticmethod
-    def create_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
+    def create_tts(config: Dict[str, Any]):
+        """Create TTS service based on provider configuration."""
+        provider = config.get('provider', 'elevenlabs')  # Default to elevenlabs for backwards compatibility
+
+        if provider == 'cartesia':
+            return ServiceFactory._create_cartesia_tts(config)
+        elif provider == 'elevenlabs':
+            return ServiceFactory._create_elevenlabs_tts(config)
+        else:
+            raise ValueError(f"Unsupported TTS provider: {provider}. Supported providers: elevenlabs, cartesia")
+
+    @staticmethod
+    def _create_cartesia_tts(config: Dict[str, Any]) -> CartesiaTTSService:
+        """Create Cartesia TTS service instance."""
+        # Build generation config if provided
+        generation_config = None
+        if config.get('generation_config'):
+            gc = config['generation_config']
+            generation_config = GenerationConfig(
+                speed=gc.get('speed'),
+                volume=gc.get('volume'),
+                emotion=gc.get('emotion')
+            )
+
+        params = CartesiaTTSService.InputParams(
+            generation_config=generation_config
+        )
+
+        service = CartesiaTTSService(
+            api_key=config['api_key'],
+            voice_id=config['voice_id'],
+            model=config['model'],
+            params=params,
+            aggregate_sentences=config.get('aggregate_sentences', True)
+        )
+        return service
+
+    @staticmethod
+    def _create_elevenlabs_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
+        """Create ElevenLabs TTS service instance."""
         # Build pronunciation dictionary locators if provided
         pronunciation_dict_locators = None
         if config.get('pronunciation_dictionary_locators'):

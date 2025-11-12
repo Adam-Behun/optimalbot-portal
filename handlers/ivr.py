@@ -74,13 +74,17 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
     async def on_ivr_status_changed(processor, status):
         """Handle IVR navigation status changes.
 
-        Note: LLM switching for navigation is handled by IVRNavigator's internal logic.
-        LLM switching for conversation is handled by node pre-actions.
+        Switches to main_llm when IVR is detected (for complex navigation).
+        Switches back to classifier_llm after IVR completes (for fast greeting).
         """
         try:
             if status == IVRStatus.DETECTED:
-                # IVRNavigator will use main_llm for navigation (configured in pipeline_factory)
-                logger.info("✅ IVR detected → navigating")
+                # Switch to main_llm for complex IVR navigation
+                await pipeline.context_aggregator.assistant().push_frame(
+                    ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
+                    FrameDirection.UPSTREAM
+                )
+                logger.info("✅ IVR detected → switching to main_llm for navigation")
 
                 pipeline.transcripts.append({
                     "role": "system",
