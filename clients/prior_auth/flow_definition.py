@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
+from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
 from pipecat.frames.frames import ManuallySwitchServiceFrame, LLMMessagesAppendFrame
 from pipecat.processors.frame_processor import FrameDirection
 from backend.models import get_async_patient_db
@@ -52,12 +52,18 @@ CRITICAL BEHAVIORAL RULES:
 
 7. ANSWERING QUESTIONS: You can answer questions about ANY of the patient information fields listed above at ANY time during the call, regardless of the current conversation state. Always use the exact values provided."""
 
-    def create_greeting_node(self) -> NodeConfig:
+    def create_greeting_node_after_ivr_completed(self) -> NodeConfig:
+        """
+        Greeting node used after IVR navigation completes.
+
+        - Waits for user to speak first (respond_immediately=False)
+        - Resets context to clear IVR navigation messages (context_strategy=RESET)
+        """
         facility = self.patient_data.get('facility_name', 'a medical facility')
         global_instructions = self._get_global_instructions()
 
         return NodeConfig(
-            name="greeting",
+            name="greeting_after_ivr",
             role_messages=[{
                 "role": "system",
                 "content": f"""You are Alexandra, a Virtual Assistant from {facility}.
@@ -66,7 +72,65 @@ CRITICAL BEHAVIORAL RULES:
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""YOU called the insurance company representative. Greet them, disclose you're a Virtual Assistant, and provide initial patient context.
+                "content": f"""YOU called the insurance company representative. After navigating the IVR system, a human has now answered. Greet them, disclose you're a Virtual Assistant, and provide initial patient context.
+
+STEP 1 - ANALYZE THE CONVERSATION HISTORY:
+- Look through ALL previous user messages in this conversation
+- Check if the representative introduced themselves with a name (e.g., "Hello, this is Jennifer", "This is Adam from Aetna", "Jennifer speaking")
+- Extract ONLY the first name if present (e.g., "Jennifer" or "Adam")
+
+STEP 2 - CONSTRUCT YOUR GREETING:
+- If you found a name → Start with "Hi [FirstName], this is Alexandra from {facility}."
+- If NO name was found → Start with "Hi, this is Alexandra from {facility}."
+- Then add: "Can you help me verify eligibility and benefits for a patient?"
+
+EXAMPLES:
+- They said "Hello, this is Adam from Aetna" → You respond: "Hi Adam, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
+- They said "Hello?" → You respond: "Hi, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
+
+CRITICAL RULES:
+- FIRST: Speak the greeting message out loud (this will be converted to speech)
+- THEN: After the greeting text is complete, call the proceed_to_verification() function
+- You must output text before calling any function"""
+            }],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_verification",
+                description="Transition from greeting to verification node after initial greeting is complete.",
+                properties={},
+                required=[],
+                handler=self._proceed_to_verification_handler
+            )],
+            respond_immediately=False,
+            pre_actions=[{
+                "type": "function",
+                "handler": self._switch_to_classifier_llm
+            }],
+            context_strategy=ContextStrategyConfig(
+                strategy=ContextStrategy.RESET
+            )
+        )
+
+    def create_greeting_node_without_ivr(self) -> NodeConfig:
+        """
+        Greeting node used when human answers directly (no IVR navigation).
+
+        - Speaks immediately (respond_immediately=True)
+        - Appends to existing context (default context strategy)
+        """
+        facility = self.patient_data.get('facility_name', 'a medical facility')
+        global_instructions = self._get_global_instructions()
+
+        return NodeConfig(
+            name="greeting_without_ivr",
+            role_messages=[{
+                "role": "system",
+                "content": f"""You are Alexandra, a Virtual Assistant from {facility}.
+
+{global_instructions}"""
+            }],
+            task_messages=[{
+                "role": "system",
+                "content": f"""YOU called the insurance company representative. A human answered directly. Greet them, disclose you're a Virtual Assistant, and provide initial patient context.
 
 STEP 1 - ANALYZE THE CONVERSATION HISTORY:
 - Look through ALL previous user messages in this conversation
@@ -200,7 +264,10 @@ CONVERSATION GUIDELINES:
             pre_actions=[{
                 "type": "function",
                 "handler": self._switch_to_main_llm
-            }]
+            }],
+            context_strategy=ContextStrategyConfig(
+                strategy=ContextStrategy.APPEND
+            )
         )
 
     def create_supervisor_confirmation_node(self) -> NodeConfig:

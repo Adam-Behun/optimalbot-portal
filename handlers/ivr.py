@@ -5,6 +5,7 @@ from pipecat.frames.frames import Frame, TextFrame, VADParamsUpdateFrame, EndFra
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
+from pipecat_flows import ContextStrategy, ContextStrategyConfig
 from backend.models import get_async_patient_db
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,9 @@ class IVRTranscriptProcessor(FrameProcessor):
 def setup_ivr_handlers(pipeline, ivr_navigator):
     @ivr_navigator.event_handler("on_conversation_detected")
     async def on_conversation_detected(processor, conversation_history):
-        """Human answered - transition to greeting node.
+        """Human answered directly (no IVR) - transition to greeting node.
 
+        Uses greeting_without_ivr which speaks immediately and appends to context.
         Note: LLM switching is handled by greeting node's pre-action.
         """
         try:
@@ -46,7 +48,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
             ])
 
             # Inject the detected user utterance into the greeting context
-            greeting_node = pipeline.flow.create_greeting_node()
+            greeting_node = pipeline.flow.create_greeting_node_without_ivr()
 
             # If we have conversation history, append the last user message to the greeting node
             # NodeConfig is a dictionary, so we use key access instead of attribute access
@@ -62,7 +64,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
 
             await pipeline.flow_manager.initialize(greeting_node)
 
-            logger.info("✅ Human detected → greeting")
+            logger.info("✅ Human detected → greeting_without_ivr (speak immediately)")
 
         except Exception as e:
             logger.error(f"❌ Error in conversation handler: {e}")
@@ -99,10 +101,13 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                     VADParamsUpdateFrame(VADParams(stop_secs=0.8))
                 ])
 
-                greeting_node = pipeline.flow.create_greeting_node()
+                # Use greeting_after_ivr_completed which:
+                # - Waits for user to speak first (respond_immediately=False)
+                # - Resets context to clear IVR messages (context_strategy=RESET)
+                greeting_node = pipeline.flow.create_greeting_node_after_ivr_completed()
                 await pipeline.flow_manager.initialize(greeting_node)
 
-                logger.info("✅ IVR complete → greeting")
+                logger.info("✅ IVR complete → greeting_after_ivr (context reset, wait for user)")
 
             elif status == IVRStatus.STUCK:
                 logger.error("❌ IVR navigation failed - ending call")

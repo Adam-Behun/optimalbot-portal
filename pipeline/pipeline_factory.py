@@ -11,6 +11,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.transcript_processor import TranscriptProcessor
+from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
 from pipecat_flows import FlowManager
 
 from services.service_factory import ServiceFactory
@@ -141,11 +142,21 @@ class PipelineFactory:
         services: Dict[str, Any],
         components: Dict[str, Any]
     ) -> tuple[Pipeline, PipelineParams]:
+        # Create STTMuteFilter to prevent interruptions during bot's first speech (greeting)
+        # Uses FIRST_SPEECH strategy: mutes user input during the initial greeting utterance,
+        # then automatically unmutes after greeting completes
+        stt_mute_processor = STTMuteFilter(
+            config=STTMuteConfig(
+                strategies={STTMuteStrategy.FIRST_SPEECH}
+            )
+        )
+
         # IVRNavigator replaces the LLM in the pipeline (it contains the LLM internally)
         # See: https://docs.pipecat.ai/guides/fundamentals/ivr-navigator
         pipeline = Pipeline([
             services['transport'].input(),
             services['stt'],
+            stt_mute_processor,  # Mute user input during first speech (greeting)
             components['transcript_processor'].user(),
             components['context_aggregator'].user(),
             components['ivr_navigator'],  # Contains llm_switcher internally, replaces LLM
