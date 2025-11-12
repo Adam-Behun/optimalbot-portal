@@ -1,22 +1,29 @@
-"""Fixed IVRNavigator that prevents StartFrame race condition.
+"""Fixed IVRNavigator that prevents StartFrame race condition and LLM switching timing issues.
 
-This module provides a fixed version of Pipecat's IVRNavigator that prevents
-the race condition where OutputTransportReadyFrame arrives before StartFrame
-completes propagation.
+This module provides a fixed version of Pipecat's IVRNavigator that fixes two issues:
 
-The bug exists in Pipecat v0.0.93 where IVRProcessor.process_frame() pushes
-LLMMessagesUpdateFrame(messages=messages) without run_llm=False during StartFrame
-processing, causing the LLM to execute immediately before the pipeline is ready.
+1. StartFrame race condition: Prevents OutputTransportReadyFrame arriving before StartFrame
+   completes propagation by setting run_llm=False during initial context setup.
 
-This fix is forward-compatible: if Pipecat fixes the bug upstream, this code
-will continue to work correctly since run_llm=False is the proper behavior for
-initial context setup without user input.
+2. LLM switching timing: Emits "on_ivr_pre_detected" event BEFORE triggering LLM execution
+   when IVR is detected, allowing handlers to switch from classifier_llm to main_llm before
+   the first IVR navigation inference runs.
+
+The LLM switching fix addresses the race condition where:
+- IVRProcessor detects IVR mode and immediately pushes LLMMessagesUpdateFrame(run_llm=True)
+- This triggers LLM execution with classifier_llm (still active)
+- THEN the on_ivr_status_changed handler fires and switches to main_llm (too late)
+- Result: First IVR question processed by wrong LLM, subsequent questions work fine
+
+The fix adds a pre-event hook with async delay to allow the switch frame to propagate
+through the pipeline before the LLM is triggered.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
-from pipecat.extensions.ivr.ivr_navigator import IVRNavigator, IVRProcessor
+from pipecat.extensions.ivr.ivr_navigator import IVRNavigator, IVRProcessor, IVRStatus
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     Frame,
@@ -31,15 +38,20 @@ logger = logging.getLogger(__name__)
 
 
 class FixedIVRProcessor(IVRProcessor):
-    """IVRProcessor with StartFrame race condition fix.
+    """IVRProcessor with StartFrame race condition fix and LLM switching timing fix.
 
-    Sets run_llm=False when pushing initial classifier prompt during StartFrame
-    processing to prevent LLM execution before pipeline initialization completes.
+    Fixes two issues:
+    1. Sets run_llm=False when pushing initial classifier prompt during StartFrame
+       processing to prevent LLM execution before pipeline initialization completes.
+
+    2. Emits "on_ivr_pre_detected" event BEFORE triggering LLM execution when IVR
+       is detected, allowing external handlers to switch LLMs before inference runs.
 
     This is the proper behavior since:
     - StartFrame should complete propagation before any LLM processing
     - The classifier prompt is just initial context, not a user query
     - The LLM will run naturally on the first real STT transcript frame
+    - LLM switching must happen before LLMMessagesUpdateFrame(run_llm=True) is pushed
     """
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -66,13 +78,53 @@ class FixedIVRProcessor(IVRProcessor):
         else:
             await self.push_frame(frame, direction)
 
+    async def _handle_ivr_detected(self):
+        """Handle IVR detection with pre-event for LLM switching.
+
+        Emits "on_ivr_pre_detected" event BEFORE triggering LLM execution,
+        allowing external handlers to switch from classifier_llm to main_llm
+        before the first IVR navigation inference runs.
+
+        The async delay ensures the ManuallySwitchServiceFrame has time to
+        propagate through the pipeline before LLMMessagesUpdateFrame(run_llm=True)
+        triggers LLM execution.
+        """
+        logger.debug("IVR detected - emitting pre-detection event for LLM switch")
+
+        # CRITICAL: Emit pre-event BEFORE triggering LLM
+        # This allows handlers to push ManuallySwitchServiceFrame upstream
+        await self._call_event_handler("on_ivr_pre_detected")
+
+        # Small delay to allow switch frame to propagate through the pipeline
+        # This ensures the LLMSwitcher's active service is updated before inference
+        await asyncio.sleep(0.05)
+
+        # NOW create the IVR navigation context and trigger LLM
+        # The LLM that runs will be the one set by the pre-event handler
+        messages = [{"role": "system", "content": self._ivr_prompt}]
+        conversation_history = self._get_conversation_history()
+        if conversation_history:
+            messages.extend(conversation_history)
+
+        # Push the messages upstream and run the LLM with the new context
+        llm_update_frame = LLMMessagesUpdateFrame(messages=messages, run_llm=True)
+        await self.push_frame(llm_update_frame, FrameDirection.UPSTREAM)
+
+        # Emit standard status changed event (for logging/tracking)
+        await self._call_event_handler("on_ivr_status_changed", IVRStatus.DETECTED)
+
 
 class FixedIVRNavigator(IVRNavigator):
-    """IVRNavigator with StartFrame race condition fix.
+    """IVRNavigator with StartFrame race condition fix and LLM switching timing fix.
 
-    Uses FixedIVRProcessor to prevent immediate LLM execution during StartFrame
-    propagation, eliminating the race condition where output frames arrive at
-    the sink before StartFrame completes.
+    Uses FixedIVRProcessor to fix two issues:
+    1. Prevents immediate LLM execution during StartFrame propagation
+    2. Emits "on_ivr_pre_detected" event before LLM execution for proper LLM switching
+
+    The LLM switching fix ensures that when transitioning from classifier mode to
+    IVR navigation mode, the system switches to main_llm BEFORE the first IVR
+    question is processed, preventing the first navigation inference from running
+    on the wrong LLM.
 
     Usage:
         Replace IVRNavigator with FixedIVRNavigator in your pipeline:
@@ -85,10 +137,23 @@ class FixedIVRNavigator(IVRNavigator):
             ivr_vad_params=VADParams(stop_secs=2.0)
         )
 
+        # In your event handlers:
+        @ivr_navigator.event_handler("on_ivr_pre_detected")
+        async def on_ivr_pre_detected(processor):
+            # Switch to main_llm BEFORE IVR navigation starts
+            await pipeline.context_aggregator.assistant().push_frame(
+                ManuallySwitchServiceFrame(service=main_llm),
+                FrameDirection.UPSTREAM
+            )
+
+    Events:
+        - on_ivr_pre_detected: Fires BEFORE LLM execution when IVR is detected
+        - on_ivr_status_changed: Fires AFTER LLM starts (standard Pipecat event)
+        - on_conversation_detected: Fires when human conversation is detected
+
     Forward Compatibility:
-        If Pipecat fixes the bug upstream by adding run_llm=False, this class
-        will continue to work correctly. You can then remove this custom class
-        and use the standard IVRNavigator once confirmed fixed.
+        If Pipecat fixes these bugs upstream, this class will continue to work
+        correctly. You can then remove this custom class once confirmed fixed.
     """
 
     def __init__(
@@ -123,8 +188,9 @@ class FixedIVRNavigator(IVRNavigator):
         from pipecat.pipeline.pipeline import Pipeline
         Pipeline.__init__(self, [self._llm, self._ivr_processor])
 
-        # Register IVR events
+        # Register IVR events (including new pre-detection event)
+        self._register_event_handler("on_ivr_pre_detected")
         self._register_event_handler("on_conversation_detected")
         self._register_event_handler("on_ivr_status_changed")
 
-        logger.debug("FixedIVRNavigator initialized with StartFrame race condition fix")
+        logger.debug("FixedIVRNavigator initialized with StartFrame and LLM switching fixes")

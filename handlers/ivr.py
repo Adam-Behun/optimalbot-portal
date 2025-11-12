@@ -35,6 +35,27 @@ class IVRTranscriptProcessor(FrameProcessor):
 
 
 def setup_ivr_handlers(pipeline, ivr_navigator):
+    @ivr_navigator.event_handler("on_ivr_pre_detected")
+    async def on_ivr_pre_detected(processor):
+        """Pre-detection handler: Switch LLM BEFORE IVR navigation begins.
+
+        This event fires BEFORE the IVRNavigator triggers LLM execution, allowing
+        us to switch from classifier_llm to main_llm before the first IVR question
+        is processed. Without this pre-event, the switch happens too late and the
+        first navigation inference runs on the wrong LLM.
+        """
+        try:
+            # Switch to main_llm for complex IVR navigation
+            await pipeline.context_aggregator.assistant().push_frame(
+                ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
+                FrameDirection.UPSTREAM
+            )
+            logger.info("✅ IVR pre-detected → switching to main_llm BEFORE navigation starts")
+
+        except Exception as e:
+            logger.error(f"❌ Error in IVR pre-detection handler: {e}")
+            raise
+
     @ivr_navigator.event_handler("on_conversation_detected")
     async def on_conversation_detected(processor, conversation_history):
         """Human answered directly (no IVR) - transition to greeting node.
@@ -74,17 +95,14 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
     async def on_ivr_status_changed(processor, status):
         """Handle IVR navigation status changes.
 
-        Switches to main_llm when IVR is detected (for complex navigation).
-        Switches back to classifier_llm after IVR completes (for fast greeting).
+        Note: LLM switching for IVR detection is now handled by on_ivr_pre_detected
+        event, which fires BEFORE the LLM is triggered. This ensures the first
+        IVR navigation question is processed by the correct LLM.
         """
         try:
             if status == IVRStatus.DETECTED:
-                # Switch to main_llm for complex IVR navigation
-                await pipeline.context_aggregator.assistant().push_frame(
-                    ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
-                    FrameDirection.UPSTREAM
-                )
-                logger.info("✅ IVR detected → switching to main_llm for navigation")
+                # Log IVR detection (LLM switching is handled by on_ivr_pre_detected)
+                logger.info("✅ IVR detected → navigation started with main_llm")
 
                 pipeline.transcripts.append({
                     "role": "system",

@@ -284,15 +284,16 @@ CRITICAL RULES:
                 "role": "system",
                 "content": f"""You are in a conversation with an insurance representative. You have already introduced yourself in the greeting state.
 
-FIRST: ANALYZE THE CONVERSATION CONTEXT
+FIRST: ANALYZE THE CONVERSATION CONTEXT AND REPRESENTATIVE'S RESPONSE
 - Review ALL previous messages in the conversation history
-- Understand what the representative has already said (greetings, questions, requests)
-- Identify where you are in the workflow (just starting, mid-information exchange, etc.)
+- Look at the MOST RECENT user message - this is the representative's response to your greeting
+- Understand what they said: Did they acknowledge? Ask how they can help? Ask a specific question?
+- Identify where you are in the workflow (just transitioned from greeting, mid-information exchange, etc.)
 - Remember: YOU are the caller, so YOU should drive the conversation forward
 
 VERIFICATION WORKFLOW - Navigate naturally through these steps:
 
-STEP 1: INITIAL ENGAGEMENT
+STEP 1: INITIAL ENGAGEMENT (Respond to their greeting response)
 - If they just said "Hi" or acknowledged your greeting → Proactively start providing information: "I'm calling about {patient_name}, date of birth {dob}. I need to verify eligibility for CPT code {cpt_code}."
 - If they asked "How can I help?" → Start with patient basics: "I need to verify eligibility for {patient_name}, born {dob}. The member ID is {member_id}."
 - If they asked a specific question → Answer it directly from PATIENT INFORMATION
@@ -599,8 +600,7 @@ IMPORTANT:
         return None, self.create_verification_node()
 
     async def record_authorization_status(
-        self, flow_manager: FlowManager,
-        status: str
+        self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, None]:
         """
         Record authorization status (step 1 of 2-step workflow).
@@ -610,8 +610,8 @@ IMPORTANT:
         the LLM to ask for the reference number.
 
         Args:
+            args (Dict[str, Any]): Function arguments containing 'status' key.
             flow_manager (FlowManager): The flow manager instance controlling conversation flow.
-            status (str): Authorization status. Must be one of: "Approved", "Denied", or "Pending". REQUIRED.
 
         Returns:
             tuple[str, None]: Returns (result_message, None).
@@ -619,6 +619,7 @@ IMPORTANT:
                 - None: Stays in current verification node to collect reference number.
         """
         try:
+            status = args['status']
             patient_id = self.patient_data.get('patient_id')
             if not patient_id:
                 logger.error("❌ No patient_id found in patient_data")
@@ -640,8 +641,7 @@ IMPORTANT:
             return f"Error recording status: {str(e)}", None
 
     async def record_reference_number(
-        self, flow_manager: FlowManager,
-        reference_number: str
+        self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, 'NodeConfig']:
         """
         Record reference/authorization number (step 2 of 2-step workflow).
@@ -652,8 +652,8 @@ IMPORTANT:
         reference number back to the representative for verification.
 
         Args:
+            args (Dict[str, Any]): Function arguments containing 'reference_number' key.
             flow_manager (FlowManager): The flow manager instance controlling conversation flow.
-            reference_number (str): Reference or authorization number provided by insurance representative. REQUIRED.
 
         Returns:
             tuple[str, NodeConfig]: Returns (result_message, next_node).
@@ -661,6 +661,7 @@ IMPORTANT:
                 - NodeConfig: authorization_confirmation node for confirming details back to rep.
         """
         try:
+            reference_number = args['reference_number']
             patient_id = self.patient_data.get('patient_id')
             if not patient_id:
                 logger.error("❌ No patient_id found in patient_data")
