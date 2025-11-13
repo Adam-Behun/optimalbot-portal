@@ -33,17 +33,19 @@ def setup_dialout_handlers(pipeline):
                 "type": "transfer"
             })
 
-            # Update call status
+            # Update call status to 'Supervisor Dialed'
             await get_async_patient_db().update_call_status(
                 pipeline.patient_id,
-                "Call Transferred"
+                "Supervisor Dialed"
             )
+            logger.info("✅ Database status updated: Supervisor Dialed")
 
             # Save transcript before bot exits
             await save_transcript_to_db(pipeline)
 
-            # Bot leaves call (cold transfer)
+            # Bot leaves call gracefully (cold transfer - EndFrame allows cleanup)
             await pipeline.task.queue_frames([EndFrame()])
+            logger.info("✅ EndFrame queued - bot will exit after transfer completes")
 
         else:
             # Initial call answered
@@ -51,33 +53,55 @@ def setup_dialout_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
-        """Handle dialout stopped - save transcript and end pipeline gracefully."""
-        await save_transcript_to_db(pipeline)
-
-        # Signal pipeline to end gracefully
-        if pipeline.task:
-            await pipeline.task.queue_frames([EndFrame()])
-
-    @pipeline.transport.event_handler("on_participant_left")
-    async def on_participant_left(transport, participant, data):
-        """Handle participant leaving - update status, save transcript, end pipeline gracefully."""
-        # Update call status if not already terminal
+        """Handle dialout stopped - update status based on current state, save transcript, and terminate immediately."""
         try:
+            # Check current status to determine appropriate final status
             patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
             current_status = patient.get("call_status") if patient else None
 
-            if current_status not in ["Completed", "Completed - Left VM", "Failed"]:
+            # Only update if not already in a terminal state
+            if current_status not in ["Completed", "Supervisor Dialed", "Failed"]:
                 await get_async_patient_db().update_call_status(pipeline.patient_id, "Completed")
-                logger.info("✅ Call ended - Status: Completed")
+                logger.info("✅ Database status updated: Completed (dialout stopped)")
+            else:
+                logger.info(f"✅ Call status already terminal: {current_status}")
+
         except Exception as e:
-            logger.error(f"❌ Error updating call status: {e}")
+            logger.error(f"❌ Error updating call status on dialout stopped: {e}")
 
         # Save transcript before terminating
         await save_transcript_to_db(pipeline)
 
-        # Signal pipeline to end gracefully (EndFrame will trigger cleanup)
+        # Immediate termination - user already disconnected
         if pipeline.task:
-            await pipeline.task.queue_frames([EndFrame()])
+            await pipeline.task.cancel()
+            logger.info("✅ Pipeline cancelled immediately (dialout stopped)")
+
+    @pipeline.transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, data):
+        """Handle participant leaving - update status based on current state, save transcript, and terminate immediately."""
+        try:
+            # Check current status to determine appropriate final status
+            patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
+            current_status = patient.get("call_status") if patient else None
+
+            # Only update if not already in a terminal state
+            if current_status not in ["Completed", "Supervisor Dialed", "Failed"]:
+                await get_async_patient_db().update_call_status(pipeline.patient_id, "Completed")
+                logger.info("✅ Database status updated: Completed (participant left)")
+            else:
+                logger.info(f"✅ Call status already terminal: {current_status}")
+
+        except Exception as e:
+            logger.error(f"❌ Error updating call status on participant left: {e}")
+
+        # Save transcript before terminating
+        await save_transcript_to_db(pipeline)
+
+        # Immediate termination - user already gone, no need to complete pending frames
+        if pipeline.task:
+            await pipeline.task.cancel()
+            logger.info("✅ Pipeline cancelled immediately (participant left)")
 
     @pipeline.transport.event_handler("on_dialout_error")
     async def on_dialout_error(transport, data):
@@ -96,16 +120,21 @@ def setup_dialout_handlers(pipeline):
                 "type": "transfer"
             })
 
-            # Don't terminate - call continues with insurance rep
+            # Don't terminate or update status - call continues with insurance rep
+            logger.info("✅ Call continuing with insurance representative")
 
         else:
-            # Initial dialout failed
+            # Initial dialout failed - call never connected
             logger.error(f"❌ Call failed - Dialout error: {data}")
+
+            # Update database status to Failed
             await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+            logger.info("✅ Database status updated: Failed")
 
             # Save transcript even on error (may have partial conversation)
             await save_transcript_to_db(pipeline)
 
-            # Signal pipeline to end gracefully
+            # Immediate termination - call never connected
             if pipeline.task:
-                await pipeline.task.queue_frames([EndFrame()])
+                await pipeline.task.cancel()
+                logger.info("✅ Pipeline cancelled immediately (dialout error)")

@@ -43,6 +43,7 @@ class ConversationPipeline:
 
         self.transcripts = []
         self.transfer_in_progress = False
+        self.transcript_saved = False  # Track if transcript has been saved to prevent duplicates
 
     async def run(self, room_url: str, room_token: str, room_name: str):
         logger.info(f"✅ Starting call session - Client: {self.client_name}, Phone: {self.phone_number}")

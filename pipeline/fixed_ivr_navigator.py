@@ -78,6 +78,58 @@ class FixedIVRProcessor(IVRProcessor):
         else:
             await self.push_frame(frame, direction)
 
+    async def _handle_mode_action(self, match):
+        """Handle mode action with robust parsing to handle interruptions and malformed output.
+
+        Fixes issue where user interruptions during LLM streaming cause PatternPairAggregator
+        to produce malformed mode values like "conversation<mode>conversation" due to:
+        1. Partial XML tags from interrupted streams
+        2. Buffer state from previous processing
+        3. LLM outputting extra text beyond the required tags
+
+        This override makes mode detection resilient by:
+        - Using substring matching instead of exact equality
+        - Handling partial/corrupted XML tags
+        - Trimming whitespace and normalizing case
+
+        Args:
+            match: The pattern match containing mode content.
+        """
+        mode_raw = match.content
+        logger.debug(f"Mode detected (raw): {mode_raw}")
+
+        # Clean the mode string - handle cases like "conversation<mode>conversation"
+        mode = mode_raw.strip().lower()
+
+        # Check if mode contains "conversation" or "ivr" (robust to interruptions)
+        if "conversation" in mode:
+            mode_clean = "conversation"
+        elif "ivr" in mode:
+            mode_clean = "ivr"
+        else:
+            logger.warning(f"Unknown mode detected: {mode_raw}")
+            return
+
+        logger.debug(f"Mode detected (cleaned): {mode_clean}")
+
+        # Call the appropriate handler
+        if mode_clean == "conversation":
+            await self._handle_conversation()
+        elif mode_clean == "ivr":
+            await self._handle_ivr_detected()
+
+    async def _handle_conversation(self):
+        """Handle conversation mode by switching to conversation mode.
+
+        Emit an on_conversation_detected event with saved conversation history.
+        """
+        logger.debug("Conversation detected - emitting on_conversation_detected event")
+
+        # Extract conversation history for the event handler
+        conversation_history = self._get_conversation_history()
+
+        await self._call_event_handler("on_conversation_detected", conversation_history)
+
     async def _handle_ivr_detected(self):
         """Handle IVR detection with pre-event for LLM switching.
 

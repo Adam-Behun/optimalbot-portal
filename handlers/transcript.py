@@ -102,7 +102,13 @@ async def delete_daily_recording(room_name: str):
         return False
 
 async def save_transcript_to_db(pipeline):
+    # Check if transcript was already saved to prevent duplicates
+    if hasattr(pipeline, 'transcript_saved') and pipeline.transcript_saved:
+        logger.info("✅ Transcript already saved, skipping duplicate save")
+        return
+
     if not pipeline.transcripts:
+        logger.info("⚠️ No transcript messages to save")
         return
 
     try:
@@ -123,6 +129,10 @@ async def save_transcript_to_db(pipeline):
         )
 
         if success:
+            # Mark transcript as saved to prevent duplicate saves
+            if hasattr(pipeline, 'transcript_saved'):
+                pipeline.transcript_saved = True
+
             logger.info(f"✅ Transcript saved ({len(assembled_messages)} messages)")
 
             # Delete Daily recording for HIPAA compliance (minimize PHI retention)
