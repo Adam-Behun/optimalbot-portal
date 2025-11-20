@@ -1,5 +1,4 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { Link, useLocation } from 'react-router-dom';
 import { getPatients, startCall, deletePatient } from '@/api';
 import { Patient } from '@/types';
 import { DataTable } from './data-table';
@@ -8,7 +7,7 @@ import { PatientDetailSheet } from './patient-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Phone, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from "sonner";
-import { SettingsMenu } from "@/components/settings-menu";
+import { Navigation } from "@/components/Navigation";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,7 +20,6 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function PatientList() {
-  const location = useLocation();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,8 +29,6 @@ export default function PatientList() {
 
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-
-  const isActive = (path: string) => location.pathname === path;
 
   const loadPatients = useCallback(async () => {
     try {
@@ -158,64 +154,45 @@ export default function PatientList() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading patients...</p>
-      </div>
+      <>
+        <Navigation />
+        <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
+          <p className="text-muted-foreground">Loading patients...</p>
+        </div>
+      </>
     );
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <p className="text-destructive">{error}</p>
-        <Button onClick={loadPatients} variant="outline">
-          Retry
-        </Button>
-      </div>
+      <>
+        <Navigation />
+        <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] gap-4">
+          <p className="text-destructive">{error}</p>
+          <Button onClick={loadPatients} variant="outline">
+            Retry
+          </Button>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4 space-y-6">
-      {/* Navigation and Controls */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-6">
-          <Link
-            to="/"
-            className={`px-4 py-2 inline-block transition-all border-b-2 ${
-              isActive('/')
-                ? 'text-primary border-primary font-semibold'
-                : 'text-muted-foreground border-transparent hover:text-foreground'
-            }`}
-          >
-            Patients
-          </Link>
-          <Link
-            to="/add-patient"
-            className={`px-4 py-2 inline-block transition-all border-b-2 ${
-              isActive('/add-patient')
-                ? 'text-primary border-primary font-semibold'
-                : 'text-muted-foreground border-transparent hover:text-foreground'
-            }`}
-          >
-            Add Patient
-          </Link>
+    <>
+      <Navigation />
+      <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Patient List</h1>
+            <p className="text-muted-foreground mt-1">
+              {patients.length} patient(s)
+            </p>
+          </div>
+          <Button onClick={loadPatients} variant="outline" size="sm">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
         </div>
-        <SettingsMenu />
-      </div>
-
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Patients</h1>
-          <p className="text-muted-foreground mt-1">
-            {patients.length} patient(s)
-          </p>
-        </div>
-        <Button onClick={loadPatients} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
 
       {selectedPatients.length > 0 && (
         <div className="flex items-center gap-2 p-4 bg-muted rounded-lg">
@@ -285,6 +262,7 @@ export default function PatientList() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+      </div>
+    </>
   );
 }

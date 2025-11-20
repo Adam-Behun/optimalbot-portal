@@ -85,6 +85,11 @@ export const deletePatient = async (patientId: string): Promise<void> => {
   await api.delete(`/patients/${patientId}`);
 };
 
+// PUT /patients/:id - Update a patient
+export const updatePatient = async (patientId: string, patientData: Partial<AddPatientFormData>): Promise<void> => {
+  await api.put(`/patients/${patientId}`, patientData);
+};
+
 // POST /start-call - Start a call for a patient
 export const startCall = async (patientId: string, phoneNumber: string): Promise<StartCallResponse> => {
   const response = await api.post<StartCallResponse>('/start-call', {

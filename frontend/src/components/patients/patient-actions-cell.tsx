@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { MoreHorizontal, Phone, Trash2 } from "lucide-react"
+import { MoreHorizontal, Phone, Trash2, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import {
@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Patient } from "@/types"
 import { startCall, deletePatient } from "@/api"
+import { EditPatientSheet } from "./edit-patient-sheet"
 
 interface PatientActionsCellProps {
   patient: Patient
@@ -34,6 +35,7 @@ export function PatientActionsCell({
 }: PatientActionsCellProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showEditSheet, setShowEditSheet] = useState(false)
 
   const handleStartCall = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -95,13 +97,25 @@ export function PatientActionsCell({
           <DropdownMenuSeparator />
           
           {patient.call_status === "Not Started" && (
-            <DropdownMenuItem 
-              onClick={handleStartCall}
-              disabled={isLoading}
-            >
-              <Phone className="mr-2 h-4 w-4" />
-              Start Call
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowEditSheet(true)
+                }}
+                disabled={isLoading}
+              >
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Patient
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleStartCall}
+                disabled={isLoading}
+              >
+                <Phone className="mr-2 h-4 w-4" />
+                Start Call
+              </DropdownMenuItem>
+            </>
           )}
           
           {patient.call_status === "In Progress" && (
@@ -141,7 +155,7 @@ export function PatientActionsCell({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
@@ -150,6 +164,13 @@ export function PatientActionsCell({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <EditPatientSheet
+        patient={patient}
+        open={showEditSheet}
+        onOpenChange={setShowEditSheet}
+        onSave={onActionComplete}
+      />
     </>
   )
 }

@@ -1,184 +1,104 @@
-import { useNavigate } from 'react-router-dom';
 import { useForm } from '@tanstack/react-form';
-import { addPatient, addPatientsBulk } from '../api';
-import { AddPatientFormData } from '../types';
+import { updatePatient } from '@/api';
+import { Patient, AddPatientFormData } from '@/types';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Navigation } from "@/components/Navigation";
-import { toast } from "sonner";
-import { Download, Upload } from "lucide-react";
-import { useRef } from 'react';
-import Papa from 'papaparse';
+import { toast } from 'sonner';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
-const AddPatientForm = () => {
-  const navigate = useNavigate();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+interface EditPatientSheetProps {
+  patient: Patient | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave?: () => void;
+}
 
-  const handleDownloadSample = () => {
-    const exampleCSV = `patient_name,date_of_birth,insurance_member_id,insurance_company_name,insurance_phone,supervisor_phone,facility_name,cpt_code,provider_npi,provider_name,appointment_time
-John Doe,1990-05-15,ABC123456789,Blue Cross Blue Shield,+11234567890,+11234567899,City Medical Center,99213,1234567890,Dr. Jane Smith,2025-10-15T10:00
-Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hospital,99214,0987654321,Dr. John Johnson,2025-10-16T14:30`;
+export function EditPatientSheet({
+  patient,
+  open,
+  onOpenChange,
+  onSave,
+}: EditPatientSheetProps) {
+  if (!patient) return null;
 
-    const blob = new Blob([exampleCSV], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'patient_upload_example.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
+  // Convert MM/DD/YYYY to YYYY-MM-DD for date input
+  const formatDateForInput = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+      return `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+    }
+    return dateStr;
   };
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        try {
-          const patients = results.data as AddPatientFormData[];
-
-          if (patients.length === 0) {
-            toast.error('CSV file is empty');
-            return;
-          }
-
-          toast.info(`Processing ${patients.length} patients...`);
-
-          const response = await addPatientsBulk(patients);
-
-          if (response.success_count > 0) {
-            toast.success(`Successfully added ${response.success_count} patient(s)`);
-          }
-
-          if (response.failed_count > 0) {
-            toast.error(`${response.failed_count} patient(s) failed to add`);
-            if (response.errors) {
-              response.errors.forEach((error: any) => {
-                toast.error(`Row ${error.row} (${error.patient_name}): ${error.error}`);
-              });
-            }
-          }
-
-          // Reset file input
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-          }
-        } catch (error: any) {
-          console.error('Error uploading CSV:', error);
-
-          // Extract validation errors from response
-          if (error.response?.data?.detail && Array.isArray(error.response.data.detail)) {
-            const errors = error.response.data.detail;
-            const errorMessages = errors.map((err: any) => {
-              // Format: "Row 6 (Quvenzhané Poughkeepsie): insurance_phone - Only US/Canadian numbers allowed"
-              const location = err.loc || [];
-              const rowIndex = location.find((loc: any) => typeof loc === 'number');
-              const field = location[location.length - 1];
-              const msg = err.msg || 'Validation error';
-
-              if (rowIndex !== undefined) {
-                return `Row ${rowIndex + 1}, field "${field}": ${msg}`;
-              }
-              return `Field "${field}": ${msg}`;
-            }).join('\n');
-
-            toast.error(`Validation errors:\n${errorMessages}`, { duration: 10000 });
-          } else {
-            const errorMsg = error.response?.data?.detail || error.message || 'Failed to upload CSV file';
-            toast.error(errorMsg);
-          }
-        }
-      },
-      error: (error) => {
-        console.error('Error parsing CSV:', error);
-        toast.error('Failed to parse CSV file');
-      }
-    });
+  // Convert MM/DD/YYYY HH:MM AM/PM to YYYY-MM-DDTHH:mm for datetime-local input
+  const formatDateTimeForInput = (dateTimeStr: string): string => {
+    if (!dateTimeStr) return '';
+    const match = dateTimeStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (match) {
+      const [, month, day, year, hours, minutes, ampm] = match;
+      let hour = parseInt(hours, 10);
+      if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+      if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.toString().padStart(2, '0')}:${minutes}`;
+    }
+    return dateTimeStr.slice(0, 16);
   };
 
   const form = useForm({
     defaultValues: {
-      patient_name: '',
-      date_of_birth: '',
-      insurance_member_id: '',
-      insurance_company_name: '',
-      insurance_phone: '',
-      supervisor_phone: '',
-      facility_name: '',
-      cpt_code: '',
-      provider_npi: '',
-      provider_name: '',
-      appointment_time: '',
-    },
+      patient_name: patient.patient_name || '',
+      date_of_birth: formatDateForInput(patient.date_of_birth || ''),
+      insurance_member_id: patient.insurance_member_id || '',
+      insurance_company_name: patient.insurance_company_name || '',
+      insurance_phone: patient.insurance_phone || '',
+      supervisor_phone: patient.supervisor_phone || '',
+      facility_name: patient.facility_name || '',
+      cpt_code: patient.cpt_code || '',
+      provider_npi: patient.provider_npi || '',
+      provider_name: patient.provider_name || '',
+      appointment_time: formatDateTimeForInput(patient.appointment_time || ''),
+    } as AddPatientFormData,
     onSubmit: async ({ value }) => {
       try {
-        const response = await addPatient(value);
-        toast.success(`Patient ${response.patient_name} added successfully!`);
-        navigate('/');
+        await updatePatient(patient.patient_id, value);
+        toast.success('Patient updated successfully');
+        onOpenChange(false);
+        onSave?.();
       } catch (err) {
-        console.error('Error adding patient:', err);
-        toast.error('Failed to add patient. Please try again.');
+        console.error('Error updating patient:', err);
+        toast.error('Failed to update patient');
       }
     },
   });
 
   return (
-    <>
-      <Navigation />
-      <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Add Patient</h1>
-          <p className="text-muted-foreground mt-1">Add a new patient or upload multiple patients via CSV</p>
-        </div>
-
-        {/* CSV Upload Buttons */}
-      <div className="flex justify-center">
-        <ButtonGroup>
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={handleDownloadSample}
-            className="w-60"
-          >
-            <Download className="mr-2 h-5 w-5" />
-            Download Sample .csv
-          </Button>
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={handleUploadClick}
-            className="w-60"
-          >
-            <Upload className="mr-2 h-5 w-5" />
-            Upload .csv File
-          </Button>
-        </ButtonGroup>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-      </div>
-
-      {/* Form */}
-      <div className="bg-card rounded-lg border">
+    <Sheet key={patient.patient_id} open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full sm:max-w-2xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <SheetHeader>
+          <SheetTitle>{patient.patient_name}</SheetTitle>
+          <SheetDescription>
+            Patient ID: {patient.patient_id}
+          </SheetDescription>
+        </SheetHeader>
         <form
           onSubmit={(e) => {
             e.preventDefault();
             form.handleSubmit();
           }}
-          className="p-4 space-y-0"
+          className="mt-4"
         >
+          <div className="bg-card rounded-lg border p-4 space-y-3">
+            <h3 className="text-lg font-semibold text-primary mb-3">
+              Edit Patient Information
+            </h3>
+            <div className="space-y-0">
           <form.Field
             name="patient_name"
             validators={{
@@ -191,18 +111,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Patient Name
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Patient Name:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -230,19 +149,18 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Date of Birth
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Date of Birth:
+                </div>
                 <div className="flex-1">
                   <Input
                     type="date"
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -266,18 +184,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Facility
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Facility:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -301,18 +218,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Insurance Company
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Insurance Company:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -336,18 +252,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Insurance Member ID
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Insurance Member ID:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -382,19 +297,18 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Insurance Phone
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Insurance Phone:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
                     placeholder="+15551234567"
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -429,19 +343,18 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Supervisor Phone (Optional)
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Supervisor Phone:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
                     placeholder="+15551234567"
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -465,18 +378,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  CPT Code
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  CPT Code:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -500,18 +412,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Provider NPI
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Provider NPI:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -535,18 +446,17 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Provider Name
-                </Label>
+              <div className="flex py-1.5 border-b">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Provider Name:
+                </div>
                 <div className="flex-1">
                   <Input
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -565,9 +475,8 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
                 if (!value) return 'Appointment time is required';
                 const appt = new Date(value);
                 const now = new Date();
-                const minTime = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
-                const maxTime = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000); // 3 months from now
-
+                const minTime = new Date(now.getTime() + 60 * 60 * 1000);
+                const maxTime = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
                 if (appt < minTime) {
                   return 'Appointment must be at least 1 hour from now';
                 }
@@ -578,19 +487,18 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               },
             }}
             children={(field) => (
-              <div className="flex items-center py-1.5 border-b last:border-b-0">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Appointment Time
-                </Label>
+              <div className="flex py-1.5 border-b last:border-b-0">
+                <div className="font-semibold text-muted-foreground w-48">
+                  Appointment Time:
+                </div>
                 <div className="flex-1">
                   <Input
                     type="datetime-local"
                     id={field.name}
-                    name={field.name}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8 py-0"
                   />
                   {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <p className="text-sm text-destructive mt-1">
@@ -601,24 +509,23 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
               </div>
             )}
           />
+            </div>
+          </div>
 
           <div className="flex justify-end gap-2 pt-4">
             <Button
               type="button"
               variant="outline"
-              onClick={() => form.reset()}
+              onClick={() => onOpenChange(false)}
             >
-              Reset
+              Cancel
             </Button>
             <Button type="submit">
-              Add Patient
+              Save Changes
             </Button>
           </div>
         </form>
-      </div>
-          </div>
-    </>
+      </SheetContent>
+    </Sheet>
   );
-};
-
-export default AddPatientForm;
+}

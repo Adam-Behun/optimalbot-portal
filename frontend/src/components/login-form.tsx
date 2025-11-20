@@ -26,7 +26,7 @@ export function LoginForm() {
       setAuthUser({ user_id: response.user_id, email: response.email });
 
       toast.success('Logged in successfully!');
-      navigate('/');
+      navigate('/dashboard');
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || 'Invalid email or password';
       toast.error(errorMessage);

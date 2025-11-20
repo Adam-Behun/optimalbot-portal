@@ -47,7 +47,7 @@ export function SignupForm() {
       setAuthUser({ user_id: response.user_id, email: response.email });
 
       toast.success('Account created successfully!');
-      navigate('/');
+      navigate('/dashboard');
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || 'Failed to create account';
       toast.error(errorMessage);

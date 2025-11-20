@@ -278,20 +278,25 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
                   }
 
                   // Handle regular conversation messages
+                  const isAgent = message.role === 'assistant';
                   return (
                     <div
                       key={index}
-                      className={`p-2.5 rounded-lg border-l-4 ${
-                        message.role === 'assistant'
-                          ? 'bg-blue-50 border-blue-500'
-                          : 'bg-gray-50 border-gray-500'
-                      }`}
+                      className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}
                     >
-                      <div className="font-semibold text-sm mb-1.5">
-                        {message.role === 'assistant' ? 'AI Agent' : 'Insurance Rep'}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {message.content}
+                      <div
+                        className={`p-2.5 rounded-lg border-l-4 w-2/3 ${
+                          isAgent
+                            ? 'bg-primary border-primary text-primary-foreground'
+                            : 'bg-secondary border-secondary text-secondary-foreground'
+                        }`}
+                      >
+                        <div className="font-semibold text-sm mb-1.5">
+                          {isAgent ? 'Provider Agent' : 'Insurance Representative'}
+                        </div>
+                        <div className="text-sm">
+                          {message.content}
+                        </div>
                       </div>
                     </div>
                   );
