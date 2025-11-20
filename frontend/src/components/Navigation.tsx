@@ -4,6 +4,7 @@ import {
   MenubarMenu,
   MenubarTrigger,
 } from '@/components/ui/menubar';
+import { Button } from '@/components/ui/button';
 import { SettingsMenu } from './settings-menu';
 import { ModeToggle } from './mode-toggle';
 
@@ -36,6 +37,9 @@ export function Navigation() {
           </Menubar>
 
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => {}}>
+              Support
+            </Button>
             <ModeToggle />
             <SettingsMenu />
           </div>

@@ -95,11 +95,17 @@ export function Workflows() {
       <Navigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold">Workflows</h1>
-          <p className="text-muted-foreground">
-            Manage your automated workflows and request access to new capabilities
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Workflows</h1>
+            <p className="text-muted-foreground">
+              Manage your automated workflows and request access to new capabilities
+            </p>
+          </div>
+          <Button onClick={() => setShowBooking(true)}>
+            <CalendarIcon className="mr-2 h-4 w-4" />
+            Request a Workflow
+          </Button>
         </div>
 
         {/* Booking Calendar Modal/Section */}
