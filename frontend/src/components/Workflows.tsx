@@ -1,11 +1,53 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Navigation } from './Navigation';
-import { CalendarIcon, BarChart3, PieChart, TrendingUp } from 'lucide-react';
+import { CalendarIcon, Shield, ClipboardCheck, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
 
-export function CustomReports() {
+interface WorkflowItem {
+  id: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  enabled: boolean;
+  link?: string;
+}
+
+const workflows: WorkflowItem[] = [
+  {
+    id: 'prior-auth',
+    title: 'Prior Authorization',
+    description: 'Secures specific approval for a particular treatment or service',
+    icon: <Shield className="h-5 w-5" />,
+    enabled: true,
+    link: '/patient-list',
+  },
+  {
+    id: 'eligibility',
+    title: 'Eligibility Verification',
+    description: 'Confirms active coverage and general benefits',
+    icon: <ClipboardCheck className="h-5 w-5" />,
+    enabled: false,
+  },
+  {
+    id: 'scheduling',
+    title: 'Visit Scheduling',
+    description: 'Schedules visit for a patient',
+    icon: <CalendarIcon2 className="h-5 w-5" />,
+    enabled: false,
+  },
+  {
+    id: 'general-questions',
+    title: 'General Questions',
+    description: 'Answers patient questions and routes call to the right resource if resolution not found',
+    icon: <HelpCircle className="h-5 w-5" />,
+    enabled: false,
+  },
+];
+
+export function Workflows() {
   const [showBooking, setShowBooking] = useState(false);
   const [date, setDate] = useState<Date | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
@@ -53,17 +95,11 @@ export function CustomReports() {
       <Navigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Custom Reports</h1>
-            <p className="text-muted-foreground">
-              Browse our report library or request a custom report from our team
-            </p>
-          </div>
-          <Button onClick={() => setShowBooking(true)}>
-            <CalendarIcon className="mr-2 h-4 w-4" />
-            Request a Report
-          </Button>
+        <div>
+          <h1 className="text-3xl font-bold">Workflows</h1>
+          <p className="text-muted-foreground">
+            Manage your automated workflows and request access to new capabilities
+          </p>
         </div>
 
         {/* Booking Calendar Modal/Section */}
@@ -71,9 +107,9 @@ export function CustomReports() {
           <div className="flex justify-center">
             <Card className="gap-0 p-0 w-fit">
               <CardHeader className="p-4">
-                <CardTitle className="text-lg">Schedule a Report Request</CardTitle>
+                <CardTitle className="text-lg">Request Workflow Access</CardTitle>
                 <CardDescription>
-                  Book a 30-minute call to discuss your custom report needs
+                  Book a 30-minute call to discuss enabling this workflow for your account
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col md:flex-row p-0 md:justify-center">
@@ -154,67 +190,47 @@ export function CustomReports() {
           </div>
         )}
 
-        {/* Empty Chart Placeholders */}
+        {/* Workflow Cards */}
         {!showBooking && <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-4 w-4" />
-                Authorization Trends
-              </CardTitle>
-              <CardDescription>Monthly authorization volume</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-48 flex items-center justify-center border-2 border-dashed rounded-lg">
-                <span className="text-muted-foreground text-sm">Chart coming soon</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <PieChart className="h-4 w-4" />
-                Approval Rates
-              </CardTitle>
-              <CardDescription>By insurance provider</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-48 flex items-center justify-center border-2 border-dashed rounded-lg">
-                <span className="text-muted-foreground text-sm">Chart coming soon</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" />
-                Call Performance
-              </CardTitle>
-              <CardDescription>Average call duration and success rate</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-48 flex items-center justify-center border-2 border-dashed rounded-lg">
-                <span className="text-muted-foreground text-sm">Chart coming soon</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-4 w-4" />
-                CPT Code Analysis
-              </CardTitle>
-              <CardDescription>Top procedure codes by volume</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-48 flex items-center justify-center border-2 border-dashed rounded-lg">
-                <span className="text-muted-foreground text-sm">Chart coming soon</span>
-              </div>
-            </CardContent>
-          </Card>
+          {workflows.map((workflow) => (
+            <Card
+              key={workflow.id}
+              className={workflow.enabled ? '' : 'opacity-50'}
+            >
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  {workflow.icon}
+                  {workflow.title}
+                </CardTitle>
+                <CardDescription>{workflow.description}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-48 flex items-center justify-center border-2 border-dashed rounded-lg">
+                  {workflow.enabled ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <span className="text-sm text-green-600 dark:text-green-400 font-medium">
+                        Active
+                      </span>
+                      <Link to={workflow.link || '#'}>
+                        <Button variant="outline" size="sm">
+                          View
+                        </Button>
+                      </Link>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowBooking(true)}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      Request Access
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>}
       </div>
     </>

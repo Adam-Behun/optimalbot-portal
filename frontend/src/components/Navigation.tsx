@@ -19,6 +19,11 @@ export function Navigation() {
               </Link>
             </MenubarMenu>
             <MenubarMenu>
+              <Link to="/workflows">
+                <MenubarTrigger className="cursor-pointer">Workflows</MenubarTrigger>
+              </Link>
+            </MenubarMenu>
+            <MenubarMenu>
               <Link to="/patient-list">
                 <MenubarTrigger className="cursor-pointer">Patient List</MenubarTrigger>
               </Link>

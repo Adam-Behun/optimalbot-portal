@@ -104,12 +104,6 @@ export const endCall = async (sessionId: string): Promise<void> => {
   await api.post(`/end-call/${sessionId}`);
 };
 
-// POST /auth/signup - Create new user account
-export const signup = async (email: string, password: string): Promise<AuthResponse> => {
-  const response = await api.post<AuthResponse>('/auth/signup', { email, password });
-  return response.data;
-};
-
 // POST /auth/login - Authenticate user
 export const login = async (email: string, password: string): Promise<AuthResponse> => {
   const response = await api.post<AuthResponse>('/auth/login', { email, password });

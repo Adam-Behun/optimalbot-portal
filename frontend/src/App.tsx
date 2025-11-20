@@ -5,13 +5,13 @@ import PatientDetail from './components/PatientDetail';
 import { Dashboard } from './components/Dashboard';
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
-import { SignupForm } from './components/signup-form';
 import { LoginForm } from './components/login-form';
 import { ForgotPasswordForm } from './components/forgot-password-form';
 import { ResetPasswordForm } from './components/reset-password-form';
 import { LandingPage } from './components/LandingPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
+import { Workflows } from './components/Workflows';
 
 const App = () => {
   return (
@@ -22,13 +22,6 @@ const App = () => {
             <Routes>
               {/* Public routes */}
               <Route path="/" element={<LandingPage />} />
-              <Route path="/signup" element={
-                <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-                  <div className="w-full max-w-sm">
-                    <SignupForm />
-                  </div>
-                </div>
-              } />
               <Route path="/login" element={
                 <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
                   <div className="w-full max-w-sm">
@@ -75,6 +68,11 @@ const App = () => {
               <Route path="/custom-reports" element={
                 <ProtectedRoute>
                   <CustomReports />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows" element={
+                <ProtectedRoute>
+                  <Workflows />
                 </ProtectedRoute>
               } />
             </Routes>

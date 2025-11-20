@@ -18,11 +18,8 @@ export function LandingPage() {
         <div className="max-w-4xl mx-auto px-4">
           <div className="flex items-center justify-end h-16">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" onClick={() => navigate('/login')}>
+              <Button onClick={() => navigate('/login')}>
                 Log In
-              </Button>
-              <Button onClick={() => navigate('/signup')}>
-                Sign Up
               </Button>
             </div>
           </div>

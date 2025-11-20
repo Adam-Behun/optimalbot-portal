@@ -23,10 +23,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
 # Models
-class SignupRequest(BaseModel):
-    email: str
-    password: str
-
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -62,77 +58,6 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-@router.post("/signup", response_model=AuthResponse)
-async def signup(
-    request: Request,
-    signup_data: SignupRequest,
-    user_db: AsyncUserRecord = Depends(get_user_db),
-    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
-):
-    """Create new user account"""
-    try:
-        ip_address, user_agent = get_client_info(request)
-
-        user_id = await user_db.create_user(
-            email=signup_data.email,
-            password=signup_data.password,
-            created_by=None,
-            role="user"
-        )
-
-        if not user_id:
-            await audit_logger.log_event(
-                event_type="signup",
-                user_id=None,
-                email=signup_data.email,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                success=False,
-                details={"error": "User creation failed"}
-            )
-            raise HTTPException(status_code=500, detail="Failed to create user account")
-
-        await audit_logger.log_event(
-            event_type="signup",
-            user_id=user_id,
-            email=signup_data.email,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            success=True,
-            details={"role": "user"}
-        )
-
-        access_token = create_access_token(
-            data={"sub": user_id, "email": signup_data.email, "role": "user"}
-        )
-
-        logger.info(f"New user signed up: {signup_data.email} (ID: {user_id})")
-
-        return AuthResponse(
-            access_token=access_token,
-            token_type="bearer",
-            user_id=user_id,
-            email=signup_data.email
-        )
-
-    except ValueError as e:
-        ip_address, user_agent = get_client_info(request)
-        await audit_logger.log_event(
-            event_type="signup",
-            user_id=None,
-            email=signup_data.email,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            success=False,
-            details={"error": str(e)}
-        )
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error during signup: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/login", response_model=AuthResponse)
