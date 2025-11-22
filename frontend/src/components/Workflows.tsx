@@ -1,56 +1,53 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Navigation } from './Navigation';
-import { CalendarIcon, Shield, ClipboardCheck, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
+import { CalendarIcon, Shield, Phone, ClipboardCheck, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
+import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
 
-interface WorkflowItem {
-  id: string;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  enabled: boolean;
-  link?: string;
-}
+// Icons for different workflow types
+const workflowIcons: Record<string, React.ReactNode> = {
+  'prior_auth': <Shield className="h-5 w-5" />,
+  'patient_questions': <Phone className="h-5 w-5" />,
+  'eligibility': <ClipboardCheck className="h-5 w-5" />,
+  'scheduling': <CalendarIcon2 className="h-5 w-5" />,
+  'general_questions': <HelpCircle className="h-5 w-5" />,
+};
 
-const workflows: WorkflowItem[] = [
-  {
-    id: 'prior-auth',
-    title: 'Prior Authorization',
-    description: 'Secures specific approval for a particular treatment or service',
-    icon: <Shield className="h-5 w-5" />,
-    enabled: true,
-    link: '/patient-list',
-  },
-  {
-    id: 'eligibility',
-    title: 'Eligibility Verification',
-    description: 'Confirms active coverage and general benefits',
-    icon: <ClipboardCheck className="h-5 w-5" />,
-    enabled: false,
-  },
-  {
-    id: 'scheduling',
-    title: 'Visit Scheduling',
-    description: 'Schedules visit for a patient',
-    icon: <CalendarIcon2 className="h-5 w-5" />,
-    enabled: false,
-  },
-  {
-    id: 'general-questions',
-    title: 'General Questions',
-    description: 'Answers patient questions and routes call to the right resource if resolution not found',
-    icon: <HelpCircle className="h-5 w-5" />,
-    enabled: false,
-  },
-];
+// Descriptions for workflow types
+const workflowDescriptions: Record<string, string> = {
+  'prior_auth': 'Secures specific approval for a particular treatment or service',
+  'patient_questions': 'Outbound calls to patients for check-ins and questions',
+  'eligibility': 'Confirms active coverage and general benefits',
+  'scheduling': 'Schedules visit for a patient',
+  'general_questions': 'Answers patient questions and routes call to the right resource',
+};
 
 export function Workflows() {
+  const navigate = useNavigate();
   const [showBooking, setShowBooking] = useState(false);
   const [date, setDate] = useState<Date | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+
+  // Get workflows from organization
+  const org = getOrganization();
+  const orgWorkflows = org?.workflows || {};
+
+  // Convert org workflows to display format
+  const workflows = Object.entries(orgWorkflows).map(([id, config]) => ({
+    id,
+    title: id.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+    description: workflowDescriptions[id] || 'Workflow for ' + id,
+    icon: workflowIcons[id] || <HelpCircle className="h-5 w-5" />,
+    enabled: config.enabled,
+    fieldCount: config.patient_schema?.fields?.length || 0,
+  }));
+
+  const handleSelectWorkflow = (workflowId: string) => {
+    setSelectedWorkflow(workflowId);
+    navigate('/dashboard');
+  };
 
   // Generate 30-minute time slots from 9 AM to 5 PM
   const timeSlots = Array.from({ length: 17 }, (_, i) => {
@@ -91,15 +88,14 @@ export function Workflows() {
   };
 
   return (
-    <>
-      <Navigation />
+    <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Workflows</h1>
+            <h1 className="text-3xl font-bold">Select Workflow</h1>
             <p className="text-muted-foreground">
-              Manage your automated workflows and request access to new capabilities
+              Choose a workflow to manage patients and calls
             </p>
           </div>
           <Button onClick={() => setShowBooking(true)}>
@@ -201,7 +197,8 @@ export function Workflows() {
           {workflows.map((workflow) => (
             <Card
               key={workflow.id}
-              className={workflow.enabled ? '' : 'opacity-50'}
+              className={workflow.enabled ? 'cursor-pointer hover:border-primary transition-colors' : 'opacity-50'}
+              onClick={() => workflow.enabled && handleSelectWorkflow(workflow.id)}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -211,23 +208,27 @@ export function Workflows() {
                 <CardDescription>{workflow.description}</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="h-48 flex items-center justify-center border-2 border-dashed rounded-lg">
+                <div className="h-32 flex items-center justify-center border-2 border-dashed rounded-lg">
                   {workflow.enabled ? (
-                    <div className="flex flex-col items-center gap-3">
+                    <div className="flex flex-col items-center gap-2">
                       <span className="text-sm text-green-600 dark:text-green-400 font-medium">
                         Active
                       </span>
-                      <Link to={workflow.link || '#'}>
-                        <Button variant="outline" size="sm">
-                          View
-                        </Button>
-                      </Link>
+                      <span className="text-xs text-muted-foreground">
+                        {workflow.fieldCount} fields
+                      </span>
+                      <Button variant="outline" size="sm">
+                        Select
+                      </Button>
                     </div>
                   ) : (
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setShowBooking(true)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowBooking(true);
+                      }}
                     >
                       <CalendarIcon className="mr-2 h-4 w-4" />
                       Request Access
@@ -239,6 +240,6 @@ export function Workflows() {
           ))}
         </div>}
       </div>
-    </>
+    </div>
   );
 }

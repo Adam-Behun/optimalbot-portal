@@ -22,6 +22,8 @@ class ConversationPipeline:
         patient_id: str,
         patient_data: Dict[str, Any],
         phone_number: str,
+        organization_id: str,
+        organization_slug: str,
         debug_mode: bool = False
     ):
         self.client_name = client_name
@@ -29,6 +31,8 @@ class ConversationPipeline:
         self.patient_id = patient_id
         self.patient_data = patient_data
         self.phone_number = phone_number
+        self.organization_id = organization_id
+        self.organization_slug = organization_slug
         self.debug_mode = debug_mode
 
         self.pipeline = None
@@ -53,6 +57,8 @@ class ConversationPipeline:
             'patient_id': self.patient_id,
             'patient_data': self.patient_data,
             'phone_number': self.phone_number,
+            'organization_id': self.organization_id,
+            'organization_slug': self.organization_slug,
             'transcripts': self.transcripts
         }
 

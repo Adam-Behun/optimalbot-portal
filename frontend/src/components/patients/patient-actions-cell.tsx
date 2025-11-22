@@ -23,6 +23,7 @@ import {
 import { Patient } from "@/types"
 import { startCall, deletePatient } from "@/api"
 import { EditPatientSheet } from "./edit-patient-sheet"
+import { getSelectedWorkflow, getCurrentWorkflowSchema } from "@/lib/auth"
 
 interface PatientActionsCellProps {
   patient: Patient
@@ -40,14 +41,22 @@ export function PatientActionsCell({
   const handleStartCall = async (e: React.MouseEvent) => {
     e.stopPropagation()
 
-    if (!patient.insurance_phone) {
+    const workflow = getSelectedWorkflow()
+    if (!workflow) {
+      toast.error("No workflow selected")
+      return
+    }
+
+    // Get phone number from flat fields - could be insurance_phone or patient_phone depending on workflow
+    const phoneNumber = patient.insurance_phone || patient.patient_phone || patient.phone_number
+    if (!phoneNumber) {
       toast.error("Missing phone number")
       return
     }
 
     try {
       setIsLoading(true)
-      await startCall(patient.patient_id, patient.insurance_phone)
+      await startCall(patient.patient_id, phoneNumber, workflow)
       toast.success(`Call started for ${patient.patient_name}`)
       onActionComplete?.()
     } catch (err: any) {

@@ -2,7 +2,6 @@ import axios from 'axios';
 import {
   Patient,
   PatientsResponse,
-  AddPatientFormData,
   AddPatientResponse,
   StartCallResponse,
   BulkAddResponse,
@@ -45,8 +44,8 @@ api.interceptors.response.use(
       // Clear authentication data
       removeAuthToken();
 
-      // Redirect to login page
-      window.location.href = '/login';
+      // Redirect to landing page
+      window.location.href = 'https://datasova.com';
 
       // Return a rejected promise with a user-friendly message
       return Promise.reject(new Error('Your session has expired. Please log in again.'));
@@ -56,9 +55,10 @@ api.interceptors.response.use(
   }
 );
 
-// GET /patients - Fetch all patients with pending authorization
-export const getPatients = async (): Promise<Patient[]> => {
-  const response = await api.get<PatientsResponse>('/patients');
+// GET /patients - Fetch all patients, optionally filtered by workflow
+export const getPatients = async (workflow?: string): Promise<Patient[]> => {
+  const params = workflow ? { workflow } : {};
+  const response = await api.get<PatientsResponse>('/patients', { params });
   return response.data.patients;
 };
 
@@ -69,13 +69,13 @@ export const getPatient = async (patientId: string) => {
 };
 
 // POST /patients - Add a new patient
-export const addPatient = async (patientData: AddPatientFormData): Promise<AddPatientResponse> => {
+export const addPatient = async (patientData: Record<string, any>): Promise<AddPatientResponse> => {
   const response = await api.post<AddPatientResponse>('/patients', patientData);
   return response.data;
 };
 
 // POST /patients/bulk - Add multiple patients
-export const addPatientsBulk = async (patients: AddPatientFormData[]): Promise<BulkAddResponse> => {
+export const addPatientsBulk = async (patients: Record<string, any>[]): Promise<BulkAddResponse> => {
   const response = await api.post<BulkAddResponse>('/patients/bulk', { patients });
   return response.data;
 };
@@ -86,15 +86,16 @@ export const deletePatient = async (patientId: string): Promise<void> => {
 };
 
 // PUT /patients/:id - Update a patient
-export const updatePatient = async (patientId: string, patientData: Partial<AddPatientFormData>): Promise<void> => {
+export const updatePatient = async (patientId: string, patientData: Record<string, any>): Promise<void> => {
   await api.put(`/patients/${patientId}`, patientData);
 };
 
 // POST /start-call - Start a call for a patient
-export const startCall = async (patientId: string, phoneNumber: string): Promise<StartCallResponse> => {
+export const startCall = async (patientId: string, phoneNumber: string, clientName: string): Promise<StartCallResponse> => {
   const response = await api.post<StartCallResponse>('/start-call', {
     patient_id: patientId,
-    phone_number: phoneNumber
+    phone_number: phoneNumber,
+    client_name: clientName
   });
   return response.data;
 };
@@ -105,8 +106,12 @@ export const endCall = async (sessionId: string): Promise<void> => {
 };
 
 // POST /auth/login - Authenticate user
-export const login = async (email: string, password: string): Promise<AuthResponse> => {
-  const response = await api.post<AuthResponse>('/auth/login', { email, password });
+export const login = async (email: string, password: string, organizationSlug?: string): Promise<AuthResponse> => {
+  const response = await api.post<AuthResponse>('/auth/login', {
+    email,
+    password,
+    organization_slug: organizationSlug
+  });
   return response.data;
 };
 

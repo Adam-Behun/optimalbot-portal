@@ -19,8 +19,12 @@ from backend.dependencies import (
     get_patient_db,
     get_session_db,
     log_phi_access,
-    get_user_id_from_request
+    get_user_id_from_request,
+    require_organization_access,
+    get_organization_db,
+    get_current_user_organization_id
 )
+from backend.models.organization import AsyncOrganizationRecord
 from backend.models import AsyncPatientRecord
 from backend.sessions import AsyncSessionRecord
 from backend.schemas import CallRequest
@@ -76,19 +80,37 @@ async def start_pipecat_session_with_retry(session: Session) -> dict:
 async def start_call(
     call_request: CallRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    org_context: dict = Depends(require_organization_access),
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
     """Initiate new call session"""
+    current_user = org_context["user"]
+    org = org_context["organization"]
+    org_id = org_context["organization_id"]
+
     logger.info("=== INITIATING CALL ===")
     logger.info(f"Patient ID: {call_request.patient_id}")
     logger.info(f"User: {current_user['email']}")
+    logger.info(f"Organization: {org.get('name')} ({org_id})")
 
     try:
-        # Fetch patient
+        # Validate client_name against org's workflows
+        workflows = org.get("workflows", {})
+        if call_request.client_name not in workflows:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workflow '{call_request.client_name}' not found for this organization"
+            )
+        if not workflows[call_request.client_name].get("enabled", False):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workflow '{call_request.client_name}' is not enabled for this organization"
+            )
+
+        # Fetch patient (filtered by organization)
         logger.info("Fetching patient data from database...")
-        patient = await patient_db.find_patient_by_id(call_request.patient_id)
+        patient = await patient_db.find_patient_by_id(call_request.patient_id, organization_id=org_id)
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -119,7 +141,8 @@ async def start_call(
             "session_id": session_id,
             "patient_id": call_request.patient_id,
             "phone_number": phone_number,
-            "client_name": call_request.client_name
+            "client_name": call_request.client_name,
+            "organization_id": org_id
         })
 
         # Start bot session (local or production based on ENV)
@@ -154,7 +177,9 @@ async def start_call(
                             "patient_id": call_request.patient_id,
                             "patient_data": patient,
                             "phone_number": phone_number,
-                            "client_name": call_request.client_name
+                            "client_name": call_request.client_name,
+                            "organization_id": str(org_id),
+                            "organization_slug": org.get("slug")
                         }
                     )
                 )
@@ -188,7 +213,9 @@ async def start_call(
                     patient_id=call_request.patient_id,
                     patient_data=patient,
                     phone_number=phone_number,
-                    client_name=call_request.client_name
+                    client_name=call_request.client_name,
+                    organization_id=str(org_id),
+                    organization_slug=org.get("slug")
                 )
 
                 async with aiohttp.ClientSession() as http_session:
@@ -302,16 +329,17 @@ async def get_call_status(
     session_id: str,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
     """Get status of active call"""
-    session = await session_db.find_session(session_id)
+    session = await session_db.find_session(session_id, organization_id=org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
     # Get patient data
-    patient = await patient_db.find_patient_by_id(session["patient_id"])
+    patient = await patient_db.find_patient_by_id(session["patient_id"], organization_id=org_id)
 
     # Log PHI access
     await log_phi_access(
@@ -337,16 +365,17 @@ async def get_call_transcript(
     session_id: str,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
     """Get full transcript of call"""
-    session = await session_db.find_session(session_id)
+    session = await session_db.find_session(session_id, organization_id=org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
     # Get patient with transcript
-    patient = await patient_db.find_patient_by_id(session["patient_id"])
+    patient = await patient_db.find_patient_by_id(session["patient_id"], organization_id=org_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -371,10 +400,11 @@ async def end_call(
     session_id: str,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
     """End active call"""
-    session = await session_db.find_session(session_id)
+    session = await session_db.find_session(session_id, organization_id=org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
@@ -390,7 +420,7 @@ async def end_call(
     logger.info(f"User {current_user['email']} ending call session: {session_id}")
 
     # Bot runs on Pipecat Cloud - managed externally
-    await session_db.update_session(session_id, {"status": "terminated"})
+    await session_db.update_session(session_id, {"status": "terminated"}, organization_id=org_id)
 
     return {
         "status": "ended",

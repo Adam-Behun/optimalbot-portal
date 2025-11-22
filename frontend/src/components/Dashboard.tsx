@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getPatients } from '@/api';
 import { Patient } from '@/types';
 import { Navigation } from './Navigation';
+import { getSelectedWorkflow } from '@/lib/auth';
 import {
   Empty,
   EmptyContent,
@@ -31,7 +32,8 @@ export function Dashboard() {
   useEffect(() => {
     const loadPatients = async () => {
       try {
-        const data = await getPatients();
+        const workflow = getSelectedWorkflow();
+        const data = await getPatients(workflow || undefined);
         setPatients(data);
       } catch (err) {
         console.error('Error loading patients:', err);
@@ -52,6 +54,7 @@ export function Dashboard() {
   const totalPatients = patients.length;
 
   // Prepare insurance chart data - group by insurance company and auth status
+  // Uses flat fields (insurance_company_name, prior_auth_status)
   const insuranceChartData = useMemo(() => {
     const byInsurance = patients.reduce((acc, p) => {
       const insurance = p.insurance_company_name || 'Unknown';

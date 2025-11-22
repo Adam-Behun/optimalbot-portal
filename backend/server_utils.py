@@ -23,6 +23,8 @@ class BotRequest(BaseModel):
         patient_data: Full patient record
         phone_number: Phone number to dial
         client_name: Client/flow name (e.g., 'prior_auth')
+        organization_id: Organization ID for tenant isolation
+        organization_slug: Organization slug for workflow path resolution
     """
     room_url: str
     token: str
@@ -31,6 +33,8 @@ class BotRequest(BaseModel):
     patient_data: dict
     phone_number: str
     client_name: str
+    organization_id: str
+    organization_slug: str
 
 
 async def create_daily_room(phone_number: str, session: aiohttp.ClientSession) -> DailyRoomConfig:

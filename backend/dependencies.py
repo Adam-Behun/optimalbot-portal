@@ -7,6 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
 from backend.models import AsyncPatientRecord, AsyncUserRecord, get_async_patient_db, get_async_user_db
+from backend.models.organization import AsyncOrganizationRecord, get_async_organization_db
 from backend.sessions import AsyncSessionRecord, get_async_session_db
 from backend.audit import AuditLogger, get_audit_logger
 
@@ -29,6 +30,9 @@ def get_session_db() -> AsyncSessionRecord:
 
 def get_audit_logger_dep() -> AuditLogger:
     return get_audit_logger()
+
+def get_organization_db() -> AsyncOrganizationRecord:
+    return get_async_organization_db()
 
 
 # Utilities
@@ -61,7 +65,8 @@ async def log_phi_access(
         resource_id=resource_id,
         ip_address=ip_address,
         user_agent=user_agent,
-        endpoint=request.url.path
+        endpoint=request.url.path,
+        organization_id=user.get("organization_id")
     )
 
 
@@ -107,6 +112,47 @@ async def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+# Tenant context dependencies
+def get_current_user_organization_id(current_user: dict = Depends(get_current_user)) -> str:
+    """Extract organization_id from current user JWT payload"""
+    organization_id = current_user.get("organization_id")
+    if not organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not associated with an organization"
+        )
+    return organization_id
+
+
+async def require_organization_access(
+    current_user: dict = Depends(get_current_user),
+    org_db: AsyncOrganizationRecord = Depends(get_organization_db)
+) -> dict:
+    """
+    Validate user belongs to an organization and return org details.
+    Returns dict with user info and organization data.
+    """
+    organization_id = current_user.get("organization_id")
+    if not organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not associated with an organization"
+        )
+
+    org = await org_db.get_by_id(organization_id)
+    if not org:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization not found"
+        )
+
+    return {
+        "user": current_user,
+        "organization": org,
+        "organization_id": organization_id
+    }
 
 
 # Rate limiting

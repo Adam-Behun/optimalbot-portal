@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { login } from '../api';
-import { setAuthToken, setAuthUser } from '../lib/auth';
+import { setAuthToken, setAuthUser, setOrganization } from '../lib/auth';
+import { getOrgSlug } from '../utils/tenant';
 
 export function LoginForm() {
   const navigate = useNavigate();
@@ -19,14 +20,16 @@ export function LoginForm() {
     setIsLoading(true);
 
     try {
-      const response = await login(email, password);
+      const orgSlug = getOrgSlug();
+      const response = await login(email, password, orgSlug);
 
       // Store auth data
       setAuthToken(response.access_token);
       setAuthUser({ user_id: response.user_id, email: response.email });
+      setOrganization(response.organization);
 
       toast.success('Logged in successfully!');
-      navigate('/dashboard');
+      navigate('/workflows');
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || 'Invalid email or password';
       toast.error(errorMessage);

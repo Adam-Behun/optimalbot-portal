@@ -11,7 +11,8 @@ from backend.dependencies import (
     get_audit_logger_dep,
     get_client_info,
     log_phi_access,
-    get_user_id_from_request
+    get_user_id_from_request,
+    get_current_user_organization_id
 )
 from backend.models import AsyncPatientRecord
 from backend.audit import AuditLogger
@@ -24,28 +25,32 @@ limiter = Limiter(key_func=get_user_id_from_request)
 
 # Helper
 def convert_objectid(doc: dict) -> dict:
-    """Convert MongoDB ObjectId to string"""
-    if doc and "_id" in doc and isinstance(doc["_id"], ObjectId):
-        doc["_id"] = str(doc["_id"])
-        doc["patient_id"] = doc["_id"]
+    """Convert MongoDB ObjectId fields to string"""
+    if doc:
+        if "_id" in doc and isinstance(doc["_id"], ObjectId):
+            doc["_id"] = str(doc["_id"])
+            doc["patient_id"] = doc["_id"]
+        if "organization_id" in doc and isinstance(doc["organization_id"], ObjectId):
+            doc["organization_id"] = str(doc["organization_id"])
     return doc
 
 
 @router.get("")
 async def list_patients(
     request: Request,
+    workflow: str = None,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Get all patients"""
+    """Get all patients for user's organization, optionally filtered by workflow"""
     try:
-        logger.info(f"📋 User {current_user['email']} fetching all patients")
+        logger.info(f"📋 User {current_user['email']} fetching patients for org {org_id}, workflow={workflow}")
 
-        cursor = patient_db.patients.find().sort("created_at", -1)
-        all_patients = await cursor.to_list(length=None)
+        all_patients = await patient_db.find_patients_by_organization(org_id, workflow=workflow)
 
-        logger.info(f"🔍 Found {len(all_patients)} patients in database")
+        logger.info(f"🔍 Found {len(all_patients)} patients for organization")
 
         patients = [convert_objectid(p) for p in all_patients]
 
@@ -59,10 +64,11 @@ async def list_patients(
             ip_address=ip_address,
             user_agent=user_agent,
             endpoint=request.url.path,
-            details={"count": len(patients)}
+            details={"count": len(patients), "workflow": workflow},
+            organization_id=org_id
         )
 
-        logger.info(f"✅ Returning all {len(patients)} patients")
+        logger.info(f"✅ Returning {len(patients)} patients for org {org_id}")
 
         return {
             "patients": patients,
@@ -80,11 +86,12 @@ async def get_patient_by_id(
     patient_id: str,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Get specific patient by ID"""
+    """Get specific patient by ID (filtered by organization)"""
     try:
-        patient = await patient_db.find_patient_by_id(patient_id)
+        patient = await patient_db.find_patient_by_id(patient_id, organization_id=org_id)
 
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
@@ -117,10 +124,18 @@ async def add_patient(
     patient_data: PatientCreate,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Add new patient"""
-    patient_dict = patient_data.model_dump()
+    """Add new patient to user's organization with flat fields"""
+    # Get all fields including extra dynamic fields
+    patient_dict = patient_data.model_dump(by_alias=True)
+
+    # Add any extra fields that were passed (model_config extra="allow")
+    if hasattr(patient_data, '__pydantic_extra__') and patient_data.__pydantic_extra__:
+        patient_dict.update(patient_data.__pydantic_extra__)
+
+    patient_dict['organization_id'] = org_id
 
     patient_id = await patient_db.add_patient(patient_dict)
 
@@ -136,7 +151,7 @@ async def add_patient(
         resource_id=patient_id
     )
 
-    logger.info(f"User {current_user['email']} added new patient with ID: {patient_id}")
+    logger.info(f"User {current_user['email']} added new patient with ID: {patient_id} to org {org_id} workflow {patient_data.workflow}")
 
     return PatientResponse(
         status="success",
@@ -151,10 +166,11 @@ async def add_patients_bulk(
     bulk_request: BulkPatientRequest,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Add multiple patients from CSV upload"""
+    """Add multiple patients from CSV upload to user's organization"""
     success_count = 0
     failed_count = 0
     errors = []
@@ -162,13 +178,14 @@ async def add_patients_bulk(
 
     for idx, patient_model in enumerate(bulk_request.patients):
         patient_dict = patient_model.model_dump()
+        patient_dict['organization_id'] = org_id
 
         patient_id = await patient_db.add_patient(patient_dict)
 
         if patient_id:
             success_count += 1
             created_ids.append(patient_id)
-            logger.info(f"Added patient with ID: {patient_id}")
+            logger.info(f"Added patient with ID: {patient_id} to org {org_id}")
         else:
             failed_count += 1
             errors.append({
@@ -186,7 +203,8 @@ async def add_patients_bulk(
         ip_address=ip_address,
         user_agent=user_agent,
         endpoint=request.url.path,
-        details={"success_count": success_count, "failed_count": failed_count}
+        details={"success_count": success_count, "failed_count": failed_count},
+        organization_id=org_id
     )
 
     return BulkUploadResponse(
@@ -205,11 +223,12 @@ async def update_patient(
     patient_data: dict,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Update existing patient"""
+    """Update existing patient (verified by organization)"""
     try:
-        success = await patient_db.update_patient(patient_id, patient_data)
+        success = await patient_db.update_patient(patient_id, patient_data, organization_id=org_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
 
@@ -239,11 +258,12 @@ async def delete_patient(
     patient_id: str,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Delete patient"""
+    """Delete patient (verified by organization)"""
     try:
-        success = await patient_db.delete_patient(patient_id)
+        success = await patient_db.delete_patient(patient_id, organization_id=org_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
 

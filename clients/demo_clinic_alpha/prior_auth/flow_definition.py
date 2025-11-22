@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 class PriorAuthFlow:
 
     def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager,
-                 main_llm, classifier_llm, context_aggregator=None, transport=None, pipeline=None):
+                 main_llm, classifier_llm, context_aggregator=None, transport=None, pipeline=None,
+                 organization_id: str = None):
         self.patient_data = patient_data
         self.flow_manager = flow_manager
         self.main_llm = main_llm
@@ -21,6 +22,7 @@ class PriorAuthFlow:
         self.context_aggregator = context_aggregator
         self.transport = transport
         self.pipeline = pipeline
+        self.organization_id = organization_id
 
         # Format fields for TTS pronunciation (happens ONCE at initialization)
         self._format_speech_fields()
@@ -32,24 +34,22 @@ class PriorAuthFlow:
         that need to be spelled out. Zero runtime overhead during conversation.
         """
         # Phone numbers: spell with breaks between segments
-        if 'insurance_phone' in self.patient_data:
-            self.patient_data['insurance_phone_speech'] = self._format_phone(
-                self.patient_data['insurance_phone']
-            )
+        insurance_phone = self.patient_data.get('insurance_phone')
+        if insurance_phone:
+            self.patient_data['insurance_phone_speech'] = self._format_phone(insurance_phone)
 
-        if 'supervisor_phone' in self.patient_data and self.patient_data['supervisor_phone']:
-            self.patient_data['supervisor_phone_speech'] = self._format_phone(
-                self.patient_data['supervisor_phone']
-            )
+        supervisor_phone = self.patient_data.get('supervisor_phone')
+        if supervisor_phone:
+            self.patient_data['supervisor_phone_speech'] = self._format_phone(supervisor_phone)
 
         # Member ID: spell out alphanumeric
-        if 'insurance_member_id' in self.patient_data:
-            member_id = self.patient_data['insurance_member_id']
+        member_id = self.patient_data.get('insurance_member_id')
+        if member_id:
             self.patient_data['insurance_member_id_speech'] = f"<spell>{member_id}</spell>"
 
         # NPI: spell with breaks every 3 digits
-        if 'provider_npi' in self.patient_data:
-            npi = self.patient_data['provider_npi']
+        npi = self.patient_data.get('provider_npi')
+        if npi:
             if len(npi) == 10 and npi.isdigit():
                 self.patient_data['provider_npi_speech'] = (
                     f"<spell>{npi[:3]}</spell><break time=\"150ms\"/>"
@@ -60,8 +60,8 @@ class PriorAuthFlow:
                 self.patient_data['provider_npi_speech'] = f"<spell>{npi}</spell>"
 
         # CPT code: spell entire code
-        if 'cpt_code' in self.patient_data:
-            cpt = self.patient_data['cpt_code']
+        cpt = self.patient_data.get('cpt_code')
+        if cpt:
             self.patient_data['cpt_code_speech'] = f"<spell>{cpt}</spell>"
 
     def _format_reference_number(self, ref_number: str) -> str:
@@ -106,26 +106,30 @@ class PriorAuthFlow:
 
     def _get_global_instructions(self) -> str:
         """Global behavioral rules applied to all states."""
-        facility = self.patient_data.get('facility_name')
-        insurance_company = self.patient_data.get('insurance_company_name')
+        # Read all fields FLAT from patient_data
+        facility = self.patient_data.get('facility_name', '')
+        insurance_company = self.patient_data.get('insurance_company_name', '')
+        member_id = self.patient_data.get('insurance_member_id', '')
+        cpt_code = self.patient_data.get('cpt_code', '')
+        provider_npi = self.patient_data.get('provider_npi', '')
 
         return f"""PATIENT INFORMATION (USE EXACT VALUES):
 - Patient Name: {self.patient_data.get('patient_name')}
 - Date of Birth: {self.patient_data.get('date_of_birth')}
 - Facility: {facility}
 - Insurance Company: {insurance_company}
-- Member ID: {self.patient_data.get('insurance_member_id')}
+- Member ID: {member_id}
 - Insurance Phone: {self.patient_data.get('insurance_phone')}
-- CPT Code: {self.patient_data.get('cpt_code')}
-- Provider NPI: {self.patient_data.get('provider_npi')}
+- CPT Code: {cpt_code}
+- Provider NPI: {provider_npi}
 - Provider Name: {self.patient_data.get('provider_name')}
 - Appointment Time: {self.patient_data.get('appointment_time')}
 
 PRONUNCIATION GUIDE - When asked to SPELL OUT or REPEAT information:
-- Member ID (spelled): {self.patient_data.get('insurance_member_id_speech', self.patient_data.get('insurance_member_id'))}
+- Member ID (spelled): {self.patient_data.get('insurance_member_id_speech', member_id)}
 - Insurance Phone (spelled): {self.patient_data.get('insurance_phone_speech', self.patient_data.get('insurance_phone'))}
-- CPT Code (spelled): {self.patient_data.get('cpt_code_speech', self.patient_data.get('cpt_code'))}
-- Provider NPI (spelled): {self.patient_data.get('provider_npi_speech', self.patient_data.get('provider_npi'))}
+- CPT Code (spelled): {self.patient_data.get('cpt_code_speech', cpt_code)}
+- Provider NPI (spelled): {self.patient_data.get('provider_npi_speech', provider_npi)}
 
 CRITICAL BEHAVIORAL RULES:
 1. AI TRANSPARENCY: You are a Virtual Assistant. Disclose this in your initial greeting. Say "I'm Alexandra, a Virtual Assistant helping {facility}" when first introducing yourself. Never pretend to be human.
@@ -265,15 +269,16 @@ STEP 3 - AFTER SPEAKING THE GREETING:
         )
 
     def create_verification_node(self) -> NodeConfig:
-        patient_name = self.patient_data.get('patient_name')
-        dob = self.patient_data.get('date_of_birth')
-        member_id = self.patient_data.get('insurance_member_id')
-        cpt_code = self.patient_data.get('cpt_code')
-        provider_npi = self.patient_data.get('provider_npi')
-        provider_name = self.patient_data.get('provider_name')
-        facility = self.patient_data.get('facility_name')
-        insurance_company = self.patient_data.get('insurance_company_name')
-        appointment_time = self.patient_data.get('appointment_time')
+        # Read all fields FLAT from patient_data
+        patient_name = self.patient_data.get('patient_name', '')
+        dob = self.patient_data.get('date_of_birth', '')
+        member_id = self.patient_data.get('insurance_member_id', '')
+        cpt_code = self.patient_data.get('cpt_code', '')
+        provider_npi = self.patient_data.get('provider_npi', '')
+        provider_name = self.patient_data.get('provider_name', '')
+        facility = self.patient_data.get('facility_name', '')
+        insurance_company = self.patient_data.get('insurance_company_name', '')
+        appointment_time = self.patient_data.get('appointment_time', '')
         patient_id = self.patient_data.get('patient_id')
         global_instructions = self._get_global_instructions()
 
@@ -611,26 +616,25 @@ CRITICAL RULES:
 
             db = get_async_patient_db()
 
-            # STEP 1: Write to database
-            update_fields = {'prior_auth_status': status}
-            await db.update_patient(patient_id, update_fields)
+            # STEP 1: Write to database using update_field (flat field)
+            await db.update_field(patient_id, 'prior_auth_status', status, self.organization_id)
             logger.info(f"✅ Wrote authorization status to database: {status}")
 
             # STEP 2: Read back from database to verify
-            patient_doc = await db.find_patient_by_id(patient_id)
+            patient_doc = await db.find_patient_by_id(patient_id, self.organization_id)
 
             if not patient_doc:
                 logger.error(f"❌ Failed to read patient {patient_id} from database after write")
                 return "Error: Could not verify saved data", None
 
-            # STEP 3: Extract verified values from database
+            # STEP 3: Extract verified values from database (flat field)
             db_status = patient_doc.get('prior_auth_status')
 
             if db_status != status:
                 logger.error(f"❌ Database mismatch! Wrote '{status}' but read back '{db_status}'")
                 return f"Error: Database verification failed", None
 
-            # STEP 4: Update in-memory data with verified database values
+            # STEP 4: Update in-memory data with verified database values (flat)
             self.patient_data['prior_auth_status'] = db_status
 
             logger.info(f"✅ Verified authorization status from database: {db_status}")
@@ -673,19 +677,18 @@ CRITICAL RULES:
 
             db = get_async_patient_db()
 
-            # STEP 1: Write to database
-            update_fields = {'reference_number': reference_number}
-            await db.update_patient(patient_id, update_fields)
+            # STEP 1: Write to database using update_field (flat field)
+            await db.update_field(patient_id, 'reference_number', reference_number, self.organization_id)
             logger.info(f"✅ Wrote reference number to database: {reference_number}")
 
             # STEP 2: Read back from database to verify BOTH status and reference number
-            patient_doc = await db.find_patient_by_id(patient_id)
+            patient_doc = await db.find_patient_by_id(patient_id, self.organization_id)
 
             if not patient_doc:
                 logger.error(f"❌ Failed to read patient {patient_id} from database after write")
                 return "Error: Could not verify saved data", None
 
-            # STEP 3: Extract BOTH verified values from database
+            # STEP 3: Extract BOTH verified values from database (flat fields)
             db_status = patient_doc.get('prior_auth_status', 'Unknown')
             db_ref_number = patient_doc.get('reference_number', '')
 
@@ -693,7 +696,7 @@ CRITICAL RULES:
                 logger.error(f"❌ Database mismatch! Wrote '{reference_number}' but read back '{db_ref_number}'")
                 return f"Error: Database verification failed", None
 
-            # STEP 4: Update in-memory data with BOTH verified database values
+            # STEP 4: Update in-memory data with BOTH verified database values (flat)
             self.patient_data['prior_auth_status'] = db_status
             self.patient_data['reference_number'] = db_ref_number
 
@@ -769,7 +772,7 @@ CRITICAL RULES:
             patient_id = self.patient_data.get('patient_id')
             if patient_id:
                 db = get_async_patient_db()
-                await db.update_call_status(patient_id, 'Supervisor Requested')
+                await db.update_call_status(patient_id, 'Supervisor Requested', self.organization_id)
 
             # Add to transcript
             if self.pipeline and hasattr(self.pipeline, 'transcripts'):
@@ -868,7 +871,7 @@ CRITICAL RULES:
             patient_id = self.patient_data.get('patient_id')
             if patient_id:
                 db = get_async_patient_db()
-                await db.update_call_status(patient_id, "Completed")
+                await db.update_call_status(patient_id, "Completed", self.organization_id)
                 logger.info("✅ Database status updated: Completed")
 
             # Push EndTaskFrame upstream for graceful shutdown

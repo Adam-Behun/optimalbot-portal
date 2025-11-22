@@ -5,6 +5,7 @@ import { Patient, TranscriptMessage } from '../types';
 import { Button } from './ui/button';
 import { ModeToggle } from "@/components/mode-toggle";
 import { ChevronDown, ChevronRight, PhoneForwarded } from 'lucide-react';
+import { getOrganization } from '../lib/auth';
 
 interface PatientDetailProps {
   patientId?: string;
@@ -147,21 +148,27 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
         <div className="space-y-0">
           <DetailRow label="Patient Name" value={patient.patient_name} />
           <DetailRow label="Date of Birth" value={patient.date_of_birth} />
-          <DetailRow label="Facility" value={patient.facility_name} />
-          <DetailRow label="Insurance Company" value={patient.insurance_company_name} />
-          <DetailRow label="Insurance Member ID" value={patient.insurance_member_id} />
-          <DetailRow label="Insurance Phone" value={patient.insurance_phone} />
-          {patient.supervisor_phone && (
-            <DetailRow label="Supervisor Phone" value={patient.supervisor_phone} />
-          )}
-          <DetailRow label="CPT Code" value={patient.cpt_code} />
-          <DetailRow label="Provider NPI" value={patient.provider_npi} />
-          <DetailRow label="Provider Name" value={patient.provider_name} />
-          <DetailRow
-            label="Appointment Time"
-            value={new Date(patient.appointment_time).toLocaleString()}
-          />
-          <DetailRow label="Prior Auth Status" value={patient.prior_auth_status} />
+
+          {/* Dynamic fields from schema */}
+          {(() => {
+            const org = getOrganization();
+            const fields = org?.patient_schema?.fields || [];
+            const sortedFields = [...fields].sort((a, b) => a.display_order - b.display_order);
+
+            return sortedFields.map(field => {
+              const value = patient.custom_fields?.[field.key];
+              if (value === undefined || value === null || value === '') return null;
+
+              return (
+                <DetailRow
+                  key={field.key}
+                  label={field.label}
+                  value={value}
+                />
+              );
+            });
+          })()}
+
           <DetailRow
             label="Call Status"
             value={
@@ -178,9 +185,6 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
               </span>
             }
           />
-          {patient.reference_number && (
-            <DetailRow label="Reference Number" value={patient.reference_number} />
-          )}
         </div>
       </div>
 

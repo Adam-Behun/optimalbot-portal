@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { getPatients, startCall, deletePatient } from '@/api';
 import { Patient } from '@/types';
+import { getSelectedWorkflow } from '@/lib/auth';
 import { DataTable } from './data-table';
 import { createColumns } from './columns';
 import { PatientDetailSheet } from './patient-detail-sheet';
@@ -34,7 +35,8 @@ export default function PatientList() {
     try {
       setLoading(true);
       setError(null);
-      const data = await getPatients();
+      const workflow = getSelectedWorkflow();
+      const data = await getPatients(workflow || undefined);
       setPatients(data);
     } catch (err) {
       setError('Failed to load patients');

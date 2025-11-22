@@ -60,14 +60,16 @@ async def bot(args: DailyRunnerArguments):
         patient_data = args.body.get("patient_data")
         phone_number = args.body.get("phone_number")
         client_name = args.body.get("client_name", "prior_auth")
+        organization_id = args.body.get("organization_id")
+        organization_slug = args.body.get("organization_slug")
 
-        if not all([session_id, patient_id, patient_data, phone_number]):
-            raise ValueError("Missing required: session_id, patient_id, patient_data, phone_number")
+        if not all([session_id, patient_id, patient_data, phone_number, organization_id, organization_slug]):
+            raise ValueError("Missing required: session_id, patient_id, patient_data, phone_number, organization_id, organization_slug")
 
         await session_db.update_session(session_id, {
             "status": "running",
             "pid": os.getpid()
-        })
+        }, organization_id)
 
         pipeline = ConversationPipeline(
             client_name=client_name,
@@ -75,6 +77,8 @@ async def bot(args: DailyRunnerArguments):
             patient_id=patient_id,
             patient_data=patient_data,
             phone_number=phone_number,
+            organization_id=organization_id,
+            organization_slug=organization_slug,
             debug_mode=DEBUG_MODE
         )
 
@@ -84,7 +88,7 @@ async def bot(args: DailyRunnerArguments):
         await session_db.update_session(session_id, {
             "status": "completed",
             "completed_at": datetime.now(timezone.utc)
-        })
+        }, organization_id)
 
     except Exception as e:
         logger.error(f"Bot error - Session: {session_id}, Error: {e}")
@@ -94,7 +98,7 @@ async def bot(args: DailyRunnerArguments):
                 "status": "failed",
                 "completed_at": datetime.now(timezone.utc),
                 "error": str(e)
-            })
+            }, organization_id if 'organization_id' in dir() else None)
         except Exception:
             pass
 

@@ -34,7 +34,7 @@ async def health_check(patient_db: AsyncPatientRecord = Depends(get_patient_db))
     """Health check for backend API"""
     try:
         # Simple DB connectivity check
-        await patient_db.find_patients_by_status("Pending")
+        await patient_db.patients.find_one({})
         db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)}"

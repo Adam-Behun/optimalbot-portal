@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useForm } from '@tanstack/react-form';
 import { addPatient, addPatientsBulk } from '../api';
-import { AddPatientFormData } from '../types';
+import { SchemaField } from '../types';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
@@ -9,17 +9,47 @@ import { Label } from '@/components/ui/label';
 import { Navigation } from "@/components/Navigation";
 import { toast } from "sonner";
 import { Download, Upload } from "lucide-react";
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import Papa from 'papaparse';
+import { getOrganization, getSelectedWorkflow, getCurrentWorkflowSchema } from '../lib/auth';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const AddPatientForm = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Get organization, workflow and schema
+  const org = getOrganization();
+  const selectedWorkflow = getSelectedWorkflow();
+  const schemaFields = useMemo(() => {
+    const schema = getCurrentWorkflowSchema();
+    const fields = schema?.fields || [];
+    return [...fields].sort((a, b) => a.display_order - b.display_order);
+  }, []);
+
+  // Build default values from schema
+  const defaultValues = useMemo(() => {
+    const defaults: Record<string, string> = {};
+    schemaFields.forEach((field: SchemaField) => {
+      defaults[field.key] = field.default || '';
+    });
+    return defaults;
+  }, [schemaFields]);
+
   const handleDownloadSample = () => {
-    const exampleCSV = `patient_name,date_of_birth,insurance_member_id,insurance_company_name,insurance_phone,supervisor_phone,facility_name,cpt_code,provider_npi,provider_name,appointment_time
-John Doe,1990-05-15,ABC123456789,Blue Cross Blue Shield,+11234567890,+11234567899,City Medical Center,99213,1234567890,Dr. Jane Smith,2025-10-15T10:00
-Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hospital,99214,0987654321,Dr. John Johnson,2025-10-16T14:30`;
+    // Generate CSV headers from schema
+    const baseHeaders = ['patient_name', 'date_of_birth'];
+    const customHeaders = schemaFields.map((f: SchemaField) => f.key);
+    const allHeaders = [...baseHeaders, ...customHeaders];
+
+    const exampleCSV = `${allHeaders.join(',')}
+John Doe,1990-05-15,${customHeaders.map(() => 'example').join(',')}`;
 
     const blob = new Blob([exampleCSV], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -43,7 +73,7 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
       skipEmptyLines: true,
       complete: async (results) => {
         try {
-          const patients = results.data as AddPatientFormData[];
+          const patients = results.data as Record<string, any>[];
 
           if (patients.length === 0) {
             toast.error('CSV file is empty');
@@ -105,23 +135,20 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
   };
 
   const form = useForm({
-    defaultValues: {
-      patient_name: '',
-      date_of_birth: '',
-      insurance_member_id: '',
-      insurance_company_name: '',
-      insurance_phone: '',
-      supervisor_phone: '',
-      facility_name: '',
-      cpt_code: '',
-      provider_npi: '',
-      provider_name: '',
-      appointment_time: '',
-    },
+    defaultValues,
     onSubmit: async ({ value }) => {
       try {
-        const response = await addPatient(value);
-        toast.success(`Patient ${response.patient_name} added successfully!`);
+        if (!selectedWorkflow) {
+          toast.error('No workflow selected. Please select a workflow first.');
+          return;
+        }
+        // Send all fields flat with workflow
+        const patientData = {
+          workflow: selectedWorkflow,
+          ...value,
+        };
+        const response = await addPatient(patientData);
+        toast.success(`Patient added successfully!`);
         navigate('/');
       } catch (err) {
         console.error('Error adding patient:', err);
@@ -179,428 +206,62 @@ Jane Smith,1985-08-20,XYZ987654321,Aetna,+19876543210,+19876543219,Community Hos
           }}
           className="p-4 space-y-0"
         >
-          <form.Field
-            name="patient_name"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Patient name is required';
-                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
-                  return 'Patient name must contain only English alphabet characters';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Patient Name
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="date_of_birth"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value) return 'Date of birth is required';
-                const dob = new Date(value);
-                const yesterday = new Date();
-                yesterday.setDate(yesterday.getDate() - 1);
-                yesterday.setHours(23, 59, 59, 999);
-                if (dob > yesterday) {
-                  return 'Date of birth must be at least yesterday or earlier';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Date of Birth
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    type="date"
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="facility_name"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Facility name is required';
-                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
-                  return 'Facility name must contain only English alphabet characters';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Facility
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="insurance_company_name"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Insurance company is required';
-                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
-                  return 'Insurance company must contain only English alphabet characters';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Insurance Company
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="insurance_member_id"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Member ID is required';
-                if (!/^[a-zA-Z0-9]+$/.test(value.trim())) {
-                  return 'Member ID must contain only letters and numbers';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Insurance Member ID
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="insurance_phone"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Insurance phone is required';
-                const cleaned = value.trim().replace(/[\s\-]/g, '');
-                if (cleaned.startsWith('+1')) {
-                  const digits = cleaned.substring(2);
-                  if (!/^\d{10}$/.test(digits)) {
-                    return 'Phone must have exactly 10 digits after +1 (e.g., +15551234567)';
+          {/* All fields from schema */}
+          {schemaFields.map((schemaField: SchemaField) => (
+            <form.Field
+              key={schemaField.key}
+              name={schemaField.key}
+              validators={{
+                onChange: ({ value }) => {
+                  if (schemaField.required && (!value || !value.trim())) {
+                    return `${schemaField.label} is required`;
                   }
-                } else if (cleaned.startsWith('1')) {
-                  const digits = cleaned.substring(1);
-                  if (!/^\d{10}$/.test(digits)) {
-                    return 'Phone must have exactly 10 digits after 1 (e.g., 15551234567)';
-                  }
-                } else {
-                  return 'Phone must start with +1 or 1 (e.g., +15551234567 or 15551234567)';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Insurance Phone
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    placeholder="+15551234567"
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
+                  return undefined;
+                },
+              }}
+              children={(field) => (
+                <div className="flex items-center py-1.5 border-b">
+                  <Label htmlFor={field.name} className="w-48 text-muted-foreground">
+                    {schemaField.label}{!schemaField.required && ' (Optional)'}
+                  </Label>
+                  <div className="flex-1">
+                    {schemaField.type === 'select' && schemaField.options ? (
+                      <Select
+                        value={field.state.value}
+                        onValueChange={(value) => field.handleChange(value)}
+                      >
+                        <SelectTrigger className="border-0 focus:ring-0 focus:ring-offset-0 h-8">
+                          <SelectValue placeholder={`Select ${schemaField.label}`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {schemaField.options.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        type={schemaField.type === 'date' ? 'date' : 'text'}
+                        id={field.name}
+                        name={field.name}
+                        value={field.state.value}
+                        onBlur={field.handleBlur}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
+                      />
+                    )}
+                    {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
+                      <p className="text-sm text-destructive mt-1">
+                        {field.state.meta.errors.join(', ')}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="supervisor_phone"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || value.trim() === '') return undefined;
-                const cleaned = value.trim().replace(/[\s\-]/g, '');
-                if (cleaned.startsWith('+1')) {
-                  const digits = cleaned.substring(2);
-                  if (!/^\d{10}$/.test(digits)) {
-                    return 'Phone must have exactly 10 digits after +1 (e.g., +15551234567)';
-                  }
-                } else if (cleaned.startsWith('1')) {
-                  const digits = cleaned.substring(1);
-                  if (!/^\d{10}$/.test(digits)) {
-                    return 'Phone must have exactly 10 digits after 1 (e.g., 15551234567)';
-                  }
-                } else {
-                  return 'Phone must start with +1 or 1 (e.g., +15551234567 or 15551234567)';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Supervisor Phone (Optional)
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    placeholder="+15551234567"
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="cpt_code"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'CPT code is required';
-                if (!/^\d+$/.test(value.trim())) {
-                  return 'CPT code must contain only integers';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  CPT Code
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="provider_npi"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Provider NPI is required';
-                if (!/^\d+$/.test(value.trim())) {
-                  return 'Provider NPI must contain only integers';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Provider NPI
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="provider_name"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value || !value.trim()) return 'Provider name is required';
-                if (!/^[a-zA-Z\s\-'.,]+$/.test(value.trim())) {
-                  return 'Provider name must contain only English alphabet characters';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Provider Name
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
-
-          <form.Field
-            name="appointment_time"
-            validators={{
-              onChange: ({ value }) => {
-                if (!value) return 'Appointment time is required';
-                const appt = new Date(value);
-                const now = new Date();
-                const minTime = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
-                const maxTime = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000); // 3 months from now
-
-                if (appt < minTime) {
-                  return 'Appointment must be at least 1 hour from now';
-                }
-                if (appt > maxTime) {
-                  return 'Appointment must be within 3 months from now';
-                }
-                return undefined;
-              },
-            }}
-            children={(field) => (
-              <div className="flex items-center py-1.5 border-b last:border-b-0">
-                <Label htmlFor={field.name} className="w-48 text-muted-foreground">
-                  Appointment Time
-                </Label>
-                <div className="flex-1">
-                  <Input
-                    type="datetime-local"
-                    id={field.name}
-                    name={field.name}
-                    value={field.state.value}
-                    onBlur={field.handleBlur}
-                    onChange={(e) => field.handleChange(e.target.value)}
-                    className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 h-8"
-                  />
-                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                    <p className="text-sm text-destructive mt-1">
-                      {field.state.meta.errors.join(', ')}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          />
+              )}
+            />
+          ))}
 
           <div className="flex justify-end gap-2 pt-4">
             <Button

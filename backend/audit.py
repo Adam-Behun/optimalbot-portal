@@ -25,7 +25,8 @@ class AuditLogger:
         ip_address: str,
         user_agent: str,
         success: bool,
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
+        organization_id: Optional[str] = None
     ) -> bool:
         """
         Log an authentication event for HIPAA compliance.
@@ -38,6 +39,7 @@ class AuditLogger:
             user_agent: Client user agent string
             success: Whether the operation succeeded
             details: Additional event details
+            organization_id: Organization ID for tenant context
 
         Returns:
             bool: True if logged successfully
@@ -47,6 +49,7 @@ class AuditLogger:
                 "event_type": event_type,
                 "user_id": user_id,
                 "email": email,
+                "organization_id": organization_id,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
                 "timestamp": datetime.utcnow().isoformat(),
@@ -140,7 +143,8 @@ class AuditLogger:
         user_agent: str,
         endpoint: str,
         success: bool = True,
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
+        organization_id: Optional[str] = None
     ) -> bool:
         """
         Log PHI access for HIPAA compliance.
@@ -155,6 +159,7 @@ class AuditLogger:
             endpoint: API endpoint accessed
             success: Whether the operation succeeded
             details: Additional event details
+            organization_id: Organization ID for tenant context
 
         Returns:
             bool: True if logged successfully
@@ -163,6 +168,7 @@ class AuditLogger:
             log_entry = {
                 "event_type": "phi_access",
                 "user_id": user_id,
+                "organization_id": organization_id,
                 "action": action,
                 "resource_type": resource_type,
                 "resource_id": resource_id,
@@ -241,6 +247,9 @@ class AuditLogger:
 
             # Create index for PHI access queries
             await self.audit_logs.create_index([("resource_type", 1), ("resource_id", 1)])
+
+            # Create index for organization-scoped queries
+            await self.audit_logs.create_index("organization_id")
 
             # Create TTL index - logs expire after 6 years (HIPAA minimum retention)
             await self.audit_logs.create_index(

@@ -10,6 +10,7 @@ from slowapi import Limiter
 
 from backend.dependencies import get_user_db, get_audit_logger_dep, get_client_info, get_user_id_from_request
 from backend.models import AsyncUserRecord
+from backend.models.organization import AsyncOrganizationRecord, get_async_organization_db
 from backend.audit import AuditLogger
 
 logger = logging.getLogger(__name__)
@@ -26,12 +27,21 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 class LoginRequest(BaseModel):
     email: str
     password: str
+    organization_slug: str | None = None
+
+class OrganizationResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    branding: dict
+    workflows: dict  # Contains workflow configs with patient_schema
 
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str
     user_id: str
     email: str
+    organization: OrganizationResponse
 
 class RequestResetRequest(BaseModel):
     email: str
@@ -60,12 +70,17 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def get_organization_db() -> AsyncOrganizationRecord:
+    return get_async_organization_db()
+
+
 @router.post("/login", response_model=AuthResponse)
 @limiter.limit("5/minute")
 async def login(
     request: Request,
     login_data: LoginRequest,
     user_db: AsyncUserRecord = Depends(get_user_db),
+    org_db: AsyncOrganizationRecord = Depends(get_organization_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
     """Authenticate user and return JWT token"""
@@ -136,6 +151,35 @@ async def login(
             )
 
         user_id = str(user["_id"])
+        organization_id = str(user.get("organization_id", ""))
+
+        # Fetch organization details
+        org = await org_db.get_by_id(organization_id)
+        if not org:
+            raise HTTPException(
+                status_code=403,
+                detail="User's organization not found"
+            )
+
+        # If organization_slug provided, verify user belongs to that org
+        if login_data.organization_slug:
+            if org.get("slug") != login_data.organization_slug:
+                await audit_logger.log_event(
+                    event_type="login",
+                    user_id=user_id,
+                    email=login_data.email,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    success=False,
+                    details={"reason": "User not authorized for this organization"}
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail="User not authorized for this organization"
+                )
+
+        organization_slug = org.get("slug", "")
+
         await audit_logger.log_event(
             event_type="login",
             user_id=user_id,
@@ -143,24 +187,34 @@ async def login(
             ip_address=ip_address,
             user_agent=user_agent,
             success=True,
-            details={"role": user.get("role", "user")}
+            details={"role": user.get("role", "user")},
+            organization_id=organization_id
         )
 
         access_token = create_access_token(
             data={
                 "sub": user_id,
                 "email": login_data.email,
-                "role": user.get("role", "user")
+                "role": user.get("role", "user"),
+                "organization_id": organization_id,
+                "organization_slug": organization_slug
             }
         )
 
-        logger.info(f"User logged in: {login_data.email} (ID: {user_id})")
+        logger.info(f"User logged in: {login_data.email} (ID: {user_id}, Org: {organization_slug})")
 
         return AuthResponse(
             access_token=access_token,
             token_type="bearer",
             user_id=user_id,
-            email=login_data.email
+            email=login_data.email,
+            organization=OrganizationResponse(
+                id=organization_id,
+                name=org.get("name", ""),
+                slug=organization_slug,
+                branding=org.get("branding", {}),
+                workflows=org.get("workflows", {})
+            )
         )
 
     except HTTPException:

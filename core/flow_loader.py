@@ -7,16 +7,17 @@ logger = logging.getLogger(__name__)
 
 class FlowLoader:
 
-    def __init__(self, client_name: str):
+    def __init__(self, organization_slug: str, client_name: str):
+        self.organization_slug = organization_slug
         self.client_name = client_name
-        self.client_path = Path(f"clients/{client_name}")
+        self.client_path = Path(f"clients/{organization_slug}/{client_name}")
 
         if not self.client_path.exists():
             raise ValueError(f"Client directory not found: {self.client_path}")
 
     def load_flow_class(self):
         """Dynamically import and return the client's flow class."""
-        module_path = f"clients.{self.client_name}.flow_definition"
+        module_path = f"clients.{self.organization_slug}.{self.client_name}.flow_definition"
 
         try:
             module = import_module(module_path)

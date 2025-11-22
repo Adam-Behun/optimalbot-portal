@@ -18,9 +18,24 @@ class AsyncSessionRecord:
         self.db = db_client[os.getenv("MONGO_DB_NAME", "alfons")]
         self.sessions = self.db.sessions
 
+    async def _ensure_indexes(self):
+        """Create indexes for session collection"""
+        try:
+            from bson import ObjectId
+            await self.sessions.create_index([("organization_id", 1), ("created_at", -1)])
+        except Exception as e:
+            logger.warning(f"Index creation warning: {e}")
+
     async def create_session(self, session_data: dict) -> bool:
         """Create new session record when call starts"""
         try:
+            from bson import ObjectId
+            await self._ensure_indexes()
+
+            # Convert organization_id to ObjectId if provided as string
+            if "organization_id" in session_data and isinstance(session_data["organization_id"], str):
+                session_data["organization_id"] = ObjectId(session_data["organization_id"])
+
             session_data.update({
                 "created_at": datetime.utcnow(),
                 "status": "starting"
@@ -31,20 +46,28 @@ class AsyncSessionRecord:
             logger.error(f"Error creating session: {e}")
             return False
 
-    async def find_session(self, session_id: str) -> Optional[dict]:
-        """Find session by session_id"""
+    async def find_session(self, session_id: str, organization_id: str = None) -> Optional[dict]:
+        """Find session by session_id, optionally filtered by organization"""
         try:
-            return await self.sessions.find_one({"session_id": session_id})
+            from bson import ObjectId
+            query = {"session_id": session_id}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            return await self.sessions.find_one(query)
         except Exception as e:
             logger.error(f"Error finding session {session_id}: {e}")
             return None
 
-    async def update_session(self, session_id: str, updates: dict) -> bool:
+    async def update_session(self, session_id: str, updates: dict, organization_id: str = None) -> bool:
         """Update session fields"""
         try:
+            from bson import ObjectId
             updates["updated_at"] = datetime.utcnow()
+            query = {"session_id": session_id}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
             result = await self.sessions.update_one(
-                {"session_id": session_id},
+                query,
                 {"$set": updates}
             )
             return result.modified_count > 0
@@ -52,10 +75,14 @@ class AsyncSessionRecord:
             logger.error(f"Error updating session {session_id}: {e}")
             return False
 
-    async def list_active_sessions(self) -> List[dict]:
-        """Get all running sessions"""
+    async def list_active_sessions(self, organization_id: str = None) -> List[dict]:
+        """Get all running sessions, optionally filtered by organization"""
         try:
-            cursor = self.sessions.find({"status": {"$in": ["starting", "running"]}})
+            from bson import ObjectId
+            query = {"status": {"$in": ["starting", "running"]}}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            cursor = self.sessions.find(query)
             return await cursor.to_list(length=None)
         except Exception as e:
             logger.error(f"Error listing active sessions: {e}")

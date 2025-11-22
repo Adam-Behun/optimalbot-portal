@@ -1,404 +1,273 @@
-Add navigation 
+# Multi-Tenant Implementation Plan
 
-  Navigation Design Options
+## End Goal (North Star)
 
-  Based on your requirements, here are two approaches:
+**Two demo clients running simultaneously from the same codebase:**
 
-  Option A: Top Navigation with Dropdown + Sub-navigation
+### DemoClinicAlpha
+- **URL**: `democlinicalpha.datasova.com`
+- **Workflow directories**:
+  - `clients/demo_clinic_alpha/prior_auth/`
+  - `clients/demo_clinic_alpha/patient_questions/`
+- **Purpose**:
+  - `prior_auth`: Outbound calls to insurance companies for prior auth verification
+  - `patient_questions`: Outbound calls for patient check-ins
+- **Workflows**: 2 (prior_auth, patient_questions)
 
-  [Dashboard] [Workflows ▼] [Custom Reports]
-                ├─ Prior Authorization ✓ → Click opens sub-nav
-                ├─ Eligibility Verification (disabled)
-                ├─ Visit Scheduling (disabled)
-                └─ General Questions (disabled)
+### DemoClinicBeta
+- **URL**: `democlinicbeta.datasova.com`
+- **Workflow directory**: `clients/demo_clinic_beta/patient_questions/`
+- **Purpose**: Outbound calls for patient check-ins
+- **Workflows**: 1 (patient_questions)
 
-  When "Prior Authorization" clicked:
-  [Dashboard] [Prior Authorization ▼] [Custom Reports]
-                └─ (sub-menu appears below or as tabs)
-                   [Dashboard] [Patient List] [Add Patient]
+### Success Criteria
+- Both frontends accessible at their subdomains
+- Each has its own users, patients, and organization config in MongoDB
+- Users from Alpha cannot see Beta's patients (HIPAA isolation)
+- Starting a call from Alpha prior_auth runs `clients/demo_clinic_alpha/prior_auth/`
+- Starting a call from Alpha patient_questions runs `clients/demo_clinic_alpha/patient_questions/`
+- Starting a call from Beta runs `clients/demo_clinic_beta/patient_questions/`
+- Can test all three simultaneously in 3 separate browser tabs
 
-  Option B: Sidebar Navigation (More scalable)
-
-  ┌─────────────────┬──────────────────────────┐
-  │ Workflows       │                          │
-  │  ├─ Prior Auth ▼│  Main Content Area       │
-  │  │   Dashboard  │                          │
-  │  │   Patients   │                          │
-  │  │   Add Patient│                          │
-  │  ├─ Eligibility │                          │
-  │  ├─ Scheduling  │                          │
-  │  └─ General Q   │                          │
-  │                 │                          │
-  │ Custom Reports  │                          │
-  └─────────────────┴──────────────────────────┘
-
-  ---
-  My recommendation: Option B (Sidebar) because:
-  1. Scales better as you add more workflows
-  2. Clear visual hierarchy
-  3. Easy to see what's enabled vs available
-  4. Standard pattern users understand
-
-  Questions:
-  1. Which approach do you prefer (A or B)?
-  2. Should the sidebar be collapsible?
-  3. Should "Custom Reports" move into the sidebar or stay separate?
-
-
-# Multi-Tenant Client Onboarding Implementation Plan
-
-## Goal
-
-Enable MyRobot to onboard new healthcare organizations as isolated tenants, each with:
-- Their own users, patients, and call sessions (HIPAA-compliant data isolation)
-- Custom patient data fields specific to their workflow needs
-- Custom-branded dashboards accessible via subdomain
-- Dedicated voice agent workflow per organization (1 org = 1 workflow in `clients/`)
-
-All achieved with a **single codebase** for frontend, backend, and bot - no per-client forks or separate deployments.
+### Directory Structure
+```
+clients/
+├── demo_clinic_alpha/
+│   ├── prior_auth/
+│   │   ├── flow_definition.py
+│   │   └── services.yaml
+│   └── patient_questions/
+│       ├── flow_definition.py
+│       └── services.yaml
+└── demo_clinic_beta/
+    └── patient_questions/
+        ├── flow_definition.py
+        └── services.yaml
+```
 
 ---
 
-## Architecture Decisions
+## Data Model Vision
 
-### 1. Multi-Tenancy Model
-**Decision**: Logical tenant isolation with `organization_id` on all records
-**Why**: Simpler than separate databases, maintains single deployment, HIPAA-compliant with proper query filtering
+### Core Principles
+1. **Database is single source of truth** - Organization document defines all workflows and their schemas
+2. **Workflow-level patient schemas** - Each workflow has its own `patient_schema` with distinct fields
+3. **Flat patient storage** - Patient fields stored flat in `patients` collection with both `organization_id` AND `workflow` fields
+4. **Workflow-scoped UI** - User logs in, selects a workflow, then sees Patient List/Dashboard/Add Patient scoped to that org+workflow only
+5. **Zero latency bot execution** - All patient fields pushed to bot context on call-start; no database trips during the phone call
 
-### 2. URL Strategy
-**Decision**: Subdomain routing (`clinic-a.datasova.com`)
-**Why**: Clean separation, easy SSL with wildcard cert, professional appearance per client
+### Data Flow
+1. **Login** → Backend returns org with all workflows and their schemas
+2. **Workflow selection** → User picks workflow (e.g., "prior_auth"), frontend scopes all views to that workflow
+3. **Patient list** → Shows only patients for selected org+workflow
+4. **Add patient** → Form renders from selected workflow's `patient_schema`
+5. **Start call** → Backend fetches patient, passes all fields flat to bot
+6. **Bot execution** → Bot loads `clients/{org_slug}/{workflow}/`, all patient data already in memory
 
-### 3. Frontend Codebase
-**Decision**: Single codebase with dynamic theming and org-specific patient forms
-**Why**: One deployment to maintain, bug fixes apply universally, org config drives customization
+### Key Relationships
+- **Organization** → has many **Workflows** (each with `patient_schema`)
+- **Workflow** → has many **Patients** (via `patient.organization_id` + `patient.workflow`)
+- **Patient** → has many **Sessions** (via `session.patient_id`)
+- **Session** → stores **Transcript**
 
-### 4. Patient Data Fields
-**Decision**: Common fields + `custom_fields` object per patient, schema defined in organization config
-**Why**: Flexible per-org fields without schema changes, frontend renders forms dynamically based on org's patient_schema
-
-### 5. Workflow-to-Organization Mapping
-**Decision**: 1 org can have many workflows, but each workflow belongs to only 1 org
-**Why**: Each workflow in `clients/` is custom-built for a specific organization's needs. Org has `enabled_flows` list (e.g., `["prior_auth", "benefits_check"]`). Backend validates `client_name` is in org's `enabled_flows` before starting call.
-
-### 6. Docker Images
-**Decision**: Single bot image containing all `clients/` workflows
-**Why**: Shared warm capacity on Pipecat Cloud, simpler CI/CD, fast rebuilds (only Python files change)
+### No Hardcoding
+- No hardcoded fields in backend schemas
+- No hardcoded fields in frontend forms
+- No hardcoded fields in bot flows
+- Everything derives from `org.workflows[workflow_name].patient_schema.fields`
 
 ---
 
-## Database Schema Changes
+## Database Schema
 
-### New: `organizations` Collection
-
-```python
+### Organizations Collection
+```javascript
 {
-    "_id": ObjectId,
-    "name": "Healthcare Clinic A",
-    "slug": "clinic-a",                    # Used for subdomain routing
-    "enabled_flows": ["prior_auth"],         # Workflows this org can use (each workflow belongs to only this org)
-    "branding": {
-        "company_name": "Clinic A"       # Displayed in dashboard header
-    },
-    "settings": {
-        "default_phone": "+1234567890",
-        "supervisor_phone": "+1987654321",
-        "timezone": "America/New_York"
-    },
-    "patient_schema": {
-        "fields": [
-            {"key": "insurance_member_id", "label": "Member ID", "type": "string", "required": True},
-            {"key": "cpt_code", "label": "CPT Code", "type": "string", "required": True},
-            {"key": "provider_npi", "label": "Provider NPI", "type": "string", "required": True},
-            {"key": "prior_auth_status", "label": "Status", "type": "select",
-             "options": ["Pending", "Approved", "Denied"], "default": "Pending"}
+  _id: ObjectId,
+  name: "Demo Clinic Alpha",
+  slug: "demo_clinic_alpha",
+  branding: { company_name: "Demo Clinic Alpha" },
+  workflows: {
+    "prior_auth": {
+      enabled: true,
+      patient_schema: {
+        fields: [
+          { key: "patient_name", label: "Patient Name", type: "string", required: true, display_in_list: true, display_order: 1 },
+          { key: "date_of_birth", label: "Date of Birth", type: "date", required: true, display_in_list: true, display_order: 2 },
+          { key: "insurance_member_id", label: "Member ID", type: "string", required: true, display_in_list: true, display_order: 3 },
+          { key: "insurance_company_name", label: "Insurance Company", type: "string", required: true, display_in_list: false, display_order: 4 },
+          { key: "insurance_phone", label: "Insurance Phone", type: "string", required: true, display_in_list: true, display_order: 5 },
+          { key: "facility_name", label: "Facility", type: "string", required: true, display_in_list: false, display_order: 6 },
+          { key: "provider_name", label: "Provider Name", type: "string", required: true, display_in_list: false, display_order: 7 },
+          { key: "provider_npi", label: "Provider NPI", type: "string", required: true, display_in_list: false, display_order: 8 },
+          { key: "cpt_code", label: "CPT Code", type: "string", required: true, display_in_list: true, display_order: 9 },
+          { key: "appointment_time", label: "Appointment Time", type: "datetime", required: true, display_in_list: false, display_order: 10 },
+          { key: "supervisor_phone", label: "Supervisor Phone", type: "string", required: false, display_in_list: false, display_order: 11 },
+          { key: "prior_auth_status", label: "Auth Status", type: "select", options: ["Pending", "Approved", "Denied"], default: "Pending", required: false, display_in_list: true, display_order: 12 },
+          { key: "reference_number", label: "Reference #", type: "string", required: false, display_in_list: true, display_order: 13 }
         ]
-    },
-    "hipaa_baa_signed_at": datetime,       # Required before access
-    "created_at": datetime,
-    "updated_at": datetime
+      }
+    }
+  },
+  created_at: ISODate,
+  updated_at: ISODate
 }
 ```
 
-### Modified: `users` Collection
-
-```python
+### Users Collection
+```javascript
 {
-    "_id": ObjectId,
-    "email": "user@clinic-a.com",
-    "password_hash": "...",
-    "organization_id": ObjectId,           # NEW - required
-    "role": "user",                        # user, admin, org_admin
-    "status": "active",
-    "created_at": datetime
+  _id: ObjectId,
+  email: "adambehun22@gmail.com",
+  hashed_password: "...",
+  organization_id: ObjectId("alpha_org_id"),
+  role: "admin",
+  status: "active"
 }
 ```
 
-### Modified: `patients` Collection
-
-```python
+### Patients Collection
+```javascript
 {
-    "_id": ObjectId,
-    "organization_id": ObjectId,           # NEW - required for all queries
-    "patient_name": "John Doe",
-    "date_of_birth": "1990-01-15",
-    "phone_number": "+1234567890",
-    "custom_fields": {                     # NEW - org-specific data
-        "insurance_member_id": "ABC123",
-        "cpt_code": "99213",
-        "provider_npi": "1234567890",
-        "prior_auth_status": "Pending",
-        "reference_number": None
-    },
-    "call_status": "Not Started",
-    "call_transcript": {},
-    "last_call_session_id": None,
-    "created_at": datetime,
-    "updated_at": datetime
+  _id: ObjectId,
+  organization_id: ObjectId("alpha_org_id"),
+  workflow: "prior_auth",
+  // All fields stored flat - keys match workflow's patient_schema.fields[].key
+  patient_name: "John Smith",
+  date_of_birth: "03/15/1985",
+  insurance_member_id: "ABC123456",
+  insurance_company_name: "Aetna",
+  insurance_phone: "+15165667132",
+  facility_name: "City Medical Center",
+  provider_name: "Dr. Jane Wilson",
+  provider_npi: "1234567890",
+  cpt_code: "99213",
+  appointment_time: "12/01/2024 02:30 PM",
+  supervisor_phone: "+15165551234",
+  prior_auth_status: "Pending",
+  reference_number: null,
+  // System fields
+  call_status: "Not Started",
+  created_at: ISODate,
+  updated_at: ISODate
 }
 ```
 
-### Modified: `sessions` Collection
-
-```python
+### Sessions Collection
+```javascript
 {
-    "_id": ObjectId,
-    "organization_id": ObjectId,           # NEW
-    "patient_id": ObjectId,
-    "client_name": "prior_auth",
-    "status": "completed",
-    "created_at": datetime
+  _id: ObjectId,
+  session_id: "uuid-string",
+  organization_id: ObjectId("alpha_org_id"),
+  patient_id: ObjectId("patient_id"),
+  workflow: "prior_auth",
+  status: "completed",  // "in_progress", "completed", "failed"
+  // Call metadata
+  phone_number: "+15165667132",
+  started_at: ISODate,
+  ended_at: ISODate,
+  duration_seconds: 245,
+  // Transcript
+  transcript: {
+    messages: [
+      { role: "assistant", content: "Hi, this is Alexandra...", timestamp: ISODate },
+      { role: "user", content: "Hello, this is Jennifer from Aetna...", timestamp: ISODate }
+    ],
+    summary: "Authorization approved, reference number AUTH123456"
+  },
+  created_at: ISODate,
+  updated_at: ISODate
 }
+```
+
+### Audit Logs Collection (HIPAA Compliance)
+```javascript
+{
+  _id: ObjectId,
+  event_type: "phi_access",  // "login", "logout", "phi_access", "api_access"
+  user_id: "user_id_string",
+  organization_id: "org_id_string",
+  // For PHI access events
+  action: "view",  // "create", "update", "delete", "export"
+  resource_type: "patient",  // "transcript", "call"
+  resource_id: "patient_id_string",
+  endpoint: "/patients/123",
+  // For auth events
+  email: "user@example.com",
+  success: true,
+  // Common fields
+  ip_address: "192.168.1.1",
+  user_agent: "Mozilla/5.0...",
+  timestamp: ISODate,
+  details: {}  // Additional context
+}
+// Note: 6-year TTL index for HIPAA retention compliance
 ```
 
 ---
 
-## Implementation Tasks
-
-### Phase 1: Database & Models
-
-#### 1.1 Create Organization Model
-- [ ] Create `backend/models/organization.py` with `AsyncOrganizationRecord`
-- [ ] Methods: `create()`, `get_by_id()`, `get_by_slug()`, `update()`, `list_all()`
-- [ ] Index on `slug` (unique)
-
-#### 1.2 Update User Model
-- [ ] Add `organization_id` field to `AsyncUserRecord`
-- [ ] Update `create_user()` to require `organization_id`
-- [ ] Update `get_user_by_email()` to return `organization_id`
-- [ ] Add method `get_users_by_organization()`
-
-#### 1.3 Update Patient Model
-- [ ] Add `organization_id` field (required, auto-populated from user's org)
-- [ ] Add `custom_fields` dict field
-- [ ] Update ALL query methods to filter by `organization_id`
-- [ ] Remove hardcoded fields (insurance_member_id, cpt_code, etc.) - move to custom_fields
-- [ ] Index on `organization_id`
-
-#### 1.4 Update Session Model
-- [ ] Add `organization_id` field
-- [ ] Filter queries by `organization_id`
-
-**Note**: No migration script needed - we will delete existing test data and rebuild with the new schema.
+## Collections Summary
+- **organizations** - Org config, workflows, patient schemas
+- **users** - User accounts linked to organizations
+- **patients** - Patient data (flat fields per workflow schema)
+- **sessions** - Call sessions with transcripts
+- **audit_logs** - HIPAA-compliant audit trail (6-year retention)
 
 ---
 
-### Phase 2: Authentication & Authorization
-
-#### 2.1 Update JWT Tokens
-- [ ] Add `organization_id` to JWT payload in `backend/api/auth.py`
-- [ ] Add `organization_slug` to token for frontend routing
-
-#### 2.2 Create Tenant Context Dependency
-- [ ] Create `backend/api/dependencies.py`
-- [ ] `get_current_organization()` - extracts org from JWT
-- [ ] `require_organization_access()` - validates user belongs to org
-- [ ] Inject into all patient/session endpoints
-
-#### 2.3 Update Auth Endpoints
-- [ ] Modify `/register` to accept `organization_id` (admin creates orgs first)
-- [ ] Modify `/login` response to include organization details (branding, client_name, patient_schema)
-
-#### 2.4 Audit Logging
-- [ ] Add `organization_id` to all PHI access logs
-- [ ] Update `log_phi_access()` function
+## Implementation Principles
+1. **Database is single source of truth** - All field definitions come from `org.workflows[workflow].patient_schema`
+2. **Minimal changes only** - Don't refactor unrelated code. Don't add features not specified.
+3. **Reuse existing patterns** - Follow the codebase's existing style.
+4. **Zero latency impact** - Schema fetched once at login, patient data pushed to bot on call-start.
+5. **HIPAA compliance is non-negotiable** - Every query MUST filter by `organization_id`.
+6. **Tenant isolation** - Users only see their org's data, scoped by workflow.
 
 ---
 
-### Phase 3: API Endpoints
+## Phase 6: Local Testing & Deployment
 
-#### 3.1 Organization Management Endpoints
-- [ ] `POST /organizations` - create new org (super admin only, used during onboarding)
+### 6.1 Create Demo Organizations in MongoDB
+```bash
+python scripts/setup_multi_tenant.py
+```
 
-#### 3.2 Update Patient Endpoints
-- [ ] `GET /patients` - filter by org from JWT (user only sees their org's patients)
-- [ ] `POST /patients` - auto-populate `organization_id` from JWT, validate custom_fields against schema
-- [ ] `PUT /patients/{id}` - verify org ownership before update
-- [ ] `DELETE /patients/{id}` - verify org ownership before delete
+### 6.2 Local End-to-End Testing
 
-#### 3.3 Update Call Endpoints
-- [ ] Pass `organization_id` to bot in session params
-- [ ] Validate `client_name` from request is in org's `enabled_flows`
+1. **Start backend** (Terminal 1): `ENV=local python app.py`
+2. **Start bot server** (Terminal 2): `python bot.py`
+3. **Start frontend for Alpha** (Terminal 3): `cd frontend && PORT=3000 npm run dev`
+4. **Start frontend for Beta** (Terminal 4): `cd frontend && PORT=3001 npm run dev`
 
----
+5. **Test DemoClinicAlpha workflow:**
+   - Open `http://localhost:3000`
+   - Login: `adambehun22@gmail.com` / `REDACTED`
+   - Select `prior_auth` workflow
+   - Create patient with prior auth fields
+   - Start call → verify bot loads `clients/demo_clinic_alpha/prior_auth/`
 
-### Phase 4: Bot Integration
+6. **Test DemoClinicBeta workflow:**
+   - Open `http://localhost:3001`
+   - Login: `adam@datasova.com` / `REDACTED`
+   - Select `patient_questions` workflow
+   - Create patient with patient questions fields
+   - Start call → verify bot loads `clients/demo_clinic_beta/patient_questions/`
 
-**How data flows to bot (already implemented):**
-1. Backend fetches patient from DB → passes as `patient_data` in `SessionParams.data`
-2. Bot receives via `args.body.get("patient_data")`
-3. FlowLoader loads flow class based on `client_name`
-4. Flow definition receives `patient_data` in constructor
+7. **Verify tenant isolation:**
+   - Alpha user cannot see Beta's patients
+   - Beta user cannot see Alpha's patients
 
-**Changes needed:**
+### 6.3 Configure DNS & Vercel for Subdomains
+- Configure wildcard subdomain `*.datasova.com` OR specific subdomains
+- Set up `democlinicalpha.datasova.com` → Vercel
+- Set up `democlinicbeta.datasova.com` → Vercel
 
-#### 4.1 Pass Organization Context
-- [ ] Add `organization_id` to session params data (for tracing/logging)
-
-#### 4.2 Update Flow Definitions for custom_fields
-- [ ] Modify `PriorAuthFlow` to read from `patient_data["custom_fields"]` instead of top-level fields
-- [ ] Example: `patient_data["custom_fields"]["cpt_code"]` instead of `patient_data["cpt_code"]`
-- [ ] Update function handlers (e.g., `update_prior_auth_status`) to write to `custom_fields`
-
-#### 4.3 Tracing (Optional Enhancement)
-- [ ] Add `organization.id` to OpenTelemetry span attributes for filtering in Langfuse
-
----
-
-### Phase 5: Frontend Changes
-
-#### 5.1 Subdomain Detection & Org Context
-- [ ] Create `src/utils/tenant.ts` - extract org slug from subdomain
-- [ ] Store org context in React context after login
-- [ ] Org config comes from login response (branding, patient_schema, client_name)
-
-#### 5.2 Auth Flow Updates
-- [ ] Store organization details in auth state after login
-- [ ] Login response includes full org config
-
-#### 5.3 Update Patient Form for custom_fields
-- [ ] Modify existing `PatientForm.tsx` to render fields from `organization.patient_schema`
-- [ ] Replace hardcoded fields (insurance_member_id, cpt_code, etc.) with dynamic rendering
-- [ ] Handle field types: string, select, date
-- [ ] Validate required fields based on schema
-- [ ] Remove old hardcoded field components (don't create new file, update existing)
-
-#### 5.4 Apply Organization Branding
-- [ ] Display `branding.company_name` in dashboard header
-- [ ] Update patient list columns based on schema fields
-
-#### 5.5 Type Updates
-- [ ] Add `Organization` type to `types.ts`
-- [ ] Update `Patient` type with `custom_fields: Record<string, any>`
-- [ ] Update `AuthResponse` to include organization
-
-#### 5.6 API Client Updates
-- [ ] Update `api.ts` to handle patient with custom_fields
-- [ ] Remove hardcoded patient field types
-
----
-
-### Phase 6: Deployment & Infrastructure
-
-#### 6.1 Vercel Configuration
-- [ ] Configure wildcard subdomain (`*.datasova.com`)
-- [ ] Update `vercel.json` for subdomain routing
-- [ ] Environment variable for base domain
-
-#### 6.2 Database Indexes
-- [ ] Add compound indexes: `(organization_id, created_at)` on patients
-- [ ] Add unique index on `organizations.slug`
-- [ ] Add index on `users.organization_id`
-
-#### 6.3 Environment Variables
-- [ ] Add `BASE_DOMAIN=datasova.com` to frontend
-- [ ] Document new env vars
-
----
-
-### Phase 7: Testing & Validation
-
-**Focus on reliability over test coverage - keep it simple and HIPAA compliant.**
-
-#### 7.1 Manual Testing Checklist
-- [ ] User from Org A cannot see Org B's patients (critical HIPAA requirement)
-- [ ] Patient creation auto-populates organization_id from JWT
-- [ ] Login returns correct org config with patient_schema
-- [ ] Call startup works end-to-end with organization context
-- [ ] Bot receives patient data with custom_fields
-
-#### 7.2 Verify Data Isolation
-- [ ] All patient queries include organization_id filter
-- [ ] Session queries include organization_id filter
-- [ ] No API endpoint returns cross-org data
-
-#### 7.3 Documentation
-- [ ] Update CLAUDE.md with multi-tenancy architecture
-- [ ] Document new organization onboarding steps
-
----
-
-## Adding a New Organization
-
-1. **Create workflow(s)** in `clients/` for this org:
-   - `clients/<workflow_name>/flow_definition.py`
-   - `clients/<workflow_name>/services.yaml`
-
-2. **Create organization record** in MongoDB:
-   ```python
-   {
-       "name": "New Clinic",
-       "slug": "new-clinic",
-       "enabled_flows": ["<workflow_name>"],
-       "patient_schema": { "fields": [...] },
-       "branding": { "company_name": "New Clinic" }
-   }
+### 6.4 Deploy to Production
+1. **Deploy backend to Fly.io:** `fly deploy`
+2. **Deploy bot to Pipecat Cloud:**
+   ```bash
+   docker buildx build --platform linux/arm64 -f Dockerfile.bot -t adambehun/healthcare-bot:latest --push .
+   pipecatcloud deploy
    ```
-
-3. **Create admin user** with `organization_id`
-
-4. **Deploy**: `./deploy-test.sh` then `./deploy-prod.sh`
-
-5. **Configure DNS** for subdomain (if not using wildcard)
-
-6. Organization accesses via `{slug}.datasova.com`
-
-No frontend or backend code changes required - just workflow code and database records.
-
----
-
-## HIPAA Compliance Checklist
-
-- [ ] All queries filter by `organization_id` (no cross-tenant access)
-- [ ] JWT tokens include `organization_id` for stateless validation
-- [ ] Audit logs include `organization_id`
-- [ ] BAA tracking per organization (`hipaa_baa_signed_at`)
-- [ ] PHI access logged with org context
-- [ ] Database indexes support efficient org-scoped queries
-- [ ] No patient data in URLs or logs without org context
-
----
-
-## File Changes Summary
-
-### New Files
-- `backend/models/organization.py`
-- `backend/api/dependencies.py`
-- `backend/api/organizations.py`
-- `scripts/migrate_to_multitenancy.py`
-- `frontend/src/utils/tenant.ts`
-- `frontend/src/components/DynamicPatientForm.tsx`
-- `frontend/src/context/OrganizationContext.tsx`
-
-### Modified Files
-- `backend/models.py` - Add organization_id to User, Patient, Session
-- `backend/api/auth.py` - JWT with org context, org config endpoint
-- `backend/api/patients.py` - Org-scoped queries
-- `backend/api/calls.py` - Pass org to bot
-- `bot.py` - Receive org context
-- `clients/prior_auth/flow_definition.py` - Use custom_fields
-- `frontend/src/App.tsx` - Subdomain detection, org context
-- `frontend/src/types.ts` - Organization type, updated Patient
-- `frontend/src/api.ts` - Org-aware API calls
-- `frontend/src/components/PatientForm.tsx` - Dynamic fields
-- `frontend/vercel.json` - Subdomain routing
+3. **Deploy frontend to Vercel:** `cd frontend && vercel --prod`
+4. **Verify production:** Test login at both subdomains, test full call flow for both organizations

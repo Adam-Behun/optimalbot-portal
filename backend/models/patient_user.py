@@ -13,54 +13,90 @@ logger = logging.getLogger(__name__)
 
 class AsyncPatientRecord:
     """Async database operations for patient records"""
-    
+
     def __init__(self, db_client: AsyncIOMotorClient):
         self.client = db_client
         self.db = db_client[os.getenv("MONGO_DB_NAME", "alfons")]
         self.patients = self.db.patients
-    
-    async def find_patient_by_id(self, patient_id: str) -> Optional[dict]:
-        """Find patient by MongoDB ObjectId"""
+
+    async def _ensure_indexes(self):
+        """Create indexes for patient collection"""
         try:
-            patient = await self.patients.find_one({"_id": ObjectId(patient_id)})
+            await self.patients.create_index([("organization_id", 1), ("created_at", -1)])
+        except Exception as e:
+            logger.warning(f"Index creation warning: {e}")
+
+    async def find_patient_by_id(self, patient_id: str, organization_id: str = None) -> Optional[dict]:
+        """Find patient by MongoDB ObjectId, optionally filtered by organization"""
+        try:
+            query = {"_id": ObjectId(patient_id)}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            patient = await self.patients.find_one(query)
             return patient
         except Exception as e:
             logger.error(f"Error finding patient {patient_id}: {e}")
             return None
-    
-    async def find_patients_by_status(self, status: str) -> List[dict]:
+
+    async def find_patients_by_organization(self, organization_id: str, workflow: str = None) -> List[dict]:
+        """Find all patients for an organization, optionally filtered by workflow"""
+        try:
+            query = {"organization_id": ObjectId(organization_id)}
+            if workflow:
+                query["workflow"] = workflow
+            cursor = self.patients.find(query).sort("created_at", -1)
+            return await cursor.to_list(length=None)
+        except Exception as e:
+            logger.error(f"Error finding patients for org {organization_id}: {e}")
+            return []
+
+    async def find_patients_by_status(self, status: str, organization_id: str = None) -> List[dict]:
         """Find all patients with a specific prior auth status"""
         try:
-            cursor = self.patients.find({"prior_auth_status": status})
+            query = {"prior_auth_status": status}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            cursor = self.patients.find(query)
             return await cursor.to_list(length=None)
         except Exception as e:
             logger.error(f"Error finding patients with status {status}: {e}")
             return []
-    
+
     async def add_patient(self, patient_data: dict) -> Optional[str]:
-        """Insert a new patient record"""
+        """Insert a new patient record with flat fields"""
         try:
+            await self._ensure_indexes()
+
             now = datetime.utcnow().isoformat()
+
+            # Convert organization_id to ObjectId if provided as string
+            if "organization_id" in patient_data and isinstance(patient_data["organization_id"], str):
+                patient_data["organization_id"] = ObjectId(patient_data["organization_id"])
+
+            # Add system fields
             patient_data.update({
                 "created_at": now,
                 "updated_at": now,
-                "call_status": patient_data.get("call_status", "Not Started"),
-                "prior_auth_status": patient_data.get("prior_auth_status", "Pending")
+                "call_status": patient_data.get("call_status", "Not Started")
             })
-            
+
             result = await self.patients.insert_one(patient_data)
             return str(result.inserted_id)
         except Exception as e:
             logger.error(f"Error adding patient: {e}")
             return None
-    
-    async def update_patient(self, patient_id: str, update_fields: dict) -> bool:
+
+    async def update_patient(self, patient_id: str, update_fields: dict, organization_id: str = None) -> bool:
         """Generic update method for any patient fields"""
         try:
             update_fields["updated_at"] = datetime.utcnow().isoformat()
-            
+
+            query = {"_id": ObjectId(patient_id)}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+
             result = await self.patients.update_one(
-                {"_id": ObjectId(patient_id)},
+                query,
                 {"$set": update_fields}
             )
             return result.modified_count > 0
@@ -68,22 +104,29 @@ class AsyncPatientRecord:
             logger.error(f"Error updating patient {patient_id}: {e}")
             return False
     
-    async def update_prior_auth(
-        self, 
-        patient_id: str, 
-        status: str, 
-        reference_number: Optional[str] = None
+    async def update_field(
+        self,
+        patient_id: str,
+        field_key: str,
+        value: any,
+        organization_id: str = None
     ) -> bool:
-        """Update prior authorization status and reference number"""
-        update_fields = {"prior_auth_status": status}
-        if reference_number:
-            update_fields["reference_number"] = reference_number
-        
-        return await self.update_patient(patient_id, update_fields)
-    
-    async def update_call_status(self, patient_id: str, status: str) -> bool:
+        """Update a single field by key (flat storage)"""
+        update_fields = {field_key: value}
+        return await self.update_patient(patient_id, update_fields, organization_id)
+
+    async def update_fields(
+        self,
+        patient_id: str,
+        fields: dict,
+        organization_id: str = None
+    ) -> bool:
+        """Update multiple fields (flat storage)"""
+        return await self.update_patient(patient_id, fields, organization_id)
+
+    async def update_call_status(self, patient_id: str, status: str, organization_id: str = None) -> bool:
         """Update call status"""
-        return await self.update_patient(patient_id, {"call_status": status})
+        return await self.update_patient(patient_id, {"call_status": status}, organization_id)
     
     async def save_call_transcript(
         self, 
@@ -111,10 +154,13 @@ class AsyncPatientRecord:
             logger.error(f"Error getting transcript for {patient_id}: {e}")
             return None
     
-    async def delete_patient(self, patient_id: str) -> bool:
+    async def delete_patient(self, patient_id: str, organization_id: str = None) -> bool:
         """Delete a patient by ObjectId"""
         try:
-            result = await self.patients.delete_one({"_id": ObjectId(patient_id)})
+            query = {"_id": ObjectId(patient_id)}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            result = await self.patients.delete_one(query)
             return result.deleted_count > 0
         except Exception as e:
             logger.error(f"Error deleting patient {patient_id}: {e}")
@@ -134,9 +180,10 @@ class AsyncUserRecord:
         self.users = self.db.users
 
     async def _ensure_indexes(self):
-        """Create unique index on email field"""
+        """Create indexes for user collection"""
         try:
             await self.users.create_index("email", unique=True)
+            await self.users.create_index("organization_id")
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
@@ -200,6 +247,7 @@ class AsyncUserRecord:
         self,
         email: str,
         password: str,
+        organization_id: str,
         created_by: Optional[str] = None,
         role: str = "user"
     ) -> Optional[str]:
@@ -209,6 +257,7 @@ class AsyncUserRecord:
         Args:
             email: User email (must be unique)
             password: Plain text password (will be hashed)
+            organization_id: Organization this user belongs to (required)
             created_by: User ID of creator (for audit)
             role: User role (default: "user")
 
@@ -244,6 +293,7 @@ class AsyncUserRecord:
                 "email": email.lower(),
                 "hashed_password": hashed_password,
                 "password_history": [hashed_password],  # Initialize with first password
+                "organization_id": ObjectId(organization_id),
                 "role": role,
                 "status": "active",
                 "failed_login_attempts": 0,
@@ -266,6 +316,17 @@ class AsyncUserRecord:
         except Exception as e:
             logger.error(f"Error creating user {email}: {e}")
             return None
+
+    async def get_users_by_organization(self, organization_id: str) -> List[dict]:
+        """Get all users for an organization"""
+        try:
+            cursor = self.users.find(
+                {"organization_id": ObjectId(organization_id)}
+            ).sort("created_at", -1)
+            return await cursor.to_list(length=None)
+        except Exception as e:
+            logger.error(f"Error finding users for org {organization_id}: {e}")
+            return []
 
     async def find_user_by_email(self, email: str) -> Optional[dict]:
         """Find user by email address"""

@@ -29,7 +29,8 @@ class PipelineFactory:
         session_data: Dict[str, Any],
         room_config: Dict[str, str]
     ) -> tuple:
-        services_config = PipelineFactory._load_services_config(client_name)
+        organization_slug = session_data.get('organization_slug')
+        services_config = PipelineFactory._load_services_config(organization_slug, client_name)
 
         main_llm = ServiceFactory.create_llm(
             services_config['services']['llm']
@@ -70,9 +71,9 @@ class PipelineFactory:
         return pipeline, params, services['transport'], components
 
     @staticmethod
-    def _load_services_config(client_name: str) -> Dict[str, Any]:
+    def _load_services_config(organization_slug: str, client_name: str) -> Dict[str, Any]:
         """Load and parse services.yaml for a client."""
-        client_path = Path(f"clients/{client_name}")
+        client_path = Path(f"clients/{organization_slug}/{client_name}")
         services_path = client_path / "services.yaml"
 
         with open(services_path, 'r') as f:
@@ -107,7 +108,9 @@ class PipelineFactory:
 
         transcript_processor = TranscriptProcessor()
 
-        flow_loader = FlowLoader(client_name)
+        organization_slug = session_data.get('organization_slug')
+        organization_id = session_data.get('organization_id')
+        flow_loader = FlowLoader(organization_slug, client_name)
         FlowClass = flow_loader.load_flow_class()
 
         # IVRNavigator uses llm_switcher to support dynamic LLM switching
@@ -125,7 +128,8 @@ class PipelineFactory:
             flow_manager=None,
             main_llm=services['main_llm'],
             classifier_llm=services['classifier_llm'],
-            context_aggregator=context_aggregator
+            context_aggregator=context_aggregator,
+            organization_id=organization_id
         )
 
         return {

@@ -1,4 +1,3 @@
-import { Navigate } from 'react-router-dom';
 import { isAuthenticated } from '@/lib/auth';
 
 interface ProtectedRouteProps {
@@ -7,8 +6,9 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   if (!isAuthenticated()) {
-    // Redirect to login if not authenticated
-    return <Navigate to="/login" replace />;
+    // Redirect to landing page if not authenticated
+    window.location.href = 'https://datasova.com';
+    return null;
   }
 
   return <>{children}</>;

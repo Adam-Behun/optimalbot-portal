@@ -12,14 +12,16 @@ import { LandingPage } from './components/LandingPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
 import { Workflows } from './components/Workflows';
+import { SessionTimeoutModal } from './components/SessionTimeoutModal';
 
 const App = () => {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="healthcare-ui-theme">
       <Router>
-        <div className="min-h-screen bg-background">
-          <main>
-            <Routes>
+        <SessionTimeoutModal>
+          <div className="min-h-screen bg-background">
+            <main>
+              <Routes>
               {/* Public routes */}
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={
@@ -75,10 +77,11 @@ const App = () => {
                   <Workflows />
                 </ProtectedRoute>
               } />
-            </Routes>
-          </main>
-        </div>
-        <Toaster />
+              </Routes>
+            </main>
+          </div>
+          <Toaster />
+        </SessionTimeoutModal>
       </Router>
     </ThemeProvider>
   );

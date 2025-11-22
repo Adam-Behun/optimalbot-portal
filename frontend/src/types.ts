@@ -1,28 +1,49 @@
-// Patient interface matching the MongoDB schema
+// Patient interface matching the MongoDB schema - flat field storage
 export interface Patient {
   patient_id: string; // MongoDB ObjectID as string
-  patient_name: string;
-  date_of_birth: string;
-  insurance_member_id: string;
-  insurance_company_name: string;
-  insurance_phone: string; // Format: +1234567890
-  supervisor_phone?: string; // Format: +1234567890
-  facility_name: string;
-  cpt_code: string;
-  provider_npi: string;
-  provider_name: string;
-  appointment_time: string;
-  prior_auth_status: string;
-  reference_number?: string;
+  organization_id: string;
+  workflow: string; // Workflow this patient belongs to
+
+  // All other fields are stored flat (dynamic based on workflow schema)
   [key: string]: any;
 
-  // Call-related fields
+  // System fields
   call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Completed - Left VM' | 'Call Transferred';
   call_transcript?: string; // JSON string of transcript array
-
-  // Timestamps
+  last_call_session_id?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+// Schema field definition for dynamic form generation
+export interface SchemaField {
+  key: string;
+  label: string;
+  type: 'string' | 'select' | 'date';
+  required: boolean;
+  display_in_list: boolean;
+  display_order: number;
+  options?: string[]; // for select type
+  default?: string;
+}
+
+// Workflow configuration
+export interface WorkflowConfig {
+  enabled: boolean;
+  patient_schema: {
+    fields: SchemaField[];
+  };
+}
+
+// Organization configuration
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  branding: {
+    company_name: string;
+  };
+  workflows: Record<string, WorkflowConfig>;
 }
 
 // API response types
@@ -57,21 +78,6 @@ export interface StartCallResponse {
   message: string;
 }
 
-// Unified form data for adding patient(s)
-export interface AddPatientFormData {
-  patient_name: string;
-  date_of_birth: string;
-  insurance_member_id: string;
-  insurance_company_name: string;
-  insurance_phone: string; // Format: +1234567890
-  supervisor_phone?: string; // Format: +1234567890 (optional)
-  facility_name: string;
-  cpt_code: string;
-  provider_npi: string;
-  provider_name: string;
-  appointment_time: string;
-}
-
 // Bulk add response
 export interface BulkAddResponse {
   status: string;
@@ -97,6 +103,7 @@ export interface TranscriptMessage {
 export interface LoginRequest {
   email: string;
   password: string;
+  organization_slug?: string;
 }
 
 export interface AuthResponse {
@@ -104,4 +111,5 @@ export interface AuthResponse {
   token_type: string;
   user_id: string;
   email: string;
+  organization: Organization;
 }
