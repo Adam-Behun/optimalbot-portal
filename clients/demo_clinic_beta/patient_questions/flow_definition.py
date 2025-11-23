@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
+from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat.frames.frames import ManuallySwitchServiceFrame, EndTaskFrame
 from pipecat.processors.frame_processor import FrameDirection
 from backend.models import get_async_patient_db
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class PatientQuestionsFlow:
-    """Simple outbound call flow for testing patient questions workflow."""
+    """Dial-in call flow for patient questions workflow - Demo Clinic Beta."""
 
     def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager,
                  main_llm, classifier_llm, context_aggregator=None, transport=None, pipeline=None,
@@ -46,14 +46,13 @@ BEHAVIORAL RULES:
 3. Maintain a professional, courteous tone.
 4. Keep responses concise and natural."""
 
-    def create_greeting_node_after_ivr_completed(self) -> NodeConfig:
-        """Greeting node used after IVR navigation completes."""
-        patient_name = self.patient_data.get('patient_name', '')
+    def create_greeting_node(self) -> NodeConfig:
+        """Initial greeting node when caller connects."""
         facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
         global_instructions = self._get_global_instructions()
 
         return NodeConfig(
-            name="greeting_after_ivr",
+            name="greeting",
             role_messages=[{
                 "role": "system",
                 "content": f"""You are a Virtual Assistant from {facility_name}.
@@ -62,52 +61,11 @@ BEHAVIORAL RULES:
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""A human has answered after IVR navigation. Greet them and introduce yourself.
+                "content": f"""A caller has connected. Greet them warmly.
 
-Say: "Hi, this is a Virtual Assistant from {facility_name}. I'm calling to check in regarding {patient_name}. How are you today?"
+Say: "Hello, thank you for calling {facility_name}. This is a Virtual Assistant. How can I help you today?"
 
-After they respond, call proceed_to_conversation() to continue."""
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="proceed_to_conversation",
-                    description="Transition to conversation node after greeting.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_conversation_handler
-                )
-            ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_classifier_llm
-            }],
-            context_strategy=ContextStrategyConfig(
-                strategy=ContextStrategy.RESET
-            )
-        )
-
-    def create_greeting_node_without_ivr(self) -> NodeConfig:
-        """Greeting node used when human answers directly."""
-        patient_name = self.patient_data.get('patient_name', '')
-        facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
-        global_instructions = self._get_global_instructions()
-
-        return NodeConfig(
-            name="greeting_without_ivr",
-            role_messages=[{
-                "role": "system",
-                "content": f"""You are a Virtual Assistant from {facility_name}.
-
-{global_instructions}"""
-            }],
-            task_messages=[{
-                "role": "system",
-                "content": f"""A human answered directly. Greet them and introduce yourself.
-
-Say: "Hi, this is a Virtual Assistant from {facility_name}. I'm calling to check in regarding {patient_name}. How are you today?"
-
-After they respond, call proceed_to_conversation() to continue."""
+Listen to their response and call proceed_to_conversation() to continue."""
             }],
             functions=[
                 FlowsFunctionSchema(

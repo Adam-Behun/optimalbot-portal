@@ -27,10 +27,16 @@ class PipelineFactory:
     def build(
         client_name: str,
         session_data: Dict[str, Any],
-        room_config: Dict[str, str]
+        room_config: Dict[str, str],
+        dialin_settings: Dict[str, str] = None
     ) -> tuple:
         organization_slug = session_data.get('organization_slug')
         services_config = PipelineFactory._load_services_config(organization_slug, client_name)
+
+        # Extract call_type from services config (required field)
+        call_type = services_config.get('call_type')
+        if not call_type:
+            raise ValueError(f"Missing required 'call_type' in services.yaml for {organization_slug}/{client_name}")
 
         main_llm = ServiceFactory.create_llm(
             services_config['services']['llm']
@@ -53,7 +59,8 @@ class PipelineFactory:
                 services_config['services']['transport'],
                 room_config['room_url'],
                 room_config['room_token'],
-                room_config['room_name']
+                room_config['room_name'],
+                dialin_settings
             ),
             'main_llm': main_llm,
             'classifier_llm': classifier_llm,
@@ -63,7 +70,8 @@ class PipelineFactory:
         components = PipelineFactory._create_conversation_components(
             client_name,
             session_data,
-            services
+            services,
+            call_type
         )
 
         pipeline, params = PipelineFactory._assemble_pipeline(services, components)
@@ -99,7 +107,8 @@ class PipelineFactory:
     def _create_conversation_components(
         client_name: str,
         session_data: Dict[str, Any],
-        services: Dict[str, Any]
+        services: Dict[str, Any],
+        call_type: str
     ) -> Dict[str, Any]:
         """Create FlowManager and conversation components."""
 
@@ -139,7 +148,8 @@ class PipelineFactory:
             'flow': flow,
             'main_llm': services['main_llm'],
             'classifier_llm': services['classifier_llm'],
-            'llm_switcher': services['llm_switcher']
+            'llm_switcher': services['llm_switcher'],
+            'call_type': call_type
         }
 
     @staticmethod

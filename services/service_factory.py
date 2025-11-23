@@ -6,7 +6,7 @@ from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.anthropic.llm import AnthropicLLMService
-from pipecat.transports.daily.transport import DailyParams, DailyTransport
+from pipecat.transports.daily.transport import DailyDialinSettings, DailyParams, DailyTransport
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
 
@@ -17,19 +17,33 @@ class ServiceFactory:
         config: Dict[str, Any],
         room_url: str,
         room_token: str,
-        room_name: str
+        room_name: str,
+        dialin_settings: Dict[str, str] = None
     ) -> DailyTransport:
+        # Build DailyParams based on call type
+        params_dict = {
+            'api_key': config['api_key'],
+            'audio_in_enabled': True,
+            'audio_out_enabled': True,
+            'transcription_enabled': False
+        }
+
+        if dialin_settings:
+            # Dial-in: use DailyDialinSettings
+            daily_dialin_settings = DailyDialinSettings(
+                call_id=dialin_settings['call_id'],
+                call_domain=dialin_settings['call_domain']
+            )
+            params_dict['dialin_settings'] = daily_dialin_settings
+        else:
+            # Dial-out: use phone_number_id
+            params_dict['phone_number_id'] = config['phone_number_id']
+
         transport = DailyTransport(
             room_url,
             room_token,
             room_name,
-            params=DailyParams(
-                api_key=config['api_key'],
-                phone_number_id=config['phone_number_id'],
-                audio_in_enabled=True,
-                audio_out_enabled=True,
-                transcription_enabled=False
-            )
+            params=DailyParams(**params_dict)
         )
         return transport
 

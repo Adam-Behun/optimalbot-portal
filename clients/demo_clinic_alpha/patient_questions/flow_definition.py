@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
+from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat.frames.frames import ManuallySwitchServiceFrame, EndTaskFrame
 from pipecat.processors.frame_processor import FrameDirection
 from backend.models import get_async_patient_db
@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 class PatientQuestionsFlow:
-    """Outbound call flow for patient questions workflow - Demo Clinic Alpha.
+    """Dial-in call flow for patient questions workflow - Demo Clinic Alpha.
 
-    This flow handles patient check-in calls with specific questions to ask.
+    This flow handles incoming patient calls with specific questions to ask.
     All patient fields are read FLAT from patient_data (no custom_fields nesting).
     """
 
@@ -53,14 +53,14 @@ BEHAVIORAL RULES:
 4. Keep responses concise and natural.
 5. Your primary goal is to ask the patient the questions listed above."""
 
-    def create_greeting_node_after_ivr_completed(self) -> NodeConfig:
-        """Greeting node used after IVR navigation completes."""
+    def create_greeting_node(self) -> NodeConfig:
+        """Initial greeting node when caller connects."""
         patient_name = self.patient_data.get('patient_name', '')
         facility_name = self.patient_data.get('facility_name', 'Demo Clinic Alpha')
         global_instructions = self._get_global_instructions()
 
         return NodeConfig(
-            name="greeting_after_ivr",
+            name="greeting",
             role_messages=[{
                 "role": "system",
                 "content": f"""You are a Virtual Assistant from {facility_name}.
@@ -69,52 +69,11 @@ BEHAVIORAL RULES:
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""A human has answered after IVR navigation. Greet them and introduce yourself.
+                "content": f"""A caller has connected. Greet them warmly.
 
-Say: "Hi, this is a Virtual Assistant from {facility_name}. I'm calling to check in regarding {patient_name}. How are you today?"
+Say: "Hello, thank you for calling {facility_name}. This is a Virtual Assistant. How can I help you today?"
 
-After they respond, call proceed_to_questions() to continue."""
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="proceed_to_questions",
-                    description="Transition to questions node after greeting.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_questions_handler
-                )
-            ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_classifier_llm
-            }],
-            context_strategy=ContextStrategyConfig(
-                strategy=ContextStrategy.RESET
-            )
-        )
-
-    def create_greeting_node_without_ivr(self) -> NodeConfig:
-        """Greeting node used when human answers directly."""
-        patient_name = self.patient_data.get('patient_name', '')
-        facility_name = self.patient_data.get('facility_name', 'Demo Clinic Alpha')
-        global_instructions = self._get_global_instructions()
-
-        return NodeConfig(
-            name="greeting_without_ivr",
-            role_messages=[{
-                "role": "system",
-                "content": f"""You are a Virtual Assistant from {facility_name}.
-
-{global_instructions}"""
-            }],
-            task_messages=[{
-                "role": "system",
-                "content": f"""A human answered directly. Greet them and introduce yourself.
-
-Say: "Hi, this is a Virtual Assistant from {facility_name}. I'm calling to check in regarding {patient_name}. How are you today?"
-
-After they respond, call proceed_to_questions() to continue."""
+Listen to their response and call proceed_to_questions() to continue."""
             }],
             functions=[
                 FlowsFunctionSchema(

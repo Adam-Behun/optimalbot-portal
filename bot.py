@@ -58,27 +58,65 @@ async def bot(args: DailyRunnerArguments):
         session_id = args.body.get("session_id")
         patient_id = args.body.get("patient_id")
         patient_data = args.body.get("patient_data")
-        phone_number = args.body.get("phone_number")
         client_name = args.body.get("client_name", "prior_auth")
         organization_id = args.body.get("organization_id")
         organization_slug = args.body.get("organization_slug")
 
-        if not all([session_id, patient_id, patient_data, phone_number, organization_id, organization_slug]):
-            raise ValueError("Missing required: session_id, patient_id, patient_data, phone_number, organization_id, organization_slug")
+        # Detect dial-in vs dial-out based on presence of call_id/call_domain
+        # These fields come ONLY from Daily webhook for incoming calls
+        call_id = args.body.get("call_id")
+        call_domain = args.body.get("call_domain")
+        phone_number = args.body.get("phone_number")
+
+        # Determine call type and dialin_settings
+        # CRITICAL: These are mutually exclusive - a call is either dial-in OR dial-out
+        if call_id and call_domain:
+            # DIAL-IN: Incoming call from Daily webhook
+            # - call_id and call_domain are ONLY present for dial-in
+            # - phone_number should NOT be present (we don't dial out)
+            if phone_number:
+                raise ValueError("Dial-in calls must not have phone_number - dial-in numbers cannot make outbound calls")
+
+            call_type = "dial-in"
+            dialin_settings = {
+                "call_id": call_id,
+                "call_domain": call_domain
+            }
+            # For dial-in, caller's phone is in patient_data
+            caller_phone = patient_data.get("caller_phone", "unknown")
+            logger.info(f"DIAL-IN call detected - Call ID: {call_id}, Caller: {caller_phone}")
+        else:
+            # DIAL-OUT: Outbound call to phone_number
+            # - phone_number is REQUIRED
+            # - call_id/call_domain must NOT be present
+            if not phone_number:
+                raise ValueError("Dial-out calls require phone_number - this number makes outbound calls only")
+
+            call_type = "dial-out"
+            dialin_settings = None
+            logger.info(f"DIAL-OUT call detected - Dialing: {phone_number}")
+
+        if not all([session_id, patient_id, patient_data, organization_id, organization_slug]):
+            raise ValueError("Missing required: session_id, patient_id, patient_data, organization_id, organization_slug")
 
         await session_db.update_session(session_id, {
             "status": "running",
             "pid": os.getpid()
         }, organization_id)
 
+        # For dial-in, use caller_phone; for dial-out, use phone_number
+        display_phone = phone_number if call_type == "dial-out" else patient_data.get("caller_phone", "unknown")
+
         pipeline = ConversationPipeline(
             client_name=client_name,
             session_id=session_id,
             patient_id=patient_id,
             patient_data=patient_data,
-            phone_number=phone_number,
+            phone_number=display_phone,
             organization_id=organization_id,
             organization_slug=organization_slug,
+            call_type=call_type,
+            dialin_settings=dialin_settings,
             debug_mode=DEBUG_MODE
         )
 

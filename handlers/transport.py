@@ -7,6 +7,72 @@ from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
 
 
+def setup_transport_handlers(pipeline, call_type: str):
+    """Setup transport handlers based on call type."""
+    if call_type == "dial-in":
+        setup_dialin_handlers(pipeline)
+    else:
+        setup_dialout_handlers(pipeline)
+
+
+def setup_dialin_handlers(pipeline):
+    """Setup Daily dial-in event handlers."""
+
+    @pipeline.transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        """Handle when caller connects - initialize flow and bot speaks first."""
+        logger.info(f"✅ Caller connected: {participant['id']}")
+
+        # Initialize flow with greeting node (respond_immediately=True makes bot speak first)
+        if pipeline.flow and pipeline.flow_manager:
+            initial_node = pipeline.flow.create_greeting_node()
+            await pipeline.flow_manager.initialize(initial_node)
+            logger.info("✅ Flow initialized with greeting node")
+
+    @pipeline.transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(transport, client):
+        """Handle client disconnect - save transcript and cleanup."""
+        logger.info("✅ Caller disconnected")
+
+        try:
+            # Update call status
+            patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
+            current_status = patient.get("call_status") if patient else None
+
+            if current_status not in ["Completed", "Failed"]:
+                await get_async_patient_db().update_call_status(pipeline.patient_id, "Completed")
+                logger.info("✅ Database status updated: Completed (client disconnected)")
+        except Exception as e:
+            logger.error(f"❌ Error updating call status on client disconnect: {e}")
+
+        # Save transcript
+        await save_transcript_to_db(pipeline)
+
+        # Cancel task
+        if pipeline.task:
+            await pipeline.task.cancel()
+            logger.info("✅ Pipeline cancelled (client disconnected)")
+
+    @pipeline.transport.event_handler("on_dialin_error")
+    async def on_dialin_error(transport, data):
+        """Handle dial-in error."""
+        logger.error(f"❌ Dial-in error: {data}")
+
+        try:
+            await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+            logger.info("✅ Database status updated: Failed")
+        except Exception as e:
+            logger.error(f"❌ Error updating call status on dialin error: {e}")
+
+        # Save transcript
+        await save_transcript_to_db(pipeline)
+
+        # Cancel task
+        if pipeline.task:
+            await pipeline.task.cancel()
+            logger.info("✅ Pipeline cancelled (dialin error)")
+
+
 def setup_dialout_handlers(pipeline):
     """Setup Daily dial-out event handlers"""
 

@@ -5,7 +5,7 @@ from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat_flows import FlowManager
 from pipeline.pipeline_factory import PipelineFactory
 from handlers import (
-    setup_dialout_handlers,
+    setup_transport_handlers,
     setup_transcript_handler,
     setup_ivr_handlers,
 )
@@ -24,6 +24,8 @@ class ConversationPipeline:
         phone_number: str,
         organization_id: str,
         organization_slug: str,
+        call_type: str,
+        dialin_settings: Dict[str, str] = None,
         debug_mode: bool = False
     ):
         self.client_name = client_name
@@ -33,6 +35,8 @@ class ConversationPipeline:
         self.phone_number = phone_number
         self.organization_id = organization_id
         self.organization_slug = organization_slug
+        self.call_type = call_type
+        self.dialin_settings = dialin_settings
         self.debug_mode = debug_mode
 
         self.pipeline = None
@@ -50,7 +54,7 @@ class ConversationPipeline:
         self.transcript_saved = False  # Track if transcript has been saved to prevent duplicates
 
     async def run(self, room_url: str, room_token: str, room_name: str):
-        logger.info(f"✅ Starting call session - Client: {self.client_name}, Phone: {self.phone_number}")
+        logger.info(f"✅ Starting {self.call_type} call session - Client: {self.client_name}, Phone: {self.phone_number}")
 
         session_data = {
             'session_id': self.session_id,
@@ -71,7 +75,8 @@ class ConversationPipeline:
         self.pipeline, params, self.transport, components = PipelineFactory.build(
             self.client_name,
             session_data,
-            room_config
+            room_config,
+            self.dialin_settings
         )
 
         self.flow = components['flow']
@@ -109,9 +114,12 @@ class ConversationPipeline:
 
         logger.info("✅ FlowManager initialized")
 
-        setup_dialout_handlers(self)
+        setup_transport_handlers(self, self.call_type)
         setup_transcript_handler(self)
-        setup_ivr_handlers(self, self.ivr_navigator)
+
+        # Only setup IVR handlers for dial-out calls
+        if self.call_type == "dial-out":
+            setup_ivr_handlers(self, self.ivr_navigator)
 
         logger.info("✅ Event handlers registered")
 
