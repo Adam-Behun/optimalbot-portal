@@ -8,7 +8,7 @@ import { PatientDetailSheet } from './patient-detail-sheet';
 import { Button } from '@/components/ui/button';
 import { Phone, Trash2, RefreshCw } from 'lucide-react';
 import { toast } from "sonner";
-import { Navigation } from "@/components/Navigation";
+import { Navigation, WorkflowNavigation } from "@/components/Navigation";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -158,6 +158,7 @@ export default function PatientList() {
     return (
       <>
         <Navigation />
+        <WorkflowNavigation />
         <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
           <p className="text-muted-foreground">Loading patients...</p>
         </div>
@@ -169,6 +170,7 @@ export default function PatientList() {
     return (
       <>
         <Navigation />
+        <WorkflowNavigation />
         <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] gap-4">
           <p className="text-destructive">{error}</p>
           <Button onClick={loadPatients} variant="outline">
@@ -182,6 +184,7 @@ export default function PatientList() {
   return (
     <>
       <Navigation />
+      <WorkflowNavigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         <div className="flex items-center justify-between">
           <div>

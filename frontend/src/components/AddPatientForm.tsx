@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Navigation } from "@/components/Navigation";
+import { Navigation, WorkflowNavigation } from "@/components/Navigation";
 import { toast } from "sonner";
 import { Download, Upload } from "lucide-react";
 import { useRef, useMemo } from 'react';
@@ -160,6 +160,7 @@ John Doe,1990-05-15,${customHeaders.map(() => 'example').join(',')}`;
   return (
     <>
       <Navigation />
+      <WorkflowNavigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         <div>
           <h1 className="text-3xl font-bold">Add Patient</h1>

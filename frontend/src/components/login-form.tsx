@@ -29,7 +29,7 @@ export function LoginForm() {
       setOrganization(response.organization);
 
       toast.success('Logged in successfully!');
-      navigate('/workflows');
+      navigate('/home');
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || 'Invalid email or password';
       toast.error(errorMessage);

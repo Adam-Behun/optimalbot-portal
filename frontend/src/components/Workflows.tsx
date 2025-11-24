@@ -5,6 +5,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { CalendarIcon, Shield, Phone, ClipboardCheck, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
 import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
+import { Navigation } from './Navigation';
 
 // Icons for different workflow types
 const workflowIcons: Record<string, React.ReactNode> = {
@@ -88,7 +89,8 @@ export function Workflows() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
+      <Navigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -240,6 +242,6 @@ export function Workflows() {
           ))}
         </div>}
       </div>
-    </div>
+    </>
   );
 }

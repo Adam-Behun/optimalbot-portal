@@ -13,6 +13,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
 import { Workflows } from './components/Workflows';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
+import { Home } from './components/Home';
 
 const App = () => {
   return (
@@ -47,6 +48,11 @@ const App = () => {
               } />
 
               {/* Protected routes - require authentication */}
+              <Route path="/home" element={
+                <ProtectedRoute>
+                  <Home />
+                </ProtectedRoute>
+              } />
               <Route path="/dashboard" element={
                 <ProtectedRoute>
                   <Dashboard />

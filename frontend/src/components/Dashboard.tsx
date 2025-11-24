@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { getPatients } from '@/api';
 import { Patient } from '@/types';
-import { Navigation } from './Navigation';
+import { Navigation, WorkflowNavigation } from './Navigation';
 import { getSelectedWorkflow } from '@/lib/auth';
 import {
   Empty,
@@ -96,6 +96,7 @@ export function Dashboard() {
     return (
       <>
         <Navigation />
+        <WorkflowNavigation />
         <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
           <p className="text-muted-foreground">Loading dashboard...</p>
         </div>
@@ -106,6 +107,7 @@ export function Dashboard() {
   return (
     <>
       <Navigation />
+      <WorkflowNavigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-8">
         {!hasCalls ? (
           /* Empty State */

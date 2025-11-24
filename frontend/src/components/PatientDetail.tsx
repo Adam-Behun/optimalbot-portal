@@ -146,9 +146,6 @@ const PatientDetail: React.FC<PatientDetailProps> = ({
         </h3>
 
         <div className="space-y-0">
-          <DetailRow label="Patient Name" value={patient.patient_name} />
-          <DetailRow label="Date of Birth" value={patient.date_of_birth} />
-
           {/* Dynamic fields from schema */}
           {(() => {
             const org = getOrganization();

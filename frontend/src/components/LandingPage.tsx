@@ -8,7 +8,7 @@ export function LandingPage() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      navigate('/dashboard');
+      navigate('/home');
     }
   }, [navigate]);
 
