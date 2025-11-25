@@ -13,6 +13,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pipecat.runner.daily import configure
+from backend.models import get_async_patient_db
+from backend.models.organization import get_async_organization_db
+from backend.sessions import get_async_session_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -227,15 +230,28 @@ async def handle_dialin_webhook(
     logger.info(f"=== DIAL-IN WEBHOOK RECEIVED ===")
     logger.info(f"Client: {client_name}, Workflow: {workflow_name}")
 
+    # Look up organization by slug to get ObjectId
+    org_db = get_async_organization_db()
+    organization = await org_db.get_by_slug(client_name)
+
+    if not organization:
+        logger.error(f"Organization not found for slug: {client_name}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Organization '{client_name}' not found"
+        )
+
+    organization_id = str(organization["_id"])
+    logger.info(f"Organization found: {organization.get('name')} (ID: {organization_id})")
+
     # Parse Daily webhook data
     call_data = await call_data_from_request(request)
 
     logger.info(f"From: {call_data.from_phone}, To: {call_data.to_phone}")
     logger.info(f"Call ID: {call_data.call_id}, Domain: {call_data.call_domain}")
 
-    # Generate session and patient IDs for this dial-in call
+    # Generate session ID for this dial-in call
     session_id = str(uuid.uuid4())
-    patient_id = str(uuid.uuid4())  # For dial-in, we create a temporary patient ID
 
     # Create Daily room for dial-in
     async with aiohttp.ClientSession() as http_session:
@@ -243,24 +259,66 @@ async def handle_dialin_webhook(
 
         logger.info(f"Daily room created: {daily_config.room_url}")
 
-        # Build bot request with dial-in specific data
-        # Client name format: {org_slug}/{workflow_name}
-        full_client_name = f"{client_name}/{workflow_name}"
+        # Create patient record for this dial-in call
+        patient_db = get_async_patient_db()
+        patient_data = {
+            "workflow": workflow_name,
+            "patient_name": "Unknown",
+            "date_of_birth": "Unknown",
+            "patient_phone": call_data.from_phone,
+            "organization_id": organization_id,  # Use real ObjectId
+            "call_status": "In Progress"
+        }
+        patient_id = await patient_db.add_patient(patient_data)
 
+        if not patient_id:
+            logger.error("Failed to create patient record")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create patient record"
+            )
+
+        logger.info(f"Patient record created: {patient_id}")
+
+        # Create session record to track this call
+        session_db = get_async_session_db()
+        session_created = await session_db.create_session({
+            "session_id": session_id,
+            "patient_id": patient_id,
+            "phone_number": call_data.from_phone,
+            "client_name": f"{client_name}/{workflow_name}",
+            "organization_id": organization_id,  # Use real ObjectId
+            "call_type": "dial-in"
+        })
+
+        if not session_created:
+            logger.error("Failed to create session record")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create session record"
+            )
+
+        logger.info(f"Session record created: {session_id}")
+
+        # Build bot request with dial-in specific data
+        # Note: client_name should be just the workflow name (e.g., "patient_questions")
+        # organization_slug provides the org context (e.g., "demo_clinic_beta")
         bot_request = DialinBotRequest(
             room_url=daily_config.room_url,
             token=daily_config.token,
             session_id=session_id,
             patient_id=patient_id,
             patient_data={
+                "patient_id": patient_id,  # Pass patient_id to flow
                 "caller_phone": call_data.from_phone,
                 "called_number": call_data.to_phone,
                 "call_type": "dial-in",
+                "workflow": workflow_name,
                 "created_at": datetime.now(timezone.utc).isoformat()
             },
-            client_name=full_client_name,
-            organization_id=client_name,  # Use org slug as ID for dial-in
-            organization_slug=client_name,
+            client_name=workflow_name,  # Just the workflow name
+            organization_id=organization_id,  # Use real ObjectId
+            organization_slug=client_name,  # Organization slug
             call_id=call_data.call_id,
             call_domain=call_data.call_domain
         )

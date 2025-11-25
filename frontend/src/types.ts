@@ -8,7 +8,7 @@ export interface Patient {
   [key: string]: any;
 
   // System fields
-  call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Completed - Left VM' | 'Call Transferred';
+  call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Failed' | 'Supervisor Requested' | 'Completed - Left VM' | 'Call Transferred';
   call_transcript?: string; // JSON string of transcript array
   last_call_session_id?: string;
   created_at?: string;
@@ -17,19 +17,22 @@ export interface Patient {
 
 // Schema field definition for dynamic form generation
 export interface SchemaField {
-  key: string;
-  label: string;
-  type: 'string' | 'select' | 'date';
+  key: string;                    // Field name in patient document
+  label: string;                  // Display label
+  type: 'string' | 'date' | 'datetime' | 'phone' | 'select' | 'text';
   required: boolean;
-  display_in_list: boolean;
-  display_order: number;
-  options?: string[]; // for select type
-  default?: string;
+  display_in_list: boolean;       // Show in patient list table
+  display_order: number;          // Sort order for UI
+  options?: string[];             // For select fields
+  default?: string;               // Default value
+  computed?: boolean;             // True if bot updates (not user-editable)
 }
 
 // Workflow configuration
 export interface WorkflowConfig {
   enabled: boolean;
+  display_name: string;           // Human-readable workflow name
+  description: string;            // Workflow description
   patient_schema: {
     fields: SchemaField[];
   };
@@ -42,6 +45,8 @@ export interface Organization {
   slug: string;
   branding: {
     company_name: string;
+    logo_url?: string;
+    primary_color?: string;
   };
   workflows: Record<string, WorkflowConfig>;
 }
@@ -97,6 +102,24 @@ export interface TranscriptMessage {
   content: string;
   timestamp: string;
   type: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary' | 'transfer';
+}
+
+// Session with transcript
+export interface Session {
+  _id: string;
+  session_id: string;
+  organization_id: string;
+  patient_id: string;
+  workflow: string;
+  status: 'in_progress' | 'completed' | 'failed';
+  phone_number: string;
+  started_at: string;
+  ended_at?: string;
+  duration_seconds?: number;
+  transcript: {
+    messages: TranscriptMessage[];
+    summary?: string;
+  };
 }
 
 // Authentication types

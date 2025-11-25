@@ -51,34 +51,39 @@ async def main():
         "workflows": {
             "prior_auth": {
                 "enabled": True,
+                "display_name": "Prior Authorization",
+                "description": "Outbound calls to insurance companies for prior auth verification",
+                "call_direction": "dial-out",
+                "dial_out_phone_field": "insurance_phone",
                 "patient_schema": {
                     "fields": [
                         {"key": "patient_name", "label": "Patient Name", "type": "string", "required": True, "display_in_list": True, "display_order": 1},
                         {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": True, "display_in_list": True, "display_order": 2},
-                        {"key": "insurance_member_id", "label": "Member ID", "type": "string", "required": True, "display_in_list": True, "display_order": 3},
-                        {"key": "insurance_company_name", "label": "Insurance Company", "type": "string", "required": True, "display_in_list": False, "display_order": 4},
-                        {"key": "insurance_phone", "label": "Insurance Phone", "type": "string", "required": True, "display_in_list": True, "display_order": 5},
-                        {"key": "facility_name", "label": "Facility", "type": "string", "required": True, "display_in_list": False, "display_order": 6},
+                        {"key": "provider_call_back_phone", "label": "Provider Callback Phone", "type": "phone", "required": True, "display_in_list": True, "display_order": 3},
+                        {"key": "insurance_member_id", "label": "Member ID", "type": "string", "required": True, "display_in_list": True, "display_order": 4},
+                        {"key": "insurance_company_name", "label": "Insurance Company", "type": "string", "required": True, "display_in_list": False, "display_order": 5},
+                        {"key": "insurance_phone", "label": "Insurance Phone", "type": "phone", "required": True, "display_in_list": True, "display_order": 6},
                         {"key": "provider_name", "label": "Provider Name", "type": "string", "required": True, "display_in_list": False, "display_order": 7},
                         {"key": "provider_npi", "label": "Provider NPI", "type": "string", "required": True, "display_in_list": False, "display_order": 8},
-                        {"key": "cpt_code", "label": "CPT Code", "type": "string", "required": True, "display_in_list": True, "display_order": 9},
-                        {"key": "appointment_time", "label": "Appointment Time", "type": "datetime", "required": True, "display_in_list": False, "display_order": 10},
-                        {"key": "supervisor_phone", "label": "Supervisor Phone", "type": "string", "required": False, "display_in_list": False, "display_order": 11},
-                        {"key": "prior_auth_status", "label": "Auth Status", "type": "select", "options": ["Pending", "Approved", "Denied"], "default": "Pending", "required": False, "display_in_list": True, "display_order": 12},
-                        {"key": "reference_number", "label": "Reference #", "type": "string", "required": False, "display_in_list": True, "display_order": 13}
+                        {"key": "facility_name", "label": "Facility", "type": "string", "required": True, "display_in_list": False, "display_order": 9},
+                        {"key": "cpt_code", "label": "CPT Code", "type": "string", "required": True, "display_in_list": True, "display_order": 10},
+                        {"key": "appointment_time", "label": "Appointment Time", "type": "datetime", "required": True, "display_in_list": False, "display_order": 11},
+                        {"key": "supervisor_phone", "label": "Supervisor Phone", "type": "phone", "required": False, "display_in_list": False, "display_order": 12},
+                        {"key": "prior_auth_status", "label": "Auth Status", "type": "select", "options": ["Pending", "Approved", "Denied"], "default": "Pending", "required": False, "display_in_list": True, "display_order": 13, "computed": True},
+                        {"key": "reference_number", "label": "Reference #", "type": "string", "required": False, "display_in_list": True, "display_order": 14, "computed": True}
                     ]
                 }
             },
             "patient_questions": {
                 "enabled": True,
+                "display_name": "Patient Questions",
+                "description": "Inbound calls from patients with questions and inquiries",
+                "call_direction": "dial-in",
                 "patient_schema": {
                     "fields": [
-                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": True, "display_in_list": True, "display_order": 1},
-                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": True, "display_in_list": True, "display_order": 2},
-                        {"key": "patient_phone", "label": "Patient Phone", "type": "string", "required": True, "display_in_list": True, "display_order": 3},
-                        {"key": "facility_name", "label": "Facility", "type": "string", "required": True, "display_in_list": True, "display_order": 4},
-                        {"key": "questions", "label": "Questions to Ask", "type": "string", "required": True, "display_in_list": False, "display_order": 5},
-                        {"key": "notes", "label": "Notes", "type": "string", "required": False, "display_in_list": False, "display_order": 6}
+                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": False, "display_in_list": True, "display_order": 1},
+                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": False, "display_in_list": True, "display_order": 2},
+                        {"key": "phone", "label": "Caller Phone", "type": "phone", "required": True, "display_in_list": True, "display_order": 3}
                     ]
                 }
             }
@@ -105,13 +110,14 @@ async def main():
         "workflows": {
             "patient_questions": {
                 "enabled": True,
+                "display_name": "Patient Questions",
+                "description": "Inbound calls from patients with questions and inquiries",
+                "call_direction": "dial-in",
                 "patient_schema": {
                     "fields": [
-                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": True, "display_in_list": True, "display_order": 1},
-                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": True, "display_in_list": True, "display_order": 2},
-                        {"key": "patient_phone", "label": "Patient Phone", "type": "string", "required": True, "display_in_list": True, "display_order": 3},
-                        {"key": "facility_name", "label": "Facility", "type": "string", "required": True, "display_in_list": True, "display_order": 4},
-                        {"key": "notes", "label": "Notes", "type": "string", "required": False, "display_in_list": False, "display_order": 5}
+                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": False, "display_in_list": True, "display_order": 1},
+                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": False, "display_in_list": True, "display_order": 2},
+                        {"key": "phone", "label": "Caller Phone", "type": "phone", "required": True, "display_in_list": True, "display_order": 3}
                     ]
                 }
             }

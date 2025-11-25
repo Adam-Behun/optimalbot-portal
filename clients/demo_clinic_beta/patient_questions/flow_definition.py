@@ -145,6 +145,8 @@ If they want to end the call early, call end_call() immediately."""
 
     async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:
         logger.info("Call ended by flow")
+        patient_id = self.patient_data.get('patient_id')
+        db = get_async_patient_db() if patient_id else None
 
         try:
             # Save transcript
@@ -152,12 +154,10 @@ If they want to end the call early, call end_call() immediately."""
                 await save_transcript_to_db(self.pipeline)
                 logger.info("Transcript saved")
 
-            # Update database status
-            patient_id = self.patient_data.get('patient_id')
-            if patient_id:
-                db = get_async_patient_db()
+            # Update database status to Completed
+            if patient_id and db:
                 await db.update_call_status(patient_id, "Completed", self.organization_id)
-                logger.info("Database status: Completed")
+                logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
 
             # Push EndTaskFrame for graceful shutdown
             if self.context_aggregator:
@@ -169,5 +169,13 @@ If they want to end the call early, call end_call() immediately."""
         except Exception as e:
             import traceback
             logger.error(f"Error in end_call_handler: {traceback.format_exc()}")
+
+            # Update status to Failed on error
+            if patient_id and db:
+                try:
+                    await db.update_call_status(patient_id, "Failed", self.organization_id)
+                    logger.info(f"Database status updated: Failed (patient_id: {patient_id})")
+                except Exception as db_error:
+                    logger.error(f"Failed to update status to Failed: {db_error}")
 
         return None, None

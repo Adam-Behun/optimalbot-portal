@@ -82,8 +82,8 @@ async def bot(args: DailyRunnerArguments):
                 "call_id": call_id,
                 "call_domain": call_domain
             }
-            # For dial-in, caller's phone is in patient_data
-            caller_phone = patient_data.get("caller_phone", "unknown")
+            # For dial-in, caller's phone is in patient_data (field name: "phone")
+            caller_phone = patient_data.get("phone", "unknown")
             logger.info(f"DIAL-IN call detected - Call ID: {call_id}, Caller: {caller_phone}")
         else:
             # DIAL-OUT: Outbound call to phone_number

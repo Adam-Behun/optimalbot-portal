@@ -1,28 +1,37 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import PatientList from './components/patients/patient-list';
-import AddPatientForm from './components/AddPatientForm';
-import PatientDetail from './components/PatientDetail';
-import { Dashboard } from './components/Dashboard';
 import { Toaster } from "@/components/ui/sonner";
-import { ThemeProvider } from "@/components/theme-provider";
-import { LoginForm } from './components/login-form';
-import { ForgotPasswordForm } from './components/forgot-password-form';
-import { ResetPasswordForm } from './components/reset-password-form';
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { LoginForm } from './components/LoginForm';
+import { ForgotPasswordForm } from './components/ForgotPasswordForm';
+import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { LandingPage } from './components/LandingPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
 import { Workflows } from './components/Workflows';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
 import { Home } from './components/Home';
+import { OrganizationProvider } from './contexts/OrganizationContext';
+import {
+  PriorAuthDashboard,
+  PriorAuthPatientList,
+  PriorAuthAddPatient,
+  PriorAuthPatientDetail,
+} from './components/workflows/prior_auth';
+import {
+  PatientQuestionsDashboard,
+  PatientQuestionsCallList,
+  PatientQuestionsCallDetail,
+} from './components/workflows/patient_questions';
 
 const App = () => {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="healthcare-ui-theme">
-      <Router>
-        <SessionTimeoutModal>
-          <div className="min-h-screen bg-background">
-            <main>
-              <Routes>
+      <OrganizationProvider>
+        <Router>
+          <SessionTimeoutModal>
+            <div className="min-h-screen bg-background">
+              <main>
+                <Routes>
               {/* Public routes */}
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={
@@ -53,26 +62,6 @@ const App = () => {
                   <Home />
                 </ProtectedRoute>
               } />
-              <Route path="/dashboard" element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              } />
-              <Route path="/patient-list" element={
-                <ProtectedRoute>
-                  <PatientList />
-                </ProtectedRoute>
-              } />
-              <Route path="/add-patient" element={
-                <ProtectedRoute>
-                  <AddPatientForm />
-                </ProtectedRoute>
-              } />
-              <Route path="/patient/:patientId" element={
-                <ProtectedRoute>
-                  <PatientDetail />
-                </ProtectedRoute>
-              } />
               <Route path="/custom-reports" element={
                 <ProtectedRoute>
                   <CustomReports />
@@ -83,12 +72,52 @@ const App = () => {
                   <Workflows />
                 </ProtectedRoute>
               } />
+
+              {/* Prior Auth Workflow Routes */}
+              <Route path="/workflows/prior_auth/dashboard" element={
+                <ProtectedRoute>
+                  <PriorAuthDashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/prior_auth/patients" element={
+                <ProtectedRoute>
+                  <PriorAuthPatientList />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/prior_auth/patients/add" element={
+                <ProtectedRoute>
+                  <PriorAuthAddPatient />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/prior_auth/patients/:id" element={
+                <ProtectedRoute>
+                  <PriorAuthPatientDetail />
+                </ProtectedRoute>
+              } />
+
+              {/* Patient Questions Workflow Routes */}
+              <Route path="/workflows/patient_questions/dashboard" element={
+                <ProtectedRoute>
+                  <PatientQuestionsDashboard />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/patient_questions/calls" element={
+                <ProtectedRoute>
+                  <PatientQuestionsCallList />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/patient_questions/calls/:id" element={
+                <ProtectedRoute>
+                  <PatientQuestionsCallDetail />
+                </ProtectedRoute>
+              } />
               </Routes>
-            </main>
-          </div>
-          <Toaster />
-        </SessionTimeoutModal>
-      </Router>
+              </main>
+            </div>
+            <Toaster />
+          </SessionTimeoutModal>
+        </Router>
+      </OrganizationProvider>
     </ThemeProvider>
   );
 };

@@ -47,7 +47,7 @@ export function Workflows() {
 
   const handleSelectWorkflow = (workflowId: string) => {
     setSelectedWorkflow(workflowId);
-    navigate('/dashboard');
+    navigate(`/workflows/${workflowId}/dashboard`);
   };
 
   // Generate 30-minute time slots from 9 AM to 5 PM

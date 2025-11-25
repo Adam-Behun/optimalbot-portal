@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Navigation, WorkflowNavigation } from './Navigation';
+import { Navigation } from './Navigation';
 import { CalendarIcon, BarChart3, PieChart, TrendingUp } from 'lucide-react';
 
 export function CustomReports() {
@@ -51,7 +51,6 @@ export function CustomReports() {
   return (
     <>
       <Navigation />
-      <WorkflowNavigation />
       <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
