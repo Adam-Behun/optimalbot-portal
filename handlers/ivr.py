@@ -141,7 +141,9 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                     "type": "ivr_summary"
                 })
 
-                await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+                await get_async_patient_db().update_call_status(
+                    pipeline.patient_id, "Failed", pipeline.organization_id
+                )
                 await pipeline.task.queue_frames([EndFrame()])
 
         except Exception as e:

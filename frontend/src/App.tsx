@@ -15,6 +15,7 @@ import {
   PriorAuthDashboard,
   PriorAuthPatientList,
   PriorAuthAddPatient,
+  PriorAuthEditPatient,
   PriorAuthPatientDetail,
 } from './components/workflows/prior_auth';
 import {
@@ -92,6 +93,11 @@ const App = () => {
               <Route path="/workflows/prior_auth/patients/:id" element={
                 <ProtectedRoute>
                   <PriorAuthPatientDetail />
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/prior_auth/patients/:id/edit" element={
+                <ProtectedRoute>
+                  <PriorAuthEditPatient />
                 </ProtectedRoute>
               } />
 

@@ -1,28 +1,33 @@
-pipecat-ai[daily,cartesia,deepgram,groq,tracing]>=0.0.93
-openai
-anthropic
-cartesia
-daily-python
-pymongo
+# Core pipecat with required providers
+pipecat-ai[daily,tracing]>=0.0.93
+pipecatcloud
+
+# Database
 motor
+
+# Web framework
 uvicorn
 fastapi
-requests
+
+# HTTP clients
+aiohttp
 httpx
-pipecatcloud
+
+# Environment
 python-dotenv
+
+# Testing
 pytest
 pytest-asyncio
-numpy
-scipy
-langfuse
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-otlp-proto-http
-pyyaml  # For configuration parsing
-pydantic  # For backend API schemas
+
+# Configuration
+pyyaml
+pydantic
+
+# Authentication
 passlib[bcrypt]
 python-jose[cryptography]
-phonenumbers
+
+# Rate limiting and retry
 slowapi
 tenacity

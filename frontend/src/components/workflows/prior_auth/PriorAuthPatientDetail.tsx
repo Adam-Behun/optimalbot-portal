@@ -1,14 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { TranscriptViewer } from '../shared/TranscriptViewer';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { Patient, Session, SchemaField } from '@/types';
+import { Patient, SchemaField, TranscriptMessage } from '@/types';
 import { getPatient, startCall } from '@/api';
-import api from '@/api';
 import { Phone, Edit, Loader2 } from 'lucide-react';
 
 // Format value based on field type
@@ -24,19 +22,16 @@ function formatValue(value: unknown, field: SchemaField): string {
   }
 }
 
-// Get badge variant for call status
-function getStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  switch (status) {
-    case 'Completed':
-    case 'Completed - Left VM':
-      return 'default';
-    case 'Failed':
-      return 'destructive';
-    case 'In Progress':
-      return 'secondary';
-    default:
-      return 'outline';
-  }
+// Detail row component matching old design
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex py-1.5 border-b last:border-b-0">
+      <div className="font-semibold text-muted-foreground w-48">
+        {label}:
+      </div>
+      <div className="flex-1 text-foreground">{value}</div>
+    </div>
+  );
 }
 
 export function PriorAuthPatientDetail() {
@@ -46,7 +41,7 @@ export function PriorAuthPatientDetail() {
   const schema = getWorkflowSchema('prior_auth');
 
   const [patient, setPatient] = useState<Patient | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [callLoading, setCallLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,14 +54,21 @@ export function PriorAuthPatientDetail() {
         const patientData = await getPatient(id);
         setPatient(patientData);
 
-        // Try to fetch session for transcript
-        try {
-          const sessionRes = await api.get(`/sessions?patient_id=${id}&limit=1`);
-          if (sessionRes.data.sessions?.length > 0) {
-            setSession(sessionRes.data.sessions[0]);
+        // Parse transcript from patient data
+        if (patientData.call_transcript) {
+          try {
+            let parsed;
+            if (typeof patientData.call_transcript === 'string') {
+              parsed = JSON.parse(patientData.call_transcript);
+            } else {
+              parsed = patientData.call_transcript;
+            }
+            const messages = parsed.messages || parsed;
+            setTranscript(Array.isArray(messages) ? messages : []);
+          } catch (e) {
+            console.error('Error parsing transcript:', e);
+            setTranscript([]);
           }
-        } catch {
-          // Session fetch is optional
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
@@ -101,8 +103,8 @@ export function PriorAuthPatientDetail() {
   if (loading) {
     return (
       <WorkflowLayout workflowName="prior_auth" title="Patient Details">
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-8 w-8 animate-spin" />
+        <div className="text-center py-10">
+          <p className="text-muted-foreground">Loading patient details...</p>
         </div>
       </WorkflowLayout>
     );
@@ -111,7 +113,12 @@ export function PriorAuthPatientDetail() {
   if (error || !patient || !schema) {
     return (
       <WorkflowLayout workflowName="prior_auth" title="Patient Details">
-        <p className="text-red-500">{error || 'Patient not found'}</p>
+        <div className="text-center py-10">
+          <p className="text-destructive mb-4">{error || 'Patient not found'}</p>
+          <Button onClick={() => navigate('/workflows/prior_auth/patients')} variant="outline">
+            Back to List
+          </Button>
+        </div>
       </WorkflowLayout>
     );
   }
@@ -146,93 +153,102 @@ export function PriorAuthPatientDetail() {
         </div>
       }
     >
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Patient Information */}
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>Patient Information</CardTitle>
-              <Badge variant={getStatusVariant(patient.call_status)}>
-                {patient.call_status}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <dl className="space-y-3">
-              {regularFields.map(field => (
-                <div key={field.key} className="flex justify-between">
-                  <dt className="text-muted-foreground">{field.label}</dt>
-                  <dd className="font-medium">{formatValue(patient[field.key], field)}</dd>
-                </div>
-              ))}
-            </dl>
-          </CardContent>
-        </Card>
+      <div className="space-y-4">
+        {/* Patient Information Card */}
+        <div className="bg-card rounded-lg border p-4 space-y-3">
+          <h3 className="text-lg font-semibold text-primary mb-3">
+            Patient Information
+          </h3>
 
-        {/* Authorization Status */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Authorization Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <dl className="space-y-3">
+          <div className="space-y-0">
+            {regularFields.map(field => (
+              <DetailRow
+                key={field.key}
+                label={field.label}
+                value={formatValue(patient[field.key], field)}
+              />
+            ))}
+            <DetailRow
+              label="Call Status"
+              value={
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                  patient.call_status === 'Completed'
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                    : patient.call_status === 'Call Transferred'
+                      ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                      : patient.call_status === 'In Progress'
+                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                        : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
+                }`}>
+                  {patient.call_status}
+                </span>
+              }
+            />
+          </div>
+        </div>
+
+        {/* Authorization Status Card */}
+        {computedFields.length > 0 && (
+          <div className="bg-card rounded-lg border p-4 space-y-3">
+            <h3 className="text-lg font-semibold text-primary mb-3">
+              Authorization Status
+            </h3>
+
+            <div className="space-y-0">
               {computedFields.map(field => (
-                <div key={field.key} className="flex justify-between">
-                  <dt className="text-muted-foreground">{field.label}</dt>
-                  <dd className="font-medium">
-                    {field.key === 'prior_auth_status' && patient[field.key] ? (
+                <DetailRow
+                  key={field.key}
+                  label={field.label}
+                  value={
+                    field.key === 'prior_auth_status' && patient[field.key] ? (
                       <Badge
                         variant={patient[field.key] === 'Denied' ? 'destructive' : 'secondary'}
-                        className={patient[field.key] === 'Approved' ? 'bg-green-100 text-green-800' : ''}
+                        className={patient[field.key] === 'Approved' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : ''}
                       >
                         {patient[field.key]}
                       </Badge>
                     ) : (
                       formatValue(patient[field.key], field)
-                    )}
-                  </dd>
-                </div>
+                    )
+                  }
+                />
               ))}
-              <div className="flex justify-between pt-2 border-t">
-                <dt className="text-muted-foreground">Created</dt>
-                <dd className="font-medium">
-                  {patient.created_at ? new Date(patient.created_at).toLocaleString() : '-'}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Last Updated</dt>
-                <dd className="font-medium">
-                  {patient.updated_at ? new Date(patient.updated_at).toLocaleString() : '-'}
-                </dd>
-              </div>
-            </dl>
-          </CardContent>
-        </Card>
-      </div>
+              <DetailRow
+                label="Created"
+                value={patient.created_at ? new Date(patient.created_at).toLocaleString() : '-'}
+              />
+              <DetailRow
+                label="Last Updated"
+                value={patient.updated_at ? new Date(patient.updated_at).toLocaleString() : '-'}
+              />
+            </div>
+          </div>
+        )}
 
-      {/* Transcript Section */}
-      {session?.transcript?.messages ? (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Transcript</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TranscriptViewer
-              messages={session.transcript.messages}
-              summary={session.transcript.summary}
-            />
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Transcript</CardTitle>
-          </CardHeader>
-          <CardContent>
+        {/* Call Transcript Section */}
+        {transcript.length > 0 ? (
+          <div className="bg-card rounded-lg border p-4">
+            <h3 className="text-lg font-semibold text-primary mb-3">
+              Call Transcript
+            </h3>
+            <TranscriptViewer messages={transcript} />
+          </div>
+        ) : patient.call_status === 'Completed' ? (
+          <div className="bg-card rounded-lg border p-4 text-center">
+            <h3 className="text-lg font-semibold text-primary mb-3">
+              Call Transcript
+            </h3>
+            <p className="text-muted-foreground">No transcript available for this call.</p>
+          </div>
+        ) : (
+          <div className="bg-card rounded-lg border p-4 text-center">
+            <h3 className="text-lg font-semibold text-primary mb-3">
+              Call Transcript
+            </h3>
             <p className="text-muted-foreground">No call transcript available yet</p>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+      </div>
     </WorkflowLayout>
   );
 }

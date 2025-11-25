@@ -9,13 +9,19 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 
+# Environment mode
+ENV = os.getenv("ENV", "local")
+
 # Core required variables (not provider-specific)
 REQUIRED_BACKEND_ENV_VARS = [
     "JWT_SECRET_KEY",
     "MONGO_URI",
-    "PIPECAT_API_KEY",
     "ALLOWED_ORIGINS"
 ]
+
+# PIPECAT_API_KEY only required in production mode
+if ENV == "production":
+    REQUIRED_BACKEND_ENV_VARS.append("PIPECAT_API_KEY")
 
 
 def validate_env_vars(required_vars: List[str]) -> Tuple[bool, List[str]]:

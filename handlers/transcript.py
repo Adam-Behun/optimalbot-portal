@@ -125,7 +125,8 @@ async def save_transcript_to_db(pipeline):
         success = await get_async_patient_db().save_call_transcript(
             patient_id=pipeline.patient_id,
             session_id=pipeline.session_id,
-            transcript_data=transcript_data
+            transcript_data=transcript_data,
+            organization_id=pipeline.organization_id
         )
 
         if success:

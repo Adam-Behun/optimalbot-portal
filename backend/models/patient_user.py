@@ -3,7 +3,6 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import MongoClient
 from bson import ObjectId
 from dotenv import load_dotenv
 
@@ -129,10 +128,11 @@ class AsyncPatientRecord:
         return await self.update_patient(patient_id, {"call_status": status}, organization_id)
     
     async def save_call_transcript(
-        self, 
-        patient_id: str, 
+        self,
+        patient_id: str,
         session_id: str,
-        transcript_data: dict
+        transcript_data: dict,
+        organization_id: str = None
     ) -> bool:
         """Save call transcript and metadata"""
         update_fields = {
@@ -140,7 +140,7 @@ class AsyncPatientRecord:
             "last_call_timestamp": datetime.utcnow().isoformat(),
             "call_transcript": transcript_data
         }
-        return await self.update_patient(patient_id, update_fields)
+        return await self.update_patient(patient_id, update_fields, organization_id)
     
     async def get_call_transcript(self, patient_id: str) -> Optional[dict]:
         """Get the last call transcript for a patient"""

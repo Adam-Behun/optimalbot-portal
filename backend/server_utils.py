@@ -6,9 +6,11 @@ This module provides functions for:
 """
 
 import os
+import logging
 import aiohttp
-from loguru import logger
 from pipecat.runner.daily import DailyRoomConfig, configure
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 
 

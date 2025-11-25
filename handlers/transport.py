@@ -36,11 +36,15 @@ def setup_dialin_handlers(pipeline):
 
         try:
             # Update call status
-            patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
+            patient = await get_async_patient_db().find_patient_by_id(
+                pipeline.patient_id, pipeline.organization_id
+            )
             current_status = patient.get("call_status") if patient else None
 
             if current_status not in ["Completed", "Failed"]:
-                await get_async_patient_db().update_call_status(pipeline.patient_id, "Completed")
+                await get_async_patient_db().update_call_status(
+                    pipeline.patient_id, "Completed", pipeline.organization_id
+                )
                 logger.info("✅ Database status updated: Completed (client disconnected)")
         except Exception as e:
             logger.error(f"❌ Error updating call status on client disconnect: {e}")
@@ -59,7 +63,9 @@ def setup_dialin_handlers(pipeline):
         logger.error(f"❌ Dial-in error: {data}")
 
         try:
-            await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, "Failed", pipeline.organization_id
+            )
             logger.info("✅ Database status updated: Failed")
         except Exception as e:
             logger.error(f"❌ Error updating call status on dialin error: {e}")
@@ -101,8 +107,7 @@ def setup_dialout_handlers(pipeline):
 
             # Update call status to 'Supervisor Dialed'
             await get_async_patient_db().update_call_status(
-                pipeline.patient_id,
-                "Supervisor Dialed"
+                pipeline.patient_id, "Supervisor Dialed", pipeline.organization_id
             )
             logger.info("✅ Database status updated: Supervisor Dialed")
 
@@ -122,12 +127,16 @@ def setup_dialout_handlers(pipeline):
         """Handle dialout stopped - update status based on current state, save transcript, and terminate immediately."""
         try:
             # Check current status to determine appropriate final status
-            patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
+            patient = await get_async_patient_db().find_patient_by_id(
+                pipeline.patient_id, pipeline.organization_id
+            )
             current_status = patient.get("call_status") if patient else None
 
             # Only update if not already in a terminal state
             if current_status not in ["Completed", "Supervisor Dialed", "Failed"]:
-                await get_async_patient_db().update_call_status(pipeline.patient_id, "Completed")
+                await get_async_patient_db().update_call_status(
+                    pipeline.patient_id, "Completed", pipeline.organization_id
+                )
                 logger.info("✅ Database status updated: Completed (dialout stopped)")
             else:
                 logger.info(f"✅ Call status already terminal: {current_status}")
@@ -148,12 +157,16 @@ def setup_dialout_handlers(pipeline):
         """Handle participant leaving - update status based on current state, save transcript, and terminate immediately."""
         try:
             # Check current status to determine appropriate final status
-            patient = await get_async_patient_db().find_patient_by_id(pipeline.patient_id)
+            patient = await get_async_patient_db().find_patient_by_id(
+                pipeline.patient_id, pipeline.organization_id
+            )
             current_status = patient.get("call_status") if patient else None
 
             # Only update if not already in a terminal state
             if current_status not in ["Completed", "Supervisor Dialed", "Failed"]:
-                await get_async_patient_db().update_call_status(pipeline.patient_id, "Completed")
+                await get_async_patient_db().update_call_status(
+                    pipeline.patient_id, "Completed", pipeline.organization_id
+                )
                 logger.info("✅ Database status updated: Completed (participant left)")
             else:
                 logger.info(f"✅ Call status already terminal: {current_status}")
@@ -194,7 +207,9 @@ def setup_dialout_handlers(pipeline):
             logger.error(f"❌ Call failed - Dialout error: {data}")
 
             # Update database status to Failed
-            await get_async_patient_db().update_call_status(pipeline.patient_id, "Failed")
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, "Failed", pipeline.organization_id
+            )
             logger.info("✅ Database status updated: Failed")
 
             # Save transcript even on error (may have partial conversation)
