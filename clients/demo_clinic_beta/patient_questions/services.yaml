@@ -12,18 +12,11 @@ services:
     eot_timeout_ms: 3500
 
   llm:
-    provider: openai
-    model: gpt-4o-mini
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
     temperature: 0.4
-    api_key: ${OPENAI_API_KEY}
+    api_key: ${ANTHROPIC_API_KEY}
     max_tokens: 256
-
-  classifier_llm:
-    provider: groq
-    model: llama-3.3-70b-versatile
-    temperature: 0
-    api_key: ${GROQ_API_KEY}
-    max_tokens: 512
 
   tts:
     provider: cartesia

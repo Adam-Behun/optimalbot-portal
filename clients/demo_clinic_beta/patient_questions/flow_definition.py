@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
-from pipecat.frames.frames import ManuallySwitchServiceFrame, EndTaskFrame
+from pipecat.frames.frames import EndTaskFrame
 from pipecat.processors.frame_processor import FrameDirection
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
@@ -10,41 +10,38 @@ logger = logging.getLogger(__name__)
 
 
 class PatientQuestionsFlow:
-    """Dial-in call flow for patient questions workflow - Demo Clinic Beta."""
+    """Dial-in call flow for patient intake - Demo Clinic Beta.
+
+    Collects patient first name, last name (with spelling confirmation), and date of birth.
+    """
 
     def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager,
-                 main_llm, classifier_llm, context_aggregator=None, transport=None, pipeline=None,
+                 main_llm, classifier_llm=None, context_aggregator=None, transport=None, pipeline=None,
                  organization_id: str = None):
-        self.patient_data = patient_data
+        self.patient_data = patient_data  # Will be empty/minimal for inbound calls
         self.flow_manager = flow_manager
         self.main_llm = main_llm
-        self.classifier_llm = classifier_llm
+        # classifier_llm not used - single LLM flow
         self.context_aggregator = context_aggregator
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
 
+        # Collected patient info during the call
+        self.collected_first_name = None
+        self.collected_last_name = None
+        self.collected_dob = None
+
     def _get_global_instructions(self) -> str:
         """Global behavioral rules applied to all states."""
-        # Read all fields FLAT from patient_data (no custom_fields nesting)
-        patient_name = self.patient_data.get('patient_name', '')
-        date_of_birth = self.patient_data.get('date_of_birth', '')
-        patient_phone = self.patient_data.get('patient_phone', '')
         facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
-        notes = self.patient_data.get('notes', '')
 
-        return f"""PATIENT INFORMATION:
-- Patient Name: {patient_name}
-- Date of Birth: {date_of_birth}
-- Facility: {facility_name}
-- Patient Phone: {patient_phone}
-- Notes: {notes}
-
-BEHAVIORAL RULES:
+        return f"""BEHAVIORAL RULES:
 1. You are a Virtual Assistant from {facility_name}. Always disclose this.
 2. Speak ONLY in English.
 3. Maintain a professional, courteous tone.
-4. Keep responses concise and natural."""
+4. Keep responses concise and natural.
+5. This is an inbound call - the patient is calling us. We do not know who they are yet."""
 
     def create_greeting_node(self) -> NodeConfig:
         """Initial greeting node when caller connects."""
@@ -63,44 +60,266 @@ BEHAVIORAL RULES:
                 "role": "system",
                 "content": f"""A caller has connected. Greet them warmly.
 
-Say: "Hello, thank you for calling {facility_name}. This is a Virtual Assistant. How can I help you today?"
+Say something like: "Hello, thank you for calling {facility_name}. This is a Virtual Assistant. To help you today, I'll need to collect some information. May I have your first name please?"
 
-Listen to their response and call proceed_to_conversation() to continue."""
+After the caller provides their first name, call save_first_name with the name they provided."""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="proceed_to_conversation",
-                    description="Transition to conversation node after greeting.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_conversation_handler
+                    name="save_first_name",
+                    description="Save the patient's first name and proceed to collect last name.",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "The patient's first name"
+                        }
+                    },
+                    required=["first_name"],
+                    handler=self._save_first_name_handler
                 )
             ],
-            respond_immediately=True,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_classifier_llm
-            }]
+            respond_immediately=True
         )
 
-    def create_conversation_node(self) -> NodeConfig:
-        """Main conversation node for simple interaction."""
+    def create_collect_last_name_node(self) -> NodeConfig:
+        """Node to collect patient's last name."""
         facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
         global_instructions = self._get_global_instructions()
 
         return NodeConfig(
-            name="conversation",
+            name="collect_last_name",
             role_messages=[{
                 "role": "system",
                 "content": f"""You are a Virtual Assistant from {facility_name}.
 
-{global_instructions}"""
+{global_instructions}
+
+COLLECTED INFO SO FAR:
+- First Name: {self.collected_first_name}"""
             }],
             task_messages=[{
                 "role": "system",
-                "content": """You're in a simple check-in conversation.
+                "content": f"""You've collected the patient's first name: {self.collected_first_name}.
 
-Be conversational and concise. If the caller has questions, provide brief answers."""
+Now ask for their last name. Say something like: "Thank you, {self.collected_first_name}. And what is your last name?"
+
+After they provide their last name, call save_last_name with the name they provided."""
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="save_last_name",
+                    description="Save the patient's last name and proceed to spelling confirmation.",
+                    properties={
+                        "last_name": {
+                            "type": "string",
+                            "description": "The patient's last name"
+                        }
+                    },
+                    required=["last_name"],
+                    handler=self._save_last_name_handler
+                )
+            ],
+            respond_immediately=True
+        )
+
+    def create_confirm_spelling_node(self) -> NodeConfig:
+        """Node to confirm the spelling of patient's last name."""
+        facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
+        global_instructions = self._get_global_instructions()
+
+        return NodeConfig(
+            name="confirm_spelling",
+            role_messages=[{
+                "role": "system",
+                "content": f"""You are a Virtual Assistant from {facility_name}.
+
+{global_instructions}
+
+COLLECTED INFO SO FAR:
+- First Name: {self.collected_first_name}
+- Last Name: {self.collected_last_name}"""
+            }],
+            task_messages=[{
+                "role": "system",
+                "content": f"""You've collected the patient's last name: {self.collected_last_name}.
+
+Now confirm the spelling. Spell out the last name letter by letter and ask if it's correct.
+Say something like: "Let me confirm the spelling of your last name. Is it spelled {' '.join(self.collected_last_name.upper())}?"
+
+- If they confirm it's correct, call confirm_spelling_correct.
+- If they say it's wrong or provide a correction, call update_last_name_spelling with the corrected spelling."""
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="confirm_spelling_correct",
+                    description="Confirm the last name spelling is correct and proceed to collect date of birth.",
+                    properties={},
+                    required=[],
+                    handler=self._confirm_spelling_correct_handler
+                ),
+                FlowsFunctionSchema(
+                    name="update_last_name_spelling",
+                    description="Update the last name with correct spelling and re-confirm.",
+                    properties={
+                        "corrected_last_name": {
+                            "type": "string",
+                            "description": "The corrected spelling of the patient's last name"
+                        }
+                    },
+                    required=["corrected_last_name"],
+                    handler=self._update_last_name_spelling_handler
+                )
+            ],
+            respond_immediately=True
+        )
+
+    def create_collect_dob_node(self) -> NodeConfig:
+        """Node to collect patient's date of birth."""
+        facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
+        global_instructions = self._get_global_instructions()
+
+        return NodeConfig(
+            name="collect_dob",
+            role_messages=[{
+                "role": "system",
+                "content": f"""You are a Virtual Assistant from {facility_name}.
+
+{global_instructions}
+
+COLLECTED INFO SO FAR:
+- First Name: {self.collected_first_name}
+- Last Name: {self.collected_last_name}"""
+            }],
+            task_messages=[{
+                "role": "system",
+                "content": f"""You've confirmed the patient's name: {self.collected_first_name} {self.collected_last_name}.
+
+Now ask for their date of birth. Say something like: "Thank you. And what is your date of birth?"
+
+After they provide their date of birth, call save_date_of_birth with the date.
+Accept various formats (e.g., "January 15, 1985", "1/15/85", "01-15-1985") and normalize to a consistent format."""
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="save_date_of_birth",
+                    description="Save the patient's date of birth and proceed to confirmation.",
+                    properties={
+                        "date_of_birth": {
+                            "type": "string",
+                            "description": "The patient's date of birth (e.g., 'January 15, 1985' or '01/15/1985')"
+                        }
+                    },
+                    required=["date_of_birth"],
+                    handler=self._save_dob_handler
+                )
+            ],
+            respond_immediately=True
+        )
+
+    def create_confirmation_node(self) -> NodeConfig:
+        """Node to confirm all collected information and save to database."""
+        facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
+        global_instructions = self._get_global_instructions()
+
+        return NodeConfig(
+            name="confirmation",
+            role_messages=[{
+                "role": "system",
+                "content": f"""You are a Virtual Assistant from {facility_name}.
+
+{global_instructions}
+
+COLLECTED PATIENT INFO:
+- First Name: {self.collected_first_name}
+- Last Name: {self.collected_last_name}
+- Date of Birth: {self.collected_dob}"""
+            }],
+            task_messages=[{
+                "role": "system",
+                "content": f"""You've collected all the patient information:
+- Name: {self.collected_first_name} {self.collected_last_name}
+- Date of Birth: {self.collected_dob}
+
+Confirm this information with the patient. Say something like:
+"Let me confirm your information. Your name is {self.collected_first_name} {self.collected_last_name}, and your date of birth is {self.collected_dob}. Is that correct?"
+
+- If they confirm, call save_patient_to_database to save their information.
+- If they need to correct something, ask what needs to be corrected and call the appropriate correction function."""
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="save_patient_to_database",
+                    description="Save all patient information to the database and complete the intake.",
+                    properties={},
+                    required=[],
+                    handler=self._save_patient_to_database_handler
+                ),
+                FlowsFunctionSchema(
+                    name="correct_first_name",
+                    description="Go back to correct the first name.",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "The corrected first name"
+                        }
+                    },
+                    required=["first_name"],
+                    handler=self._correct_first_name_handler
+                ),
+                FlowsFunctionSchema(
+                    name="correct_last_name",
+                    description="Go back to correct the last name.",
+                    properties={
+                        "last_name": {
+                            "type": "string",
+                            "description": "The corrected last name"
+                        }
+                    },
+                    required=["last_name"],
+                    handler=self._correct_last_name_handler
+                ),
+                FlowsFunctionSchema(
+                    name="correct_date_of_birth",
+                    description="Go back to correct the date of birth.",
+                    properties={
+                        "date_of_birth": {
+                            "type": "string",
+                            "description": "The corrected date of birth"
+                        }
+                    },
+                    required=["date_of_birth"],
+                    handler=self._correct_dob_handler
+                )
+            ],
+            respond_immediately=True
+        )
+
+    def create_closing_node(self) -> NodeConfig:
+        """Final node after successful intake."""
+        facility_name = self.patient_data.get('facility_name', 'Demo Clinic Beta')
+        global_instructions = self._get_global_instructions()
+
+        return NodeConfig(
+            name="closing",
+            role_messages=[{
+                "role": "system",
+                "content": f"""You are a Virtual Assistant from {facility_name}.
+
+{global_instructions}
+
+PATIENT INFO (SAVED):
+- Name: {self.collected_first_name} {self.collected_last_name}
+- Date of Birth: {self.collected_dob}"""
+            }],
+            task_messages=[{
+                "role": "system",
+                "content": f"""The patient's information has been saved successfully.
+
+Thank them and ask if there's anything else you can help with. Say something like:
+"Thank you, {self.collected_first_name}. Your information has been saved. Is there anything else I can help you with today?"
+
+- If they need more help, continue the conversation.
+- When they're ready to end the call, call end_call."""
             }],
             functions=[
                 FlowsFunctionSchema(
@@ -111,32 +330,96 @@ Be conversational and concise. If the caller has questions, provide brief answer
                     handler=self._end_call_handler
                 )
             ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_main_llm
-            }]
+            respond_immediately=True
         )
 
-    async def _switch_to_classifier_llm(self, action: dict, flow_manager: FlowManager):
-        await self.context_aggregator.assistant().push_frame(
-            ManuallySwitchServiceFrame(service=self.classifier_llm),
-            FrameDirection.UPSTREAM
-        )
-        logger.info("LLM: classifier (fast greeting)")
+    # Handler functions
 
-    async def _switch_to_main_llm(self, action: dict, flow_manager: FlowManager):
-        await self.context_aggregator.assistant().push_frame(
-            ManuallySwitchServiceFrame(service=self.main_llm),
-            FrameDirection.UPSTREAM
-        )
-        logger.info("LLM: main (conversation)")
+    async def _save_first_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Save first name and transition to last name collection."""
+        self.collected_first_name = args.get("first_name", "").strip()
+        logger.info(f"Flow: Saved first name: {self.collected_first_name}")
+        return f"First name '{self.collected_first_name}' saved.", self.create_collect_last_name_node()
 
-    async def _proceed_to_conversation_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
-        logger.info("Flow: greeting -> conversation")
-        return None, self.create_conversation_node()
+    async def _save_last_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Save last name and transition to spelling confirmation."""
+        self.collected_last_name = args.get("last_name", "").strip()
+        logger.info(f"Flow: Saved last name: {self.collected_last_name}")
+        return f"Last name '{self.collected_last_name}' saved.", self.create_confirm_spelling_node()
+
+    async def _confirm_spelling_correct_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Confirm spelling is correct and move to DOB collection."""
+        logger.info(f"Flow: Last name spelling confirmed: {self.collected_last_name}")
+        return "Spelling confirmed.", self.create_collect_dob_node()
+
+    async def _update_last_name_spelling_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Update last name spelling and re-confirm."""
+        self.collected_last_name = args.get("corrected_last_name", "").strip()
+        logger.info(f"Flow: Updated last name spelling: {self.collected_last_name}")
+        return f"Last name updated to '{self.collected_last_name}'.", self.create_confirm_spelling_node()
+
+    async def _save_dob_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Save date of birth and transition to final confirmation."""
+        self.collected_dob = args.get("date_of_birth", "").strip()
+        logger.info(f"Flow: Saved DOB: {self.collected_dob}")
+        return f"Date of birth '{self.collected_dob}' saved.", self.create_confirmation_node()
+
+    async def _correct_first_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Correct first name and return to confirmation."""
+        self.collected_first_name = args.get("first_name", "").strip()
+        logger.info(f"Flow: Corrected first name: {self.collected_first_name}")
+        return f"First name updated to '{self.collected_first_name}'.", self.create_confirmation_node()
+
+    async def _correct_last_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Correct last name and go to spelling confirmation."""
+        self.collected_last_name = args.get("last_name", "").strip()
+        logger.info(f"Flow: Corrected last name: {self.collected_last_name}")
+        return f"Last name updated to '{self.collected_last_name}'.", self.create_confirm_spelling_node()
+
+    async def _correct_dob_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Correct date of birth and return to confirmation."""
+        self.collected_dob = args.get("date_of_birth", "").strip()
+        logger.info(f"Flow: Corrected DOB: {self.collected_dob}")
+        return f"Date of birth updated to '{self.collected_dob}'.", self.create_confirmation_node()
+
+    async def _save_patient_to_database_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
+        """Save collected patient info to database."""
+        logger.info(f"Flow: Saving patient to database - {self.collected_first_name} {self.collected_last_name}, DOB: {self.collected_dob}")
+
+        try:
+            db = get_async_patient_db()
+
+            # Create patient record
+            patient_record = {
+                "patient_name": f"{self.collected_first_name} {self.collected_last_name}",
+                "first_name": self.collected_first_name,
+                "last_name": self.collected_last_name,
+                "date_of_birth": self.collected_dob,
+                "organization_id": self.organization_id,
+                "facility_name": self.patient_data.get('facility_name', 'Demo Clinic Beta'),
+                "call_status": "In Progress",
+                "created_via": "inbound_call"
+            }
+
+            # Insert into database
+            result = await db.create_patient(patient_record, self.organization_id)
+            patient_id = str(result.inserted_id) if result else None
+
+            if patient_id:
+                # Update our patient_data with the new ID for transcript saving
+                self.patient_data['patient_id'] = patient_id
+                logger.info(f"Patient saved to database with ID: {patient_id}")
+                return "Patient information saved successfully.", self.create_closing_node()
+            else:
+                logger.error("Failed to save patient - no ID returned")
+                return "I apologize, there was an issue saving your information. Let me try again.", self.create_confirmation_node()
+
+        except Exception as e:
+            logger.error(f"Error saving patient to database: {e}")
+            return "I apologize, there was a technical issue. Let me try again.", self.create_confirmation_node()
 
     async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:
+        """End the call and save transcript."""
         logger.info("Call ended by flow")
         patient_id = self.patient_data.get('patient_id')
         db = get_async_patient_db() if patient_id else None
