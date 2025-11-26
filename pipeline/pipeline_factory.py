@@ -41,16 +41,25 @@ class PipelineFactory:
         main_llm = ServiceFactory.create_llm(
             services_config['services']['llm']
         )
-        classifier_llm = ServiceFactory.create_classifier_llm(
-            services_config['services']['classifier_llm']
-        )
 
-        # LLMSwitcher starts with classifier_llm as default (first in list)
-        # Flow pre_actions will switch to main_llm when function calling is needed
-        llm_switcher = LLMSwitcher(
-            llms=[classifier_llm, main_llm],
-            strategy_type=ServiceSwitcherStrategyManual
-        )
+        # classifier_llm and LLM switching are optional
+        # If classifier_llm is not configured, use main_llm directly without switching
+        classifier_llm_config = services_config['services'].get('classifier_llm')
+        if classifier_llm_config:
+            classifier_llm = ServiceFactory.create_classifier_llm(classifier_llm_config)
+            # LLMSwitcher starts with classifier_llm as default (first in list)
+            # Flow pre_actions will switch to main_llm when function calling is needed
+            llm_switcher = LLMSwitcher(
+                llms=[classifier_llm, main_llm],
+                strategy_type=ServiceSwitcherStrategyManual
+            )
+            active_llm = llm_switcher
+        else:
+            # Single LLM mode - no switching needed
+            classifier_llm = None
+            llm_switcher = None
+            active_llm = main_llm
+            logger.info("Single LLM mode: classifier_llm not configured, using main_llm only")
 
         services = {
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
@@ -64,7 +73,8 @@ class PipelineFactory:
             ),
             'main_llm': main_llm,
             'classifier_llm': classifier_llm,
-            'llm_switcher': llm_switcher
+            'llm_switcher': llm_switcher,
+            'active_llm': active_llm  # The LLM to use in pipeline (switcher or main_llm)
         }
 
         components = PipelineFactory._create_conversation_components(
@@ -122,12 +132,12 @@ class PipelineFactory:
         flow_loader = FlowLoader(organization_slug, client_name)
         FlowClass = flow_loader.load_flow_class()
 
-        # IVRNavigator uses llm_switcher to support dynamic LLM switching
-        # Starts with classifier_llm for fast IVR vs conversation detection
-        # Switches to main_llm when IVR is detected (for complex navigation)
-        # handlers/ivr.py manages the LLM switches based on IVR status
+        # IVRNavigator uses active_llm (either llm_switcher or main_llm directly)
+        # When llm_switcher is available: starts with classifier_llm for fast detection,
+        # switches to main_llm when IVR is detected (handlers/ivr.py manages switches)
+        # When single LLM mode: uses main_llm directly without switching
         ivr_navigator = FixedIVRNavigator(
-            llm=services['llm_switcher'],
+            llm=services['active_llm'],
             ivr_prompt="Navigate to provider services for prior authorization verification",
             ivr_vad_params=VADParams(stop_secs=2.0)
         )
@@ -149,6 +159,7 @@ class PipelineFactory:
             'main_llm': services['main_llm'],
             'classifier_llm': services['classifier_llm'],
             'llm_switcher': services['llm_switcher'],
+            'active_llm': services['active_llm'],
             'call_type': call_type
         }
 

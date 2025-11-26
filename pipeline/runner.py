@@ -102,7 +102,7 @@ class ConversationPipeline:
 
         self.flow_manager = FlowManager(
             task=self.task,
-            llm=components['llm_switcher'],
+            llm=components['active_llm'],
             context_aggregator=self.context_aggregator,
             transport=self.transport
         )

@@ -43,14 +43,21 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
         us to switch from classifier_llm to main_llm before the first IVR question
         is processed. Without this pre-event, the switch happens too late and the
         first navigation inference runs on the wrong LLM.
+
+        Note: In single-LLM mode (no classifier_llm), this is a no-op since
+        there's no switching needed.
         """
         try:
-            # Switch to main_llm for complex IVR navigation
-            await pipeline.context_aggregator.assistant().push_frame(
-                ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
-                FrameDirection.UPSTREAM
-            )
-            logger.info("✅ IVR pre-detected → switching to main_llm BEFORE navigation starts")
+            # Only switch if we have a classifier_llm (i.e., LLM switching is enabled)
+            if pipeline.flow.classifier_llm is not None:
+                # Switch to main_llm for complex IVR navigation
+                await pipeline.context_aggregator.assistant().push_frame(
+                    ManuallySwitchServiceFrame(service=pipeline.flow.main_llm),
+                    FrameDirection.UPSTREAM
+                )
+                logger.info("✅ IVR pre-detected → switching to main_llm BEFORE navigation starts")
+            else:
+                logger.info("✅ IVR pre-detected → single LLM mode, no switch needed")
 
         except Exception as e:
             logger.error(f"❌ Error in IVR pre-detection handler: {e}")

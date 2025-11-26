@@ -1,5 +1,5 @@
 # Core pipecat with required providers
-pipecat-ai[daily,tracing]>=0.0.93
+pipecat-ai[daily,tracing]
 pipecatcloud
 
 # Database
