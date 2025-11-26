@@ -54,11 +54,31 @@ class CallResponse(BaseModel):
 
 # Helpers
 def convert_objectid(doc: dict) -> dict:
-    """Convert MongoDB ObjectId to string"""
-    if doc and "_id" in doc and isinstance(doc["_id"], ObjectId):
-        doc["_id"] = str(doc["_id"])
-        doc["patient_id"] = doc["_id"]
-    return doc
+    """Recursively convert MongoDB ObjectId to string for JSON serialization"""
+    if not doc:
+        return doc
+
+    result = {}
+    for key, value in doc.items():
+        if isinstance(value, ObjectId):
+            result[key] = str(value)
+        elif isinstance(value, dict):
+            result[key] = convert_objectid(value)
+        elif isinstance(value, list):
+            result[key] = [
+                convert_objectid(item) if isinstance(item, dict)
+                else str(item) if isinstance(item, ObjectId)
+                else item
+                for item in value
+            ]
+        else:
+            result[key] = value
+
+    # Set patient_id from _id if present
+    if "_id" in result:
+        result["patient_id"] = result["_id"]
+
+    return result
 
 
 @retry(

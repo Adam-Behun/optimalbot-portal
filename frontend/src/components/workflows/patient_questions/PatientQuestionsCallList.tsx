@@ -1,25 +1,164 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { Button } from '@/components/ui/button';
 import { DynamicTable } from '../shared/DynamicTable';
+import { TranscriptViewer } from '../shared/TranscriptViewer';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { Patient } from '@/types';
-import { getPatients } from '@/api';
+import { Patient, SchemaField, TranscriptMessage } from '@/types';
+import { getPatients, getPatient, deletePatient } from '@/api';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
+
+// Format value based on field type
+function formatValue(value: unknown, field: SchemaField): string {
+  if (value === null || value === undefined || value === '') return '-';
+  switch (field.type) {
+    case 'date':
+      return new Date(value as string).toLocaleDateString();
+    case 'datetime':
+      return new Date(value as string).toLocaleString();
+    default:
+      return String(value);
+  }
+}
+
+// Detail row component
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex py-1.5 border-b last:border-b-0">
+      <div className="font-semibold text-muted-foreground w-48 shrink-0">
+        {label}:
+      </div>
+      <div className="flex-1 text-foreground">{value}</div>
+    </div>
+  );
+}
 
 export function PatientQuestionsCallList() {
-  const navigate = useNavigate();
   const { getWorkflowSchema } = useOrganization();
   const schema = getWorkflowSchema('patient_questions');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getPatients('patient_questions')
-      .then(setPatients)
-      .catch(err => setError(err instanceof Error ? err.message : 'Unknown error'))
-      .finally(() => setLoading(false));
+  // Sheet states
+  const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [patientToDelete, setPatientToDelete] = useState<Patient | null>(null);
+
+  const loadPatients = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await getPatients('patient_questions');
+      setPatients(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load calls');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadPatients();
+  }, [loadPatients]);
+
+  // Auto-refresh when calls are active
+  useEffect(() => {
+    const hasActiveCalls = patients.some(p => p.call_status === 'In Progress');
+
+    if (hasActiveCalls) {
+      const interval = setInterval(() => {
+        loadPatients();
+      }, 3000);
+
+      return () => clearInterval(interval);
+    }
+  }, [patients, loadPatients]);
+
+  const handleViewPatient = async (patient: Patient) => {
+    try {
+      const patientData = await getPatient(patient.patient_id);
+      setSelectedPatient(patientData);
+
+      // Parse transcript from patient data
+      if (patientData.call_transcript) {
+        try {
+          let parsed;
+          if (typeof patientData.call_transcript === 'string') {
+            parsed = JSON.parse(patientData.call_transcript);
+          } else {
+            parsed = patientData.call_transcript;
+          }
+          const messages = parsed.messages || parsed;
+          setTranscript(Array.isArray(messages) ? messages : []);
+        } catch {
+          setTranscript([]);
+        }
+      } else {
+        setTranscript([]);
+      }
+
+      setDetailSheetOpen(true);
+    } catch {
+      toast.error('Failed to load call details');
+    }
+  };
+
+  const handleDeletePatientSingle = (patient: Patient) => {
+    setPatientToDelete(patient);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!patientToDelete) return;
+
+    try {
+      await deletePatient(patientToDelete.patient_id);
+      toast.success('Call record deleted');
+      setDeleteDialogOpen(false);
+      setPatientToDelete(null);
+      await loadPatients();
+    } catch {
+      toast.error('Failed to delete call record');
+    }
+  };
+
+  const handleDeletePatients = async (selectedPatients: Patient[]) => {
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const patient of selectedPatients) {
+      try {
+        await deletePatient(patient.patient_id);
+        successCount++;
+      } catch {
+        failCount++;
+      }
+    }
+
+    await loadPatients();
+    toast.success(`Deleted: ${successCount} success, ${failCount} failed`);
+  };
 
   if (!schema) {
     return (
@@ -32,25 +171,149 @@ export function PatientQuestionsCallList() {
   if (error) {
     return (
       <WorkflowLayout workflowName="patient_questions" title="Inbound Calls">
-        <p className="text-red-500">Error: {error}</p>
+        <div className="flex flex-col items-center justify-center py-8 gap-4">
+          <p className="text-destructive">{error}</p>
+          <Button onClick={loadPatients} variant="outline">
+            Retry
+          </Button>
+        </div>
       </WorkflowLayout>
     );
   }
+
+  // Get all fields from schema, sorted by display_order
+  const allFields = [...schema.patient_schema.fields].sort((a, b) => a.display_order - b.display_order);
+  const regularFields = allFields.filter(f => !f.computed);
+  const computedFields = allFields.filter(f => f.computed);
 
   return (
     <WorkflowLayout
       workflowName="patient_questions"
       title="Inbound Calls"
+      actions={
+        <Button onClick={loadPatients} variant="outline" size="sm">
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Refresh
+        </Button>
+      }
     >
-      <p className="text-muted-foreground mb-4">
-        Records are created automatically when patients call in.
-      </p>
-      <DynamicTable
-        schema={schema}
-        patients={patients}
-        onRowClick={(patient) => navigate(`/workflows/patient_questions/calls/${patient.patient_id}`)}
-        loading={loading}
-      />
+      <div className="space-y-4">
+        <p className="text-muted-foreground">
+          {patients.length} call(s)
+        </p>
+        <DynamicTable
+          schema={schema}
+          patients={patients}
+          onRowClick={handleViewPatient}
+          loading={loading}
+          onViewPatient={handleViewPatient}
+          onDeletePatient={handleDeletePatientSingle}
+          onDeletePatients={handleDeletePatients}
+        />
+      </div>
+
+      {/* Call Detail Sheet */}
+      <Sheet open={detailSheetOpen} onOpenChange={setDetailSheetOpen}>
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>{selectedPatient?.patient_name || 'Call Details'}</SheetTitle>
+            <SheetDescription>
+              View call information and transcript
+            </SheetDescription>
+          </SheetHeader>
+
+          {selectedPatient && (
+            <div className="mt-6 space-y-4">
+              {/* Call Information Card */}
+              <div className="bg-card rounded-lg border p-4 space-y-3">
+                <h3 className="text-lg font-semibold text-primary mb-3">
+                  Call Information
+                </h3>
+                <div className="space-y-0">
+                  {regularFields.map(field => (
+                    <DetailRow
+                      key={field.key}
+                      label={field.label}
+                      value={formatValue(selectedPatient[field.key], field)}
+                    />
+                  ))}
+                  {computedFields.map(field => (
+                    <DetailRow
+                      key={field.key}
+                      label={field.label}
+                      value={formatValue(selectedPatient[field.key], field)}
+                    />
+                  ))}
+                  <DetailRow
+                    label="Call Status"
+                    value={
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                        selectedPatient.call_status === 'Completed'
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                          : selectedPatient.call_status === 'Completed - Left VM'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                            : selectedPatient.call_status === 'In Progress'
+                              ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                              : selectedPatient.call_status === 'Failed'
+                                ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
+                      }`}>
+                        {selectedPatient.call_status}
+                      </span>
+                    }
+                  />
+                  <DetailRow
+                    label="Created"
+                    value={selectedPatient.created_at ? new Date(selectedPatient.created_at).toLocaleString() : '-'}
+                  />
+                  <DetailRow
+                    label="Last Updated"
+                    value={selectedPatient.updated_at ? new Date(selectedPatient.updated_at).toLocaleString() : '-'}
+                  />
+                </div>
+              </div>
+
+              {/* Call Transcript Card */}
+              {transcript.length > 0 ? (
+                <div className="bg-card rounded-lg border p-4">
+                  <h3 className="text-lg font-semibold text-primary mb-3">
+                    Call Transcript
+                  </h3>
+                  <TranscriptViewer messages={transcript} />
+                </div>
+              ) : selectedPatient.call_status === 'Completed' || selectedPatient.call_status === 'Completed - Left VM' ? (
+                <div className="bg-card rounded-lg border p-4 text-center">
+                  <h3 className="text-lg font-semibold text-primary mb-3">
+                    Call Transcript
+                  </h3>
+                  <p className="text-muted-foreground">No transcript available for this call.</p>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Call Record?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete {patientToDelete?.patient_name}'s call record.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </WorkflowLayout>
   );
 }

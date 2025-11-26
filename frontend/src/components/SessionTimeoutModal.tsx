@@ -27,7 +27,7 @@ export function SessionTimeoutModal({ children }: SessionTimeoutModalProps) {
 
   const handleLogout = useCallback(() => {
     removeAuthToken();
-    window.location.href = 'https://datasova.com';
+    window.location.href = '/';
   }, []);
 
   const resetTimer = useCallback(() => {

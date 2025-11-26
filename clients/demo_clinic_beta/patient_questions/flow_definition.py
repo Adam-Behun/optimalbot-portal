@@ -100,14 +100,7 @@ Listen to their response and call proceed_to_conversation() to continue."""
                 "role": "system",
                 "content": """You're in a simple check-in conversation.
 
-1. Listen to their response
-2. Have a brief, natural exchange (1-2 turns)
-3. Ask: "Is there anything you'd like me to note for the clinic?"
-4. After they respond, thank them and call end_call()
-
-Keep it simple and friendly. This is just a test conversation.
-
-If they want to end the call early, call end_call() immediately."""
+Be conversational and concise. If the caller has questions, provide brief answers."""
             }],
             functions=[
                 FlowsFunctionSchema(

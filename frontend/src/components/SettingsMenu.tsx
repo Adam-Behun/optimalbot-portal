@@ -20,11 +20,11 @@ export function SettingsMenu() {
       await logout();
       removeAuthToken();
       toast.success('Signed out successfully');
-      window.location.href = 'https://datasova.com';
+      window.location.href = '/';
     } catch (error) {
       console.error('Error during logout:', error);
       removeAuthToken();
-      window.location.href = 'https://datasova.com';
+      window.location.href = '/';
     }
   };
 

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Patient } from '@/types';
 import { getPatients } from '@/api';
-import { Phone, CheckCircle, XCircle, Clock, Info } from 'lucide-react';
+import { Phone, CheckCircle, XCircle, Clock, PhoneIncoming } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 
 // Get badge variant for call status
@@ -39,9 +39,10 @@ export function PatientQuestionsDashboard() {
   const today = new Date().toISOString().split('T')[0];
   const metrics = {
     total: patients.length,
-    completedToday: patients.filter(p => p.call_status === 'Completed' && p.created_at?.startsWith(today)).length,
-    failed: patients.filter(p => p.call_status === 'Failed').length,
-    inProgress: patients.filter(p => p.call_status === 'In Progress').length
+    completed: patients.filter(p => p.call_status === 'Completed' || p.call_status === 'Completed - Left VM').length,
+    completedToday: patients.filter(p => (p.call_status === 'Completed' || p.call_status === 'Completed - Left VM') && p.created_at?.startsWith(today)).length,
+    inProgress: patients.filter(p => p.call_status === 'In Progress').length,
+    failed: patients.filter(p => p.call_status === 'Failed').length
   };
 
   // Get 5 most recent calls
@@ -68,18 +69,8 @@ export function PatientQuestionsDashboard() {
       }
     >
       <div className="space-y-6">
-        {/* Info Card */}
-        <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
-          <CardContent className="flex items-center gap-3 py-4">
-            <Info className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            <p className="text-sm text-blue-800 dark:text-blue-200">
-              Records are created automatically when patients call in.
-            </p>
-          </CardContent>
-        </Card>
-
         {/* Metrics Grid */}
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Total Calls</CardTitle>
@@ -87,16 +78,6 @@ export function PatientQuestionsDashboard() {
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold">{metrics.total}</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Completed Today</CardTitle>
-              <CheckCircle className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-green-600">{metrics.completedToday}</p>
             </CardContent>
           </Card>
 
@@ -112,11 +93,31 @@ export function PatientQuestionsDashboard() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Completed</CardTitle>
+              <CheckCircle className="h-4 w-4 text-green-500" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-green-600">{metrics.completed}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Failed</CardTitle>
               <XCircle className="h-4 w-4 text-red-500" />
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold text-red-600">{metrics.failed}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Today</CardTitle>
+              <PhoneIncoming className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-blue-600">{metrics.completedToday}</p>
             </CardContent>
           </Card>
         </div>
@@ -155,12 +156,6 @@ export function PatientQuestionsDashboard() {
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
-        <div className="flex gap-4">
-          <Button variant="outline" onClick={() => navigate('/workflows/patient_questions/calls')}>
-            View All Calls
-          </Button>
-        </div>
       </div>
     </WorkflowLayout>
   );

@@ -45,7 +45,7 @@ api.interceptors.response.use(
       removeAuthToken();
 
       // Redirect to landing page
-      window.location.href = 'https://datasova.com';
+      window.location.href = '/';
 
       // Return a rejected promise with a user-friendly message
       return Promise.reject(new Error('Your session has expired. Please log in again.'));

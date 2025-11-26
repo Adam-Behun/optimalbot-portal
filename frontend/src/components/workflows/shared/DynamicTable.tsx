@@ -19,7 +19,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ArrowUpDown, Phone, Trash2 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ArrowUpDown, Phone, Trash2, MoreHorizontal, Pencil, Eye } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,6 +44,10 @@ interface DynamicTableProps {
   loading?: boolean;
   onStartCalls?: (patients: Patient[]) => Promise<void>;
   onDeletePatients?: (patients: Patient[]) => Promise<void>;
+  onViewPatient?: (patient: Patient) => void;
+  onEditPatient?: (patient: Patient) => void;
+  onStartCall?: (patient: Patient) => void;
+  onDeletePatient?: (patient: Patient) => void;
 }
 
 // Format value based on field type
@@ -97,7 +107,12 @@ export function DynamicTable({
   loading,
   onStartCalls,
   onDeletePatients,
+  onViewPatient,
+  onEditPatient,
+  onStartCall,
+  onDeletePatient,
 }: DynamicTableProps) {
+  const hasRowActions = onViewPatient || onEditPatient || onStartCall || onDeletePatient;
   // Get columns from schema, sorted by display_order
   const columns = schema.patient_schema.fields
     .filter((f) => f.display_in_list)
@@ -338,6 +353,9 @@ export function DynamicTable({
                   <ArrowUpDown className="ml-2 h-4 w-4" />
                 </Button>
               </TableHead>
+              {hasRowActions && (
+                <TableHead className="w-[70px]">Actions</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -371,6 +389,47 @@ export function DynamicTable({
                     {patient.call_status}
                   </Badge>
                 </TableCell>
+                {hasRowActions && (
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-8 w-8 p-0">
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {onViewPatient && (
+                          <DropdownMenuItem onClick={() => onViewPatient(patient)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            View Details
+                          </DropdownMenuItem>
+                        )}
+                        {onEditPatient && (
+                          <DropdownMenuItem onClick={() => onEditPatient(patient)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit Patient
+                          </DropdownMenuItem>
+                        )}
+                        {onStartCall && patient.call_status === 'Not Started' && (
+                          <DropdownMenuItem onClick={() => onStartCall(patient)}>
+                            <Phone className="mr-2 h-4 w-4" />
+                            Start Call
+                          </DropdownMenuItem>
+                        )}
+                        {onDeletePatient && (
+                          <DropdownMenuItem
+                            onClick={() => onDeletePatient(patient)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Patient
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

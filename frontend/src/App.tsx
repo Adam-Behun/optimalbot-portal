@@ -7,21 +7,18 @@ import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { LandingPage } from './components/LandingPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
-import { Workflows } from './components/Workflows';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
 import { Home } from './components/Home';
 import { OrganizationProvider } from './contexts/OrganizationContext';
+import { SidebarLayout } from './components/SidebarLayout';
 import {
   PriorAuthDashboard,
   PriorAuthPatientList,
   PriorAuthAddPatient,
-  PriorAuthEditPatient,
-  PriorAuthPatientDetail,
 } from './components/workflows/prior_auth';
 import {
   PatientQuestionsDashboard,
   PatientQuestionsCallList,
-  PatientQuestionsCallDetail,
 } from './components/workflows/patient_questions';
 
 const App = () => {
@@ -60,61 +57,55 @@ const App = () => {
               {/* Protected routes - require authentication */}
               <Route path="/home" element={
                 <ProtectedRoute>
-                  <Home />
+                  <SidebarLayout>
+                    <Home />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
               <Route path="/custom-reports" element={
                 <ProtectedRoute>
-                  <CustomReports />
-                </ProtectedRoute>
-              } />
-              <Route path="/workflows" element={
-                <ProtectedRoute>
-                  <Workflows />
+                  <SidebarLayout>
+                    <CustomReports />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
 
               {/* Prior Auth Workflow Routes */}
               <Route path="/workflows/prior_auth/dashboard" element={
                 <ProtectedRoute>
-                  <PriorAuthDashboard />
+                  <SidebarLayout>
+                    <PriorAuthDashboard />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
               <Route path="/workflows/prior_auth/patients" element={
                 <ProtectedRoute>
-                  <PriorAuthPatientList />
+                  <SidebarLayout>
+                    <PriorAuthPatientList />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
               <Route path="/workflows/prior_auth/patients/add" element={
                 <ProtectedRoute>
-                  <PriorAuthAddPatient />
-                </ProtectedRoute>
-              } />
-              <Route path="/workflows/prior_auth/patients/:id" element={
-                <ProtectedRoute>
-                  <PriorAuthPatientDetail />
-                </ProtectedRoute>
-              } />
-              <Route path="/workflows/prior_auth/patients/:id/edit" element={
-                <ProtectedRoute>
-                  <PriorAuthEditPatient />
+                  <SidebarLayout>
+                    <PriorAuthAddPatient />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
 
               {/* Patient Questions Workflow Routes */}
               <Route path="/workflows/patient_questions/dashboard" element={
                 <ProtectedRoute>
-                  <PatientQuestionsDashboard />
+                  <SidebarLayout>
+                    <PatientQuestionsDashboard />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
               <Route path="/workflows/patient_questions/calls" element={
                 <ProtectedRoute>
-                  <PatientQuestionsCallList />
-                </ProtectedRoute>
-              } />
-              <Route path="/workflows/patient_questions/calls/:id" element={
-                <ProtectedRoute>
-                  <PatientQuestionsCallDetail />
+                  <SidebarLayout>
+                    <PatientQuestionsCallList />
+                  </SidebarLayout>
                 </ProtectedRoute>
               } />
               </Routes>
