@@ -11,21 +11,24 @@ services:
     eot_threshold: 0.65
     eot_timeout_ms: 3500
 
+  # Main LLM for complex tasks: spelling, verification, function calling
+  # Used for confirmation, date/time selection, and any node requiring accuracy
   llm:
     provider: anthropic
     model: claude-haiku-4-5-20251001
-    temperature: 0.4
+    temperature: 0.3
     api_key: ${ANTHROPIC_API_KEY}
     max_tokens: 256
 
-  # Secondary LLM for specific nodes (placeholder - configure models as needed)
-  # Used for LLM switching between nodes based on task requirements
+  # Classifier LLM for simple conversational tasks
+  # Fast model for greetings, simple info collection (name, phone, email)
+  # NO function calling - purely conversational
   classifier_llm:
     provider: groq
-    model: llama-3.3-70b-versatile  # Fast model for simple interactions
-    temperature: 0  # Deterministic responses
+    model: llama-3.1-8b-instant  # Ultra-fast for simple interactions
+    temperature: 0.5  # Slightly creative for natural conversation
     api_key: ${GROQ_API_KEY}
-    max_tokens: 512
+    max_tokens: 150  # Keep responses short and snappy
 
   tts:
     provider: cartesia
