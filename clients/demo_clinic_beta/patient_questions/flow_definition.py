@@ -383,39 +383,36 @@ Thank them and ask if there's anything else you can help with. Say something lik
         return f"Date of birth updated to '{self.collected_dob}'.", self.create_confirmation_node()
 
     async def _save_patient_to_database_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, 'NodeConfig']:
-        """Save collected patient info to database."""
-        logger.info(f"Flow: Saving patient to database - {self.collected_first_name} {self.collected_last_name}, DOB: {self.collected_dob}")
+        """Update existing patient record with collected info."""
+        logger.info(f"Flow: Updating patient in database - {self.collected_first_name} {self.collected_last_name}, DOB: {self.collected_dob}")
 
         try:
             db = get_async_patient_db()
+            patient_id = self.patient_data.get('patient_id')
 
-            # Create patient record
-            patient_record = {
-                "patient_name": f"{self.collected_first_name} {self.collected_last_name}",
+            if not patient_id:
+                logger.error("No patient_id found in patient_data - cannot update")
+                return "I apologize, there was a technical issue. Let me try again.", self.create_confirmation_node()
+
+            # Update fields on the existing patient record
+            update_fields = {
                 "first_name": self.collected_first_name,
                 "last_name": self.collected_last_name,
-                "date_of_birth": self.collected_dob,
-                "organization_id": self.organization_id,
-                "facility_name": self.patient_data.get('facility_name', 'Demo Clinic Beta'),
-                "call_status": "In Progress",
-                "created_via": "inbound_call"
+                "patient_name": f"{self.collected_last_name}, {self.collected_first_name}",
+                "date_of_birth": self.collected_dob
             }
 
-            # Insert into database
-            result = await db.create_patient(patient_record, self.organization_id)
-            patient_id = str(result.inserted_id) if result else None
+            success = await db.update_patient(patient_id, update_fields, self.organization_id)
 
-            if patient_id:
-                # Update our patient_data with the new ID for transcript saving
-                self.patient_data['patient_id'] = patient_id
-                logger.info(f"Patient saved to database with ID: {patient_id}")
+            if success:
+                logger.info(f"Patient updated in database: {patient_id}")
                 return "Patient information saved successfully.", self.create_closing_node()
             else:
-                logger.error("Failed to save patient - no ID returned")
+                logger.error(f"Failed to update patient {patient_id}")
                 return "I apologize, there was an issue saving your information. Let me try again.", self.create_confirmation_node()
 
         except Exception as e:
-            logger.error(f"Error saving patient to database: {e}")
+            logger.error(f"Error updating patient in database: {e}")
             return "I apologize, there was a technical issue. Let me try again.", self.create_confirmation_node()
 
     async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:

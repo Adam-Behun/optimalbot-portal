@@ -2,26 +2,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Patient } from '@/types';
 import { getPatients } from '@/api';
 import { Phone, CheckCircle, XCircle, Clock, PhoneIncoming } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
-
-// Get badge variant for call status
-function getStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  switch (status) {
-    case 'Completed':
-    case 'Completed - Left VM':
-      return 'default';
-    case 'Failed':
-      return 'destructive';
-    case 'In Progress':
-      return 'secondary';
-    default:
-      return 'outline';
-  }
-}
 
 export function PatientQuestionsDashboard() {
   const navigate = useNavigate();
@@ -44,11 +28,6 @@ export function PatientQuestionsDashboard() {
     inProgress: patients.filter(p => p.call_status === 'In Progress').length,
     failed: patients.filter(p => p.call_status === 'Failed').length
   };
-
-  // Get 5 most recent calls
-  const recentCalls = [...patients]
-    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
-    .slice(0, 5);
 
   if (loading) {
     return (
@@ -121,41 +100,6 @@ export function PatientQuestionsDashboard() {
             </CardContent>
           </Card>
         </div>
-
-        {/* Recent Calls */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Calls</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentCalls.length === 0 ? (
-              <p className="text-muted-foreground">No calls yet</p>
-            ) : (
-              <div className="space-y-3">
-                {recentCalls.map(patient => (
-                  <div
-                    key={patient.patient_id}
-                    className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 cursor-pointer"
-                    onClick={() => navigate(`/workflows/patient_questions/calls/${patient.patient_id}`)}
-                  >
-                    <div>
-                      <p className="font-medium">
-                        {patient.caller_name || patient.patient_name || 'Unknown Caller'}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {patient.created_at ? new Date(patient.created_at).toLocaleString() : 'N/A'}
-                      </p>
-                    </div>
-                    <Badge variant={getStatusVariant(patient.call_status)}>
-                      {patient.call_status}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
       </div>
     </WorkflowLayout>
   );

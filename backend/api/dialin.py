@@ -263,9 +263,7 @@ async def handle_dialin_webhook(
         patient_db = get_async_patient_db()
         patient_data = {
             "workflow": workflow_name,
-            "patient_name": "Unknown",
-            "date_of_birth": "Unknown",
-            "patient_phone": call_data.from_phone,
+            "phone": call_data.from_phone,
             "organization_id": organization_id,  # Use real ObjectId
             "call_status": "In Progress"
         }

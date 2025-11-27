@@ -1,7 +1,7 @@
 # Call type determines how calls are initiated
 # dial-out: Bot calls the user (outbound)
 # dial-in: User calls the bot (inbound)
-call_type: "dial-in"
+call_type: "dial-in" # number: +1 516-202-9788
 
 services:
   stt:

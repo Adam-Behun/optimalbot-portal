@@ -5,9 +5,11 @@ import { ChevronDown, ChevronRight, PhoneForwarded } from 'lucide-react';
 interface TranscriptViewerProps {
   messages: TranscriptMessage[];
   summary?: string;
+  /** Label for non-agent speaker. Defaults to 'Insurance Representative' for outbound calls */
+  callerLabel?: string;
 }
 
-export function TranscriptViewer({ messages, summary }: TranscriptViewerProps) {
+export function TranscriptViewer({ messages, summary, callerLabel = 'Insurance Representative' }: TranscriptViewerProps) {
   const [showIVRDetails, setShowIVRDetails] = useState(false);
 
   if (messages.length === 0) {
@@ -126,7 +128,7 @@ export function TranscriptViewer({ messages, summary }: TranscriptViewerProps) {
                   }`}
                 >
                   <div className="font-semibold text-sm mb-1.5">
-                    {isAgent ? 'Provider Agent' : 'Insurance Representative'}
+                    {isAgent ? 'Provider Agent' : callerLabel}
                   </div>
                   <div className="text-sm">
                     {message.content}

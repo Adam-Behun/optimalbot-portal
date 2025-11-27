@@ -39,6 +39,36 @@ function formatValue(value: unknown, field: SchemaField): string {
   }
 }
 
+// Get call status badge styling
+function getCallStatusStyle(status: string): string {
+  switch (status) {
+    case 'Completed':
+      return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+    case 'In Progress':
+      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
+    case 'Failed':
+      return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+    default:
+      return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
+  }
+}
+
+// Render field value with special formatting for call_status
+function renderFieldValue(value: unknown, field: SchemaField): React.ReactNode {
+  if (value === null || value === undefined || value === '') return '-';
+
+  // Special styling for call_status field
+  if (field.key === 'call_status') {
+    return (
+      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getCallStatusStyle(String(value))}`}>
+        {String(value)}
+      </span>
+    );
+  }
+
+  return formatValue(value, field);
+}
+
 // Detail row component
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -183,8 +213,6 @@ export function PatientQuestionsCallList() {
 
   // Get all fields from schema, sorted by display_order
   const allFields = [...schema.patient_schema.fields].sort((a, b) => a.display_order - b.display_order);
-  const regularFields = allFields.filter(f => !f.computed);
-  const computedFields = allFields.filter(f => f.computed);
 
   return (
     <WorkflowLayout
@@ -230,46 +258,13 @@ export function PatientQuestionsCallList() {
                   Call Information
                 </h3>
                 <div className="space-y-0">
-                  {regularFields.map(field => (
+                  {allFields.map(field => (
                     <DetailRow
                       key={field.key}
                       label={field.label}
-                      value={formatValue(selectedPatient[field.key], field)}
+                      value={renderFieldValue(selectedPatient[field.key], field)}
                     />
                   ))}
-                  {computedFields.map(field => (
-                    <DetailRow
-                      key={field.key}
-                      label={field.label}
-                      value={formatValue(selectedPatient[field.key], field)}
-                    />
-                  ))}
-                  <DetailRow
-                    label="Call Status"
-                    value={
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        selectedPatient.call_status === 'Completed'
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                          : selectedPatient.call_status === 'Completed - Left VM'
-                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-                            : selectedPatient.call_status === 'In Progress'
-                              ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                              : selectedPatient.call_status === 'Failed'
-                                ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                                : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
-                      }`}>
-                        {selectedPatient.call_status}
-                      </span>
-                    }
-                  />
-                  <DetailRow
-                    label="Created"
-                    value={selectedPatient.created_at ? new Date(selectedPatient.created_at).toLocaleString() : '-'}
-                  />
-                  <DetailRow
-                    label="Last Updated"
-                    value={selectedPatient.updated_at ? new Date(selectedPatient.updated_at).toLocaleString() : '-'}
-                  />
                 </div>
               </div>
 
@@ -279,9 +274,9 @@ export function PatientQuestionsCallList() {
                   <h3 className="text-lg font-semibold text-primary mb-3">
                     Call Transcript
                   </h3>
-                  <TranscriptViewer messages={transcript} />
+                  <TranscriptViewer messages={transcript} callerLabel="Patient" />
                 </div>
-              ) : selectedPatient.call_status === 'Completed' || selectedPatient.call_status === 'Completed - Left VM' ? (
+              ) : selectedPatient.call_status === 'Completed' ? (
                 <div className="bg-card rounded-lg border p-4 text-center">
                   <h3 className="text-lg font-semibold text-primary mb-3">
                     Call Transcript
