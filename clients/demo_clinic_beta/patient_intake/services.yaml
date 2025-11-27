@@ -1,0 +1,47 @@
+# Call type determines how calls are initiated
+# dial-out: Bot calls the user (outbound)
+# dial-in: User calls the bot (inbound)
+call_type: "dial-in"
+
+services:
+  stt:
+    api_key: ${DEEPGRAM_API_KEY}
+    model: flux-general-en
+    eager_eot_threshold: 0.55
+    eot_threshold: 0.65
+    eot_timeout_ms: 3500
+
+  llm:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    temperature: 0.4
+    api_key: ${ANTHROPIC_API_KEY}
+    max_tokens: 256
+
+  # Secondary LLM for specific nodes (placeholder - configure models as needed)
+  # Used for LLM switching between nodes based on task requirements
+  classifier_llm:
+    provider: groq
+    model: llama-3.3-70b-versatile  # Fast model for simple interactions
+    temperature: 0  # Deterministic responses
+    api_key: ${GROQ_API_KEY}
+    max_tokens: 512
+
+  tts:
+    provider: cartesia
+    model: sonic-3-2025-10-27
+    voice_id: 829ccd10-f8b3-43cd-b8a0-4aeaa81f3b30
+    api_key: ${CARTESIA_API_KEY}
+    generation_config:
+      speed: 0.95
+      volume: 1.0
+      emotion: neutral
+    aggregate_sentences: true
+
+  transport:
+    provider: daily
+    api_key: ${DAILY_API_KEY}
+    phone_number_id: ${DAILY_PHONE_NUMBER_ID}
+    enable_echo_cancellation: true
+    audio_in_sample_rate: 16000
+    audio_out_sample_rate: 24000

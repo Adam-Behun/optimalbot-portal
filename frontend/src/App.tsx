@@ -20,6 +20,10 @@ import {
   PatientQuestionsDashboard,
   PatientQuestionsCallList,
 } from './components/workflows/patient_questions';
+import {
+  PatientIntakeDashboard,
+  PatientIntakeCallList,
+} from './components/workflows/patient_intake';
 
 const App = () => {
   return (
@@ -105,6 +109,22 @@ const App = () => {
                 <ProtectedRoute>
                   <SidebarLayout>
                     <PatientQuestionsCallList />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+
+              {/* Patient Intake Workflow Routes */}
+              <Route path="/workflows/patient_intake/dashboard" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <PatientIntakeDashboard />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/patient_intake/calls" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <PatientIntakeCallList />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />

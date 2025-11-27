@@ -9,6 +9,7 @@ from handlers import (
     setup_transcript_handler,
     setup_ivr_handlers,
 )
+from observers import LangfuseLatencyObserver
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,12 @@ class ConversationPipeline:
 
         logger.info("✅ Pipeline components assembled")
 
+        # Create latency observer for tracking user-to-bot response time
+        self.latency_observer = LangfuseLatencyObserver(
+            session_id=self.session_id,
+            patient_id=self.patient_id
+        )
+
         # Use params from factory, which includes audio sample rates and other settings
         self.task = PipelineTask(
             self.pipeline,
@@ -97,7 +104,8 @@ class ConversationPipeline:
                 "patient.id": self.patient_id,
                 "phone.number": self.phone_number,
                 "client.name": self.client_name,
-            }
+            },
+            observers=[self.latency_observer],
         )
 
         self.flow_manager = FlowManager(
