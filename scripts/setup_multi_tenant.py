@@ -81,9 +81,14 @@ async def main():
                 "call_direction": "dial-in",
                 "patient_schema": {
                     "fields": [
-                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": False, "display_in_list": True, "display_order": 1},
-                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": False, "display_in_list": True, "display_order": 2},
-                        {"key": "phone", "label": "Caller Phone", "type": "phone", "required": True, "display_in_list": True, "display_order": 3}
+                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": False, "display_in_list": True, "display_order": 1, "computed": True},
+                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": False, "display_in_list": True, "display_order": 2, "computed": True},
+                        {"key": "first_name", "label": "First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 3, "computed": True},
+                        {"key": "last_name", "label": "Last Name", "type": "string", "required": False, "display_in_list": False, "display_order": 4, "computed": True},
+                        {"key": "call_status", "label": "Call Status", "type": "string", "required": False, "display_in_list": False, "display_order": 5, "computed": True},
+                        {"key": "created_at", "label": "Created", "type": "datetime", "required": False, "display_in_list": False, "display_order": 6, "computed": True},
+                        {"key": "updated_at", "label": "Last Updated", "type": "datetime", "required": False, "display_in_list": False, "display_order": 7, "computed": True},
+                        {"key": "caller_phone_number", "label": "Caller Phone Number", "type": "phone", "required": False, "display_in_list": False, "display_order": 8, "computed": True}
                     ]
                 }
             }
@@ -115,14 +120,38 @@ async def main():
                 "call_direction": "dial-in",
                 "patient_schema": {
                     "fields": [
-                        {"key": "first_name", "label": "First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 1, "computed": True},
-                        {"key": "last_name", "label": "Last Name", "type": "string", "required": False, "display_in_list": False, "display_order": 2, "computed": True},
+                        {"key": "patient_name", "label": "Patient Name", "type": "string", "required": False, "display_in_list": True, "display_order": 1, "computed": True},
+                        {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": False, "display_in_list": True, "display_order": 2, "computed": True},
+                        {"key": "first_name", "label": "First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 3, "computed": True},
+                        {"key": "last_name", "label": "Last Name", "type": "string", "required": False, "display_in_list": False, "display_order": 4, "computed": True},
+                        {"key": "call_status", "label": "Call Status", "type": "string", "required": False, "display_in_list": False, "display_order": 5, "computed": True},
+                        {"key": "created_at", "label": "Created", "type": "datetime", "required": False, "display_in_list": False, "display_order": 6, "computed": True},
+                        {"key": "updated_at", "label": "Last Updated", "type": "datetime", "required": False, "display_in_list": False, "display_order": 7, "computed": True},
+                        {"key": "caller_phone_number", "label": "Caller Phone Number", "type": "phone", "required": False, "display_in_list": False, "display_order": 8, "computed": True}
+                    ]
+                }
+            },
+            "patient_intake": {
+                "enabled": True,
+                "display_name": "Patient Intake",
+                "description": "Inbound calls for dental appointment scheduling - new and returning patients",
+                "call_direction": "dial-in",
+                "patient_schema": {
+                    "fields": [
+                        {"key": "appointment_type", "label": "Appointment Type", "type": "string", "required": False, "display_in_list": True, "display_order": 1, "computed": True},
+                        {"key": "appointment_date", "label": "Appointment Date", "type": "string", "required": False, "display_in_list": True, "display_order": 2, "computed": True},
                         {"key": "patient_name", "label": "Patient Name", "type": "string", "required": False, "display_in_list": True, "display_order": 3, "computed": True},
                         {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": False, "display_in_list": True, "display_order": 4, "computed": True},
-                        {"key": "phone", "label": "Caller Phone", "type": "phone", "required": False, "display_in_list": False, "display_order": 5},
-                        {"key": "call_status", "label": "Call Status", "type": "string", "required": False, "display_in_list": True, "display_order": 6, "computed": True},
-                        {"key": "created_at", "label": "Created", "type": "datetime", "required": False, "display_in_list": False, "display_order": 7, "computed": True},
-                        {"key": "updated_at", "label": "Last Updated", "type": "datetime", "required": False, "display_in_list": True, "display_order": 8, "computed": True}
+                        {"key": "phone_number", "label": "Phone Number", "type": "phone", "required": False, "display_in_list": True, "display_order": 5, "computed": True},
+                        {"key": "first_name", "label": "First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 6, "computed": True},
+                        {"key": "last_name", "label": "Last Name", "type": "string", "required": False, "display_in_list": False, "display_order": 7, "computed": True},
+                        {"key": "email", "label": "Email", "type": "string", "required": False, "display_in_list": False, "display_order": 8, "computed": True},
+                        {"key": "appointment_time", "label": "Appointment Time", "type": "string", "required": False, "display_in_list": False, "display_order": 9, "computed": True},
+                        {"key": "appointment_reason", "label": "Appointment Reason", "type": "string", "required": False, "display_in_list": False, "display_order": 10, "computed": True},
+                        {"key": "call_status", "label": "Call Status", "type": "string", "required": False, "display_in_list": False, "display_order": 11, "computed": True},
+                        {"key": "created_at", "label": "Created", "type": "datetime", "required": False, "display_in_list": False, "display_order": 12, "computed": True},
+                        {"key": "updated_at", "label": "Last Updated", "type": "datetime", "required": False, "display_in_list": False, "display_order": 13, "computed": True},
+                        {"key": "caller_phone_number", "label": "Caller Phone Number", "type": "phone", "required": False, "display_in_list": False, "display_order": 14, "computed": True}
                     ]
                 }
             }
@@ -207,7 +236,7 @@ async def main():
     print(f"    - User: adambehun22@gmail.com / REDACTED")
     print(f"\n  • DemoClinicBeta: {beta_org_id}")
     print(f"    - Slug: demo_clinic_beta")
-    print(f"    - Workflow: patient_questions")
+    print(f"    - Workflows: patient_questions, patient_intake")
     print(f"    - User: adam@datasova.com / REDACTED")
     print("\nCollections created:")
     print("  • organizations")
@@ -218,7 +247,7 @@ async def main():
     print("  • Sessions store transcripts linked to patients")
     print("\nTest the setup:")
     print("  1. Login as Alpha user → select prior_auth or patient_questions workflow")
-    print("  2. Login as Beta user → select patient_questions workflow")
+    print("  2. Login as Beta user → select patient_questions or patient_intake workflow")
     print("  3. Each workflow has its own patient schema and fields")
 
     client.close()
