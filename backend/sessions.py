@@ -1,25 +1,21 @@
-"""MongoDB session tracking for active voice calls"""
-import os
 import logging
 from datetime import datetime
 from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
 
-load_dotenv()
+from backend.database import get_mongo_client, MONGO_DB_NAME
+from backend.constants import SessionStatus
+
 logger = logging.getLogger(__name__)
 
 
 class AsyncSessionRecord:
-    """Async database operations for call sessions - replaces in-memory active_pipelines dict"""
-
     def __init__(self, db_client: AsyncIOMotorClient):
         self.client = db_client
-        self.db = db_client[os.getenv("MONGO_DB_NAME", "alfons")]
+        self.db = db_client[MONGO_DB_NAME]
         self.sessions = self.db.sessions
 
     async def _ensure_indexes(self):
-        """Create indexes for session collection"""
         try:
             from bson import ObjectId
             await self.sessions.create_index([("organization_id", 1), ("created_at", -1)])
@@ -27,18 +23,16 @@ class AsyncSessionRecord:
             logger.warning(f"Index creation warning: {e}")
 
     async def create_session(self, session_data: dict) -> bool:
-        """Create new session record when call starts"""
         try:
             from bson import ObjectId
             await self._ensure_indexes()
 
-            # Convert organization_id to ObjectId if provided as string
             if "organization_id" in session_data and isinstance(session_data["organization_id"], str):
                 session_data["organization_id"] = ObjectId(session_data["organization_id"])
 
             session_data.update({
                 "created_at": datetime.utcnow(),
-                "status": "starting"
+                "status": SessionStatus.STARTING.value
             })
             await self.sessions.insert_one(session_data)
             return True
@@ -47,7 +41,6 @@ class AsyncSessionRecord:
             return False
 
     async def find_session(self, session_id: str, organization_id: str = None) -> Optional[dict]:
-        """Find session by session_id, optionally filtered by organization"""
         try:
             from bson import ObjectId
             query = {"session_id": session_id}
@@ -59,27 +52,22 @@ class AsyncSessionRecord:
             return None
 
     async def update_session(self, session_id: str, updates: dict, organization_id: str = None) -> bool:
-        """Update session fields"""
         try:
             from bson import ObjectId
             updates["updated_at"] = datetime.utcnow()
             query = {"session_id": session_id}
             if organization_id:
                 query["organization_id"] = ObjectId(organization_id)
-            result = await self.sessions.update_one(
-                query,
-                {"$set": updates}
-            )
+            result = await self.sessions.update_one(query, {"$set": updates})
             return result.modified_count > 0
         except Exception as e:
             logger.error(f"Error updating session {session_id}: {e}")
             return False
 
     async def list_active_sessions(self, organization_id: str = None) -> List[dict]:
-        """Get all running sessions, optionally filtered by organization"""
         try:
             from bson import ObjectId
-            query = {"status": {"$in": ["starting", "running"]}}
+            query = {"status": {"$in": [SessionStatus.STARTING.value, SessionStatus.RUNNING.value]}}
             if organization_id:
                 query["organization_id"] = ObjectId(organization_id)
             cursor = self.sessions.find(query)
@@ -89,11 +77,10 @@ class AsyncSessionRecord:
             return []
 
     async def cleanup_old_sessions(self, hours: int = 24) -> int:
-        """Delete completed/failed sessions older than X hours"""
         try:
             cutoff = datetime.utcnow().timestamp() - (hours * 3600)
             result = await self.sessions.delete_many({
-                "status": {"$in": ["completed", "failed"]},
+                "status": {"$in": [SessionStatus.COMPLETED.value, SessionStatus.FAILED.value]},
                 "created_at": {"$lt": datetime.fromtimestamp(cutoff)}
             })
             return result.deleted_count
@@ -102,17 +89,11 @@ class AsyncSessionRecord:
             return 0
 
 
-# Singleton instance
-_session_db_instance = None
+_session_db_instance: Optional[AsyncSessionRecord] = None
+
 
 def get_async_session_db() -> AsyncSessionRecord:
-    """Get singleton session database instance"""
     global _session_db_instance
     if _session_db_instance is None:
-        client = AsyncIOMotorClient(
-            os.getenv("MONGO_URI"),
-            maxPoolSize=10,
-            serverSelectionTimeoutMS=5000
-        )
-        _session_db_instance = AsyncSessionRecord(client)
+        _session_db_instance = AsyncSessionRecord(get_mongo_client())
     return _session_db_instance

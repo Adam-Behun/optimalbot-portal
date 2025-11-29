@@ -1,4 +1,3 @@
-"""Call management endpoints"""
 import os
 import logging
 import traceback
@@ -9,7 +8,6 @@ import aiohttp
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from slowapi import Limiter
-from bson import ObjectId
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from pipecatcloud.session import Session, SessionParams
 from pipecatcloud.exception import AgentStartError
@@ -21,64 +19,33 @@ from backend.dependencies import (
     log_phi_access,
     get_user_id_from_request,
     require_organization_access,
-    get_organization_db,
     get_current_user_organization_id
 )
-from backend.models.organization import AsyncOrganizationRecord
 from backend.models import AsyncPatientRecord
 from backend.sessions import AsyncSessionRecord
 from backend.schemas import CallRequest
 from backend.server_utils import (
     BotRequest,
     create_daily_room,
-    start_bot_production,
     start_bot_local
 )
+from backend.utils import convert_objectid
+from backend.constants import SessionStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
 PIPECAT_TIMEOUT_SECONDS = int(os.getenv("PIPECAT_TIMEOUT_SECONDS", "90"))
-ENV = os.getenv("ENV", "local")  # Default to local for development
+ENV = os.getenv("ENV", "local")
 
 
-# Models
 class CallResponse(BaseModel):
     status: str
     session_id: str
     room_name: str
     room_url: str
     message: str
-
-
-# Helpers
-def convert_objectid(doc: dict) -> dict:
-    """Recursively convert MongoDB ObjectId to string for JSON serialization"""
-    if not doc:
-        return doc
-
-    result = {}
-    for key, value in doc.items():
-        if isinstance(value, ObjectId):
-            result[key] = str(value)
-        elif isinstance(value, dict):
-            result[key] = convert_objectid(value)
-        elif isinstance(value, list):
-            result[key] = [
-                convert_objectid(item) if isinstance(item, dict)
-                else str(item) if isinstance(item, ObjectId)
-                else item
-                for item in value
-            ]
-        else:
-            result[key] = value
-
-    # Set patient_id from _id if present
-    if "_id" in result:
-        result["patient_id"] = result["_id"]
-
-    return result
 
 
 @retry(
@@ -88,7 +55,6 @@ def convert_objectid(doc: dict) -> dict:
     reraise=True
 )
 async def start_pipecat_session_with_retry(session: Session) -> dict:
-    """Start Pipecat Cloud session with retry logic"""
     return await asyncio.wait_for(
         session.start(),
         timeout=PIPECAT_TIMEOUT_SECONDS
@@ -104,7 +70,6 @@ async def start_call(
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
-    """Initiate new call session"""
     current_user = org_context["user"]
     org = org_context["organization"]
     org_id = org_context["organization_id"]
@@ -115,7 +80,6 @@ async def start_call(
     logger.info(f"Organization: {org.get('name')} ({org_id})")
 
     try:
-        # Validate client_name against org's workflows
         workflows = org.get("workflows", {})
         if call_request.client_name not in workflows:
             raise HTTPException(
@@ -128,7 +92,6 @@ async def start_call(
                 detail=f"Workflow '{call_request.client_name}' is not enabled for this organization"
             )
 
-        # Fetch patient (filtered by organization)
         logger.info("Fetching patient data from database...")
         patient = await patient_db.find_patient_by_id(call_request.patient_id, organization_id=org_id)
         if not patient:
@@ -137,7 +100,6 @@ async def start_call(
         patient = convert_objectid(patient)
         logger.info(f"Patient found with ID: {call_request.patient_id}")
 
-        # Log PHI access
         await log_phi_access(
             request=request,
             user=current_user,
@@ -146,17 +108,14 @@ async def start_call(
             resource_id=call_request.patient_id
         )
 
-        # Get phone number
         phone_number = call_request.phone_number or patient.get("phone_number")
         if not phone_number:
             raise HTTPException(status_code=400, detail="Phone number required")
 
-        # Generate session ID
         session_id = str(uuid.uuid4())
         logger.info(f"Session ID: {session_id}")
         logger.info(f"Phone number: {phone_number}")
 
-        # Create session record
         await session_db.create_session({
             "session_id": session_id,
             "patient_id": call_request.patient_id,
@@ -165,12 +124,10 @@ async def start_call(
             "organization_id": org_id
         })
 
-        # Start bot session (local or production based on ENV)
         logger.info(f"Starting bot session in {ENV.upper()} mode...")
 
         try:
             if ENV == "production":
-                # Production: Use Pipecat Cloud API
                 logger.info("Using PRODUCTION mode - Pipecat Cloud")
 
                 agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
@@ -179,7 +136,6 @@ async def start_call(
                 if not pipecat_api_key:
                     raise HTTPException(status_code=500, detail="PIPECAT_API_KEY not configured")
 
-                # Create session with Pipecat Cloud
                 pipecat_session = Session(
                     agent_name=agent_name,
                     api_key=pipecat_api_key,
@@ -213,10 +169,8 @@ async def start_call(
                 logger.info(f"Room: {room_url}")
 
             else:
-                # Local development: Create Daily room + call local bot server
                 logger.info("Using LOCAL mode - local bot server")
 
-                # Create Daily room for local development
                 async with aiohttp.ClientSession() as http_session:
                     daily_config = await create_daily_room(phone_number, http_session)
 
@@ -225,7 +179,6 @@ async def start_call(
 
                 logger.info(f"✅ Daily room created: {room_url}")
 
-                # Start local bot via /start endpoint
                 bot_request = BotRequest(
                     room_url=room_url,
                     token=token,
@@ -243,22 +196,18 @@ async def start_call(
 
                 logger.info(f"✅ Bot started via local server")
 
-            # Update session
             await session_db.update_session(session_id, {
                 "room_url": room_url,
-                "status": "running"
+                "status": SessionStatus.RUNNING.value
             })
 
         except AgentStartError as e:
-            # Pipecat Cloud specific error (production mode only)
             error_msg = str(e).lower()
             logger.error(f"Pipecat Cloud start error: {e}")
 
-            # Categorize error for better debugging and user feedback
             if any(keyword in error_msg for keyword in ["daily", "room", "telephony", "dialout"]):
-                # Daily.co telephony service issue
                 await session_db.update_session(session_id, {
-                    "status": "failed",
+                    "status": SessionStatus.FAILED.value,
                     "error": f"Telephony service error: {e}",
                     "error_type": "daily_service"
                 })
@@ -267,9 +216,8 @@ async def start_call(
                     detail="Telephony service temporarily unavailable. Please try again in a few moments."
                 )
             elif any(keyword in error_msg for keyword in ["timeout", "timed out"]):
-                # Timeout starting bot
                 await session_db.update_session(session_id, {
-                    "status": "failed",
+                    "status": SessionStatus.FAILED.value,
                     "error": f"Bot startup timeout: {e}",
                     "error_type": "timeout"
                 })
@@ -278,10 +226,9 @@ async def start_call(
                     detail="Bot startup took too long. Our team has been notified. Please try again."
                 )
             elif any(keyword in error_msg for keyword in ["authentication", "api key", "unauthorized"]):
-                # Credentials issue - log critically
                 logger.critical(f"CRITICAL: API credentials may be invalid - {e}")
                 await session_db.update_session(session_id, {
-                    "status": "failed",
+                    "status": SessionStatus.FAILED.value,
                     "error": f"Authentication error: {e}",
                     "error_type": "auth"
                 })
@@ -290,9 +237,8 @@ async def start_call(
                     detail="Service configuration error. Our team has been notified."
                 )
             else:
-                # Generic Pipecat error
                 await session_db.update_session(session_id, {
-                    "status": "failed",
+                    "status": SessionStatus.FAILED.value,
                     "error": f"Bot start error: {e}",
                     "error_type": "pipecat_generic"
                 })
@@ -302,10 +248,9 @@ async def start_call(
                 )
 
         except asyncio.TimeoutError:
-            # Explicit timeout from wait_for wrapper
             logger.error(f"Pipecat session start timed out after {PIPECAT_TIMEOUT_SECONDS}s")
             await session_db.update_session(session_id, {
-                "status": "failed",
+                "status": SessionStatus.FAILED.value,
                 "error": f"Session start timeout after {PIPECAT_TIMEOUT_SECONDS}s",
                 "error_type": "timeout"
             })
@@ -315,11 +260,10 @@ async def start_call(
             )
 
         except Exception as e:
-            # Catch-all for unexpected errors
             logger.error(f"Unexpected error starting call: {e}")
             logger.error(traceback.format_exc())
             await session_db.update_session(session_id, {
-                "status": "failed",
+                "status": SessionStatus.FAILED.value,
                 "error": str(e),
                 "error_type": "unexpected"
             })
@@ -353,15 +297,12 @@ async def get_call_status(
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
-    """Get status of active call"""
     session = await session_db.find_session(session_id, organization_id=org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    # Get patient data
     patient = await patient_db.find_patient_by_id(session["patient_id"], organization_id=org_id)
 
-    # Log PHI access
     await log_phi_access(
         request=request,
         user=current_user,
@@ -389,17 +330,14 @@ async def get_call_transcript(
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
-    """Get full transcript of call"""
     session = await session_db.find_session(session_id, organization_id=org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    # Get patient with transcript
     patient = await patient_db.find_patient_by_id(session["patient_id"], organization_id=org_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    # Log PHI access
     await log_phi_access(
         request=request,
         user=current_user,
@@ -423,12 +361,10 @@ async def end_call(
     org_id: str = Depends(get_current_user_organization_id),
     session_db: AsyncSessionRecord = Depends(get_session_db)
 ):
-    """End active call"""
     session = await session_db.find_session(session_id, organization_id=org_id)
     if not session:
         raise HTTPException(status_code=404, detail="Call session not found")
 
-    # Log PHI access
     await log_phi_access(
         request=request,
         user=current_user,
@@ -439,8 +375,7 @@ async def end_call(
 
     logger.info(f"User {current_user['email']} ending call session: {session_id}")
 
-    # Bot runs on Pipecat Cloud - managed externally
-    await session_db.update_session(session_id, {"status": "terminated"}, organization_id=org_id)
+    await session_db.update_session(session_id, {"status": SessionStatus.TERMINATED.value}, organization_id=org_id)
 
     return {
         "status": "ended",

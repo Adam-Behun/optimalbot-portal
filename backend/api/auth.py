@@ -1,4 +1,3 @@
-"""Authentication endpoints"""
 import os
 import logging
 import traceback
@@ -8,22 +7,20 @@ from pydantic import BaseModel
 from jose import JWTError, jwt
 from slowapi import Limiter
 
-from backend.dependencies import get_user_db, get_audit_logger_dep, get_client_info, get_user_id_from_request
+from backend.dependencies import get_user_db, get_audit_logger_dep, get_client_info, get_user_id_from_request, get_organization_db
 from backend.models import AsyncUserRecord
-from backend.models.organization import AsyncOrganizationRecord, get_async_organization_db
+from backend.models.organization import AsyncOrganizationRecord
 from backend.audit import AuditLogger
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
-# JWT config
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
-# Models
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -57,9 +54,7 @@ class ResetTokenResponse(BaseModel):
     expires_in_minutes: int
 
 
-# Helper
 def create_access_token(data: dict, expires_delta: timedelta = None):
-    """Create JWT access token"""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -68,10 +63,6 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def get_organization_db() -> AsyncOrganizationRecord:
-    return get_async_organization_db()
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -83,7 +74,6 @@ async def login(
     org_db: AsyncOrganizationRecord = Depends(get_organization_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Authenticate user and return JWT token"""
     try:
         ip_address, user_agent = get_client_info(request)
 
@@ -119,7 +109,6 @@ async def login(
                 detail="Invalid email or password"
             )
 
-        # Check account status
         if user.get("status") == "locked":
             await audit_logger.log_event(
                 event_type="login",
@@ -153,7 +142,6 @@ async def login(
         user_id = str(user["_id"])
         organization_id = str(user.get("organization_id", ""))
 
-        # Fetch organization details
         org = await org_db.get_by_id(organization_id)
         if not org:
             raise HTTPException(
@@ -161,7 +149,6 @@ async def login(
                 detail="User's organization not found"
             )
 
-        # If organization_slug provided, verify user belongs to that org
         if login_data.organization_slug:
             if org.get("slug") != login_data.organization_slug:
                 await audit_logger.log_event(
@@ -230,7 +217,6 @@ async def logout(
     request: Request,
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Log user logout event"""
     try:
         ip_address, user_agent = get_client_info(request)
 
@@ -273,7 +259,6 @@ async def request_reset(
     user_db: AsyncUserRecord = Depends(get_user_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Generate password reset token (Level 1: token returned directly)"""
     try:
         ip_address, user_agent = get_client_info(request)
 
@@ -324,7 +309,6 @@ async def reset_password(
     user_db: AsyncUserRecord = Depends(get_user_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Reset password using token"""
     try:
         ip_address, user_agent = get_client_info(request)
 

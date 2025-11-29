@@ -1,9 +1,7 @@
-"""Patient management endpoints"""
 import logging
 import traceback
 from fastapi import APIRouter, HTTPException, Request, Depends
 from slowapi import Limiter
-from bson import ObjectId
 
 from backend.dependencies import (
     get_current_user,
@@ -17,22 +15,11 @@ from backend.dependencies import (
 from backend.models import AsyncPatientRecord
 from backend.audit import AuditLogger
 from backend.schemas import PatientCreate, PatientResponse, BulkPatientRequest, BulkUploadResponse
+from backend.utils import convert_objectid
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
-
-
-# Helper
-def convert_objectid(doc: dict) -> dict:
-    """Convert MongoDB ObjectId fields to string"""
-    if doc:
-        if "_id" in doc and isinstance(doc["_id"], ObjectId):
-            doc["_id"] = str(doc["_id"])
-            doc["patient_id"] = doc["_id"]
-        if "organization_id" in doc and isinstance(doc["organization_id"], ObjectId):
-            doc["organization_id"] = str(doc["organization_id"])
-    return doc
 
 
 @router.get("")
@@ -44,7 +31,6 @@ async def list_patients(
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Get all patients for user's organization, optionally filtered by workflow"""
     try:
         logger.info(f"📋 User {current_user['email']} fetching patients for org {org_id}, workflow={workflow}")
 
@@ -54,7 +40,6 @@ async def list_patients(
 
         patients = [convert_objectid(p) for p in all_patients]
 
-        # Log PHI access
         ip_address, user_agent = get_client_info(request)
         await audit_logger.log_phi_access(
             user_id=current_user["sub"],
@@ -89,14 +74,12 @@ async def get_patient_by_id(
     org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Get specific patient by ID (filtered by organization)"""
     try:
         patient = await patient_db.find_patient_by_id(patient_id, organization_id=org_id)
 
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
-        # Log PHI access
         await log_phi_access(
             request=request,
             user=current_user,
@@ -127,11 +110,9 @@ async def add_patient(
     org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Add new patient to user's organization with flat fields"""
-    # Get all fields including extra dynamic fields
     patient_dict = patient_data.model_dump(by_alias=True)
 
-    # Add any extra fields that were passed (model_config extra="allow")
+    # Include extra dynamic fields (model_config extra="allow")
     if hasattr(patient_data, '__pydantic_extra__') and patient_data.__pydantic_extra__:
         patient_dict.update(patient_data.__pydantic_extra__)
 
@@ -142,7 +123,6 @@ async def add_patient(
     if not patient_id:
         raise HTTPException(status_code=500, detail="Failed to add patient")
 
-    # Log PHI access
     await log_phi_access(
         request=request,
         user=current_user,
@@ -170,7 +150,6 @@ async def add_patients_bulk(
     patient_db: AsyncPatientRecord = Depends(get_patient_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
-    """Add multiple patients from CSV upload to user's organization"""
     success_count = 0
     failed_count = 0
     errors = []
@@ -193,7 +172,6 @@ async def add_patients_bulk(
                 "error": "Database insertion failed"
             })
 
-    # Log bulk PHI creation
     ip_address, user_agent = get_client_info(request)
     await audit_logger.log_phi_access(
         user_id=current_user["sub"],
@@ -226,13 +204,11 @@ async def update_patient(
     org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Update existing patient (verified by organization)"""
     try:
         success = await patient_db.update_patient(patient_id, patient_data, organization_id=org_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
 
-        # Log PHI access
         await log_phi_access(
             request=request,
             user=current_user,
@@ -241,10 +217,7 @@ async def update_patient(
             resource_id=patient_id
         )
 
-        return {
-            "status": "success",
-            "message": "Patient updated successfully"
-        }
+        return {"status": "success", "message": "Patient updated successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -261,13 +234,11 @@ async def delete_patient(
     org_id: str = Depends(get_current_user_organization_id),
     patient_db: AsyncPatientRecord = Depends(get_patient_db)
 ):
-    """Delete patient (verified by organization)"""
     try:
         success = await patient_db.delete_patient(patient_id, organization_id=org_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
 
-        # Log PHI access
         await log_phi_access(
             request=request,
             user=current_user,
@@ -276,10 +247,7 @@ async def delete_patient(
             resource_id=patient_id
         )
 
-        return {
-            "status": "success",
-            "message": "Patient deleted successfully"
-        }
+        return {"status": "success", "message": "Patient deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:

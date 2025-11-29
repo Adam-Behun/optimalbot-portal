@@ -1,4 +1,3 @@
-"""Dependency injection providers for FastAPI"""
 import os
 import logging
 from typing import Tuple
@@ -18,32 +17,32 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 ALGORITHM = "HS256"
 
 
-# Database dependencies
 def get_patient_db() -> AsyncPatientRecord:
     return get_async_patient_db()
+
 
 def get_user_db() -> AsyncUserRecord:
     return get_async_user_db()
 
+
 def get_session_db() -> AsyncSessionRecord:
     return get_async_session_db()
 
+
 def get_audit_logger_dep() -> AuditLogger:
     return get_audit_logger()
+
 
 def get_organization_db() -> AsyncOrganizationRecord:
     return get_async_organization_db()
 
 
-# Utilities
 def get_client_info(request: Request) -> Tuple[str, str]:
-    """Extract IP and User-Agent from request"""
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
         ip_address = forwarded_for.split(",")[0].strip()
     else:
         ip_address = request.client.host if request.client else "unknown"
-
     user_agent = request.headers.get("user-agent", "unknown")
     return ip_address, user_agent
 
@@ -55,7 +54,6 @@ async def log_phi_access(
     resource_type: str,
     resource_id: str
 ):
-    """Log PHI access for HIPAA compliance"""
     audit_logger = get_audit_logger()
     ip_address, user_agent = get_client_info(request)
     await audit_logger.log_phi_access(
@@ -70,13 +68,11 @@ async def log_phi_access(
     )
 
 
-# Authentication
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ) -> dict:
-    """Validate JWT and log API access"""
     try:
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -91,7 +87,6 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Log API access
         ip_address, user_agent = get_client_info(request)
         await audit_logger.log_api_access(
             user_id=user_id,
@@ -114,9 +109,7 @@ async def get_current_user(
         )
 
 
-# Tenant context dependencies
 def get_current_user_organization_id(current_user: dict = Depends(get_current_user)) -> str:
-    """Extract organization_id from current user JWT payload"""
     organization_id = current_user.get("organization_id")
     if not organization_id:
         raise HTTPException(
@@ -130,10 +123,6 @@ async def require_organization_access(
     current_user: dict = Depends(get_current_user),
     org_db: AsyncOrganizationRecord = Depends(get_organization_db)
 ) -> dict:
-    """
-    Validate user belongs to an organization and return org details.
-    Returns dict with user info and organization data.
-    """
     organization_id = current_user.get("organization_id")
     if not organization_id:
         raise HTTPException(
@@ -155,9 +144,7 @@ async def require_organization_access(
     }
 
 
-# Rate limiting
 def get_user_id_from_request(request: Request) -> str:
-    """Extract user ID from JWT for rate limiting, fallback to IP"""
     try:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):

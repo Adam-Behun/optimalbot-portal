@@ -1,4 +1,3 @@
-"""Health check endpoint"""
 from fastapi import APIRouter, Depends
 
 from backend.dependencies import get_patient_db
@@ -9,7 +8,6 @@ router = APIRouter()
 
 @router.get("/")
 async def root():
-    """Root endpoint - API info"""
     return {
         "service": "Healthcare AI Agent - Backend API",
         "version": "2.0",
@@ -31,9 +29,7 @@ async def root():
 
 @router.get("/health")
 async def health_check(patient_db: AsyncPatientRecord = Depends(get_patient_db)):
-    """Health check for backend API"""
     try:
-        # Simple DB connectivity check
         await patient_db.patients.find_one({})
         db_status = "connected"
     except Exception as e:

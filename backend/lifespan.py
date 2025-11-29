@@ -1,4 +1,3 @@
-"""Application lifecycle management"""
 import os
 import base64
 import asyncio
@@ -8,19 +7,15 @@ from fastapi import FastAPI
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from pipecat.utils.tracing.setup import setup_tracing
 
+from backend.database import close_mongo_client
+
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown logic"""
-    # Startup
     logger.info("🚀 Application starting...")
 
-    # Note: DB clients are initialized lazily via singletons on first use
-    # We don't initialize them here to avoid import-time dependencies
-
-    # Setup OpenTelemetry tracing with Langfuse
     public_key = os.getenv('LANGFUSE_PUBLIC_KEY')
     secret_key = os.getenv('LANGFUSE_SECRET_KEY')
     if public_key and secret_key:
@@ -44,9 +39,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     logger.info("Shutdown signal received...")
     await asyncio.sleep(2)
-
-    # DB connections will be closed by Motor/MongoDB driver automatically
+    await close_mongo_client()
     logger.info("Graceful shutdown complete")

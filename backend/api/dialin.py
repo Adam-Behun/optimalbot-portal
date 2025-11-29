@@ -10,6 +10,7 @@ from pipecat.runner.daily import configure
 from backend.models import get_async_patient_db
 from backend.models.organization import get_async_organization_db
 from backend.sessions import get_async_session_db
+from backend.server_utils import DialinBotRequest, start_bot_production, start_bot_local
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,19 +21,6 @@ ENV = os.getenv("ENV", "local")
 class DailyCallData(BaseModel):
     from_phone: str
     to_phone: str
-    call_id: str
-    call_domain: str
-
-
-class DialinBotRequest(BaseModel):
-    room_url: str
-    token: str
-    session_id: str
-    patient_id: str
-    patient_data: dict
-    client_name: str
-    organization_id: str
-    organization_slug: str
     call_id: str
     call_domain: str
 
@@ -64,64 +52,6 @@ async def create_dialin_room(call_data: DailyCallData, session: aiohttp.ClientSe
             status_code=500,
             detail=f"Failed to create Daily room: {str(e)}"
         )
-
-
-async def start_dialin_bot_production(bot_request: DialinBotRequest, session: aiohttp.ClientSession):
-    pipecat_api_key = os.getenv("PIPECAT_API_KEY")
-    agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
-
-    if not pipecat_api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="PIPECAT_API_KEY required for production mode"
-        )
-
-    logger.info(f"Starting dial-in bot via Pipecat Cloud for call {bot_request.call_id}")
-
-    body_data = bot_request.model_dump(exclude_none=True)
-
-    async with session.post(
-        f"https://api.pipecat.daily.co/v1/public/{agent_name}/start",
-        headers={
-            "Authorization": f"Bearer {pipecat_api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "createDailyRoom": False,
-            "body": body_data,
-        },
-    ) as response:
-        if response.status != 200:
-            error_text = await response.text()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to start bot via Pipecat Cloud: {error_text}"
-            )
-        logger.info("Dial-in bot started successfully via Pipecat Cloud")
-
-
-async def start_dialin_bot_local(bot_request: DialinBotRequest, session: aiohttp.ClientSession):
-    local_bot_url = os.getenv("LOCAL_BOT_URL", "http://localhost:7860")
-
-    logger.info(f"Starting dial-in bot via local /start for call {bot_request.call_id}")
-
-    body_data = bot_request.model_dump(exclude_none=True)
-
-    async with session.post(
-        f"{local_bot_url}/start",
-        headers={"Content-Type": "application/json"},
-        json={
-            "createDailyRoom": False,
-            "body": body_data,
-        },
-    ) as response:
-        if response.status != 200:
-            error_text = await response.text()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to start bot via local endpoint: {error_text}"
-            )
-        logger.info("Dial-in bot started successfully via local endpoint")
 
 
 @router.post("/dialin-webhook/{client_name}/{workflow_name}")
@@ -203,9 +133,11 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
 
         try:
             if ENV == "production":
-                await start_dialin_bot_production(bot_request, http_session)
+                await start_bot_production(bot_request, http_session)
             else:
-                await start_dialin_bot_local(bot_request, http_session)
+                await start_bot_local(bot_request, http_session)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error starting dial-in bot: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to start bot: {str(e)}")
