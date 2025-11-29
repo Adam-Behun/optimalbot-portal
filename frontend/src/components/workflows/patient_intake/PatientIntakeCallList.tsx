@@ -33,7 +33,11 @@ function formatValue(value: unknown, field: SchemaField): string {
     case 'date':
       return new Date(value as string).toLocaleDateString();
     case 'datetime':
+      // Display in user's local timezone with date and time
       return new Date(value as string).toLocaleString();
+    case 'time':
+      // For time-only fields stored as "HH:MM" or "10:30 AM"
+      return String(value);
     default:
       return String(value);
   }
@@ -258,7 +262,7 @@ export function PatientIntakeCallList() {
                   Call Information
                 </h3>
                 <div className="space-y-0">
-                  {allFields.map(field => (
+                  {allFields.filter(field => !['first_name', 'last_name'].includes(field.key)).map(field => (
                     <DetailRow
                       key={field.key}
                       label={field.label}

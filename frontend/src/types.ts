@@ -19,7 +19,7 @@ export interface Patient {
 export interface SchemaField {
   key: string;                    // Field name in patient document
   label: string;                  // Display label
-  type: 'string' | 'date' | 'datetime' | 'phone' | 'select' | 'text';
+  type: 'string' | 'date' | 'datetime' | 'time' | 'phone' | 'select' | 'text';
   required: boolean;
   display_in_list: boolean;       // Show in patient list table
   display_order: number;          // Sort order for UI
