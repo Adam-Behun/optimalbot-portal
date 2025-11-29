@@ -143,14 +143,6 @@ class ConversationPipeline:
             logger.error(traceback.format_exc())
             raise
 
-        finally:
-            # Ensure task is properly cancelled to clean up any dangling service tasks
-            # This is especially important for services like CartesiaTTS that maintain
-            # WebSocket connections with background receive tasks
-            if self.task:
-                await self.task.cancel()
-                logger.info("✅ Task cancelled - all service background tasks cleaned up")
-
     def get_conversation_state(self) -> Dict[str, Any]:
         return {
             "workflow_state": "active" if self.flow_manager else "inactive",

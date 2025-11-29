@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict
 
-from pipecat.frames.frames import EndTaskFrame, ManuallySwitchServiceFrame
+from pipecat.frames.frames import ManuallySwitchServiceFrame
 from pipecat.processors.frame_processor import FrameDirection
 
 from pipecat_flows import (
@@ -336,6 +336,20 @@ Then call end_call to finish.""",
             respond_immediately=True,
         )
 
+    def _create_end_node(self) -> NodeConfig:
+        """Final termination node - uses post_actions to end conversation properly."""
+        return NodeConfig(
+            name="end",
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": "Thank the patient and say goodbye.",
+                }
+            ],
+            functions=[],
+            post_actions=[{"type": "end_conversation"}],
+        )
+
     # ========== LLM Switching (only used once) ==========
 
     async def _switch_to_classifier_llm(self, action: dict, flow_manager: FlowManager):
@@ -473,9 +487,9 @@ Then call end_call to finish.""",
 
     async def _end_call_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, None]:
-        """End the call and save transcript."""
-        logger.info("Call ended by flow")
+    ) -> tuple[None, NodeConfig]:
+        """End the call - transition to end node which handles termination."""
+        logger.info("Call ended by flow - transitioning to end node")
         patient_id = self.patient_data.get("patient_id")
         db = get_async_patient_db() if patient_id else None
 
@@ -488,12 +502,6 @@ Then call end_call to finish.""",
                 await db.update_call_status(patient_id, "Completed", self.organization_id)
                 logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
 
-            if self.context_aggregator:
-                await self.context_aggregator.assistant().push_frame(
-                    EndTaskFrame(),
-                    FrameDirection.UPSTREAM,
-                )
-
         except Exception as e:
             import traceback
 
@@ -505,4 +513,5 @@ Then call end_call to finish.""",
                 except Exception as db_error:
                     logger.error(f"Failed to update status to Failed: {db_error}")
 
-        return None, None
+        # Return the end node which uses post_actions to properly terminate
+        return None, self._create_end_node()
