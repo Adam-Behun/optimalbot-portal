@@ -347,8 +347,6 @@ Then call end_call to finish.""",
             post_actions=[{"type": "end_conversation"}],
         )
 
-    # ========== LLM Switching (only used once) ==========
-
     async def _switch_to_classifier_llm(self, action: dict, flow_manager: FlowManager):
         """Switch to classifier LLM for fast greeting."""
         if self.context_aggregator and self.classifier_llm:
