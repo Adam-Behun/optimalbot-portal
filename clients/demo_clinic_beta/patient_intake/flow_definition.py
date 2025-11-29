@@ -57,16 +57,16 @@ class PatientIntakeFlow:
             task_messages=[
                 {
                     "role": "system",
-                    "content": f'Say exactly: "Hello! This is Monica from {self.facility_name}, how can I help you today?" Then immediately call proceed_to_main to continue.',
+                    "content": f'Say exactly: "Hello! This is Monica from {self.facility_name}, how can I help you today?" Then call proceed_to_patient_type.',
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
-                    name="proceed_to_main",
-                    description="Proceed to main conversation after greeting.",
+                    name="proceed_to_patient_type",
+                    description="Proceed to asking if the patient is new or returning.",
                     properties={},
                     required=[],
-                    handler=self._proceed_to_main_handler,
+                    handler=self._proceed_to_patient_type_handler,
                 )
             ],
             respond_immediately=True,
@@ -74,24 +74,21 @@ class PatientIntakeFlow:
         )
 
     def create_patient_type_node(self) -> NodeConfig:
-        """Determine if new or returning patient."""
+        """Determine if new or returning patient - uses classifier_llm for fast response."""
         return NodeConfig(
             name="patient_type",
             role_messages=[
                 {
                     "role": "system",
-                    "content": f"""You are Monica, a warm and friendly Virtual Assistant from {self.facility_name}.
-Be conversational and helpful. Use the patient's name once you learn it.""",
+                    "content": f"""You are Monica, a warm and friendly Virtual Assistant from {self.facility_name}. Be conversational and helpful.""",
                 }
             ],
             task_messages=[
                 {
                     "role": "system",
-                    "content": """Listen to what the patient needs and determine if they are a NEW patient (first time visiting) or a RETURNING patient (been here before).
+                    "content": """Ask: "Is this your first time visiting us, or have you been here before?"
 
-If unclear, ask: "Is this your first time visiting us, or have you been here before?"
-
-Once you know:
+Once you determine if this is a NEW or RETURNING patient, respond appropriately:
 - If NEW patient: call set_new_patient
 - If RETURNING patient: call set_returning_patient""",
                 }
@@ -99,25 +96,24 @@ Once you know:
             functions=[
                 FlowsFunctionSchema(
                     name="set_new_patient",
-                    description="Patient is visiting for the first time.",
+                    description="Mark the patient as a new patient (first time visiting).",
                     properties={},
                     required=[],
                     handler=self._set_new_patient_handler,
                 ),
                 FlowsFunctionSchema(
                     name="set_returning_patient",
-                    description="Patient has visited before.",
+                    description="Mark the patient as a returning patient (been here before).",
                     properties={},
                     required=[],
                     handler=self._set_returning_patient_handler,
                 ),
             ],
             respond_immediately=False,
-            pre_actions=[{"type": "function", "handler": self._switch_to_main_llm}],
         )
 
     def create_visit_reason_node(self) -> NodeConfig:
-        """Ask for the reason for the visit after appointment type is determined."""
+        """Ask for the reason for the visit - switches to main_llm for function calling."""
         appointment_type = self.flow_manager.state.get("appointment_type", "")
 
         return NodeConfig(
@@ -127,7 +123,7 @@ Once you know:
                     "role": "system",
                     "content": f"""The patient is a {appointment_type}.
 
-Ask them about the reason for their visit. Say something like: "What brings you in today?" or "How can we help you today?"
+Ask them about the reason for their visit. Say something like: "What brings you in today?"
 
 Once they explain, call save_visit_reason with a brief summary of their reason.""",
                 }
@@ -147,6 +143,7 @@ Once they explain, call save_visit_reason with a brief summary of their reason."
                 )
             ],
             respond_immediately=True,
+            pre_actions=[{"type": "function", "handler": self._switch_to_main_llm}],
         )
 
     def create_scheduling_node(self) -> NodeConfig:
@@ -185,7 +182,7 @@ Once they select both a date AND time, call schedule_appointment with the detail
                     handler=self._schedule_appointment_handler,
                 )
             ],
-            respond_immediately=False,
+            respond_immediately=True,
         )
 
     def create_collect_info_node(self) -> NodeConfig:
@@ -202,12 +199,21 @@ Once they select both a date AND time, call schedule_appointment with the detail
 
 Collect the following in a natural conversation:
 1. First name
-2. Last name
+2. Last name - Ask them to SPELL IT OUT letter by letter
 3. Phone number
 4. Date of birth
-5. Email address
+5. Email address - Ask them to SPELL IT OUT letter by letter
 
 Be conversational - you can collect multiple pieces of info if the patient volunteers them.
+When they provide each piece, acknowledge it briefly:
+- "My date of birth is January 5th." → "January 5th, got it."
+- "My phone number is 555-1234." → "555-1234, got it."
+- First name: "John, got it."
+
+For last name and email, specifically instruct them to spell it out:
+- "Can you spell your last name for me, letter by letter?"
+- "Can you spell your email address for me, letter by letter?"
+
 Once you have ALL five pieces of information, call save_patient_info.""",
                 }
             ],
@@ -222,7 +228,7 @@ Once you have ALL five pieces of information, call save_patient_info.""",
                         },
                         "last_name": {
                             "type": "string",
-                            "description": "Patient's last name",
+                            "description": "Patient's last name (spelled out)",
                         },
                         "phone_number": {
                             "type": "string",
@@ -234,14 +240,14 @@ Once you have ALL five pieces of information, call save_patient_info.""",
                         },
                         "email": {
                             "type": "string",
-                            "description": "Patient's email address",
+                            "description": "Patient's email address (spelled out)",
                         },
                     },
                     required=["first_name", "last_name", "phone_number", "date_of_birth", "email"],
                     handler=self._save_patient_info_handler,
                 )
             ],
-            respond_immediately=False,
+            respond_immediately=True,
         )
 
     def create_confirmation_node(self) -> NodeConfig:
@@ -352,10 +358,10 @@ Then call end_call to finish.""",
 
     # ========== Function Handlers ==========
 
-    async def _proceed_to_main_handler(
+    async def _proceed_to_patient_type_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
-        """Transition from greeting to main conversation."""
+        """Transition from greeting to patient_type."""
         logger.info("Flow: greeting → patient_type")
         return "", self.create_patient_type_node()
 
@@ -363,49 +369,57 @@ Then call end_call to finish.""",
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Patient is new."""
-        flow_manager.state["appointment_type"] = "New Patient"
-        logger.info("Flow: New Patient")
+        appointment_type = "New Patient"
+        flow_manager.state["appointment_type"] = appointment_type
+        logger.info(f"Flow: {appointment_type}")
         return "Welcome!", self.create_visit_reason_node()
 
     async def _set_returning_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Patient is returning."""
-        flow_manager.state["appointment_type"] = "Returning Patient"
-        logger.info("Flow: Returning Patient")
+        appointment_type = "Returning Patient"
+        flow_manager.state["appointment_type"] = appointment_type
+        logger.info(f"Flow: {appointment_type}")
         return "Welcome back!", self.create_visit_reason_node()
 
     async def _save_visit_reason_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Save visit reason and proceed to scheduling."""
-        flow_manager.state["appointment_reason"] = args.get("reason", "").strip()
-        logger.info(f"Flow: Visit reason - {flow_manager.state['appointment_reason']}")
+        appointment_reason = args.get("reason", "").strip()
+        flow_manager.state["appointment_reason"] = appointment_reason
+        logger.info(f"Flow: Visit reason - {appointment_reason}")
         return "Let's get you scheduled.", self.create_scheduling_node()
 
     async def _schedule_appointment_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Save appointment date and time."""
-        flow_manager.state["appointment_date"] = args.get("appointment_date", "").strip()
-        flow_manager.state["appointment_time"] = args.get("appointment_time", "").strip()
-        logger.info(
-            f"Flow: Scheduled {flow_manager.state['appointment_date']} at {flow_manager.state['appointment_time']}"
-        )
+        appointment_date = args.get("appointment_date", "").strip()
+        appointment_time = args.get("appointment_time", "").strip()
+        flow_manager.state["appointment_date"] = appointment_date
+        flow_manager.state["appointment_time"] = appointment_time
+        logger.info(f"Flow: Scheduled {appointment_date} at {appointment_time}")
         return "Perfect! Now I just need a few details to complete your booking.", self.create_collect_info_node()
 
     async def _save_patient_info_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Save all patient information."""
-        flow_manager.state["first_name"] = args.get("first_name", "").strip()
-        flow_manager.state["last_name"] = args.get("last_name", "").strip()
-        flow_manager.state["phone_number"] = args.get("phone_number", "").strip()
-        flow_manager.state["date_of_birth"] = args.get("date_of_birth", "").strip()
-        flow_manager.state["email"] = args.get("email", "").strip()
-        logger.info(
-            f"Flow: Patient info collected - {flow_manager.state['first_name']} {flow_manager.state['last_name']}"
-        )
+        first_name = args.get("first_name", "").strip()
+        last_name = args.get("last_name", "").strip()
+        phone_number = args.get("phone_number", "").strip()
+        date_of_birth = args.get("date_of_birth", "").strip()
+        email = args.get("email", "").strip()
+
+        flow_manager.state["first_name"] = first_name
+        flow_manager.state["last_name"] = last_name
+        flow_manager.state["phone_number"] = phone_number
+        flow_manager.state["date_of_birth"] = date_of_birth
+        flow_manager.state["email"] = email
+
+        logger.info(f"Flow: Patient info collected - {first_name} {last_name}")
         return "Thank you! Let me confirm all the details.", self.create_confirmation_node()
 
     async def _correct_info_handler(
@@ -418,8 +432,10 @@ Then call end_call to finish.""",
         if field in flow_manager.state:
             flow_manager.state[field] = new_value
             logger.info(f"Flow: Corrected {field} to {new_value}")
+        else:
+            logger.warning(f"Flow: Attempted to correct unknown field {field}")
 
-        return f"Updated {field}. Let me confirm the details again.", self.create_confirmation_node()
+        return f"{new_value}, got it. Let me confirm the details again.", self.create_confirmation_node()
 
     async def _confirm_booking_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager

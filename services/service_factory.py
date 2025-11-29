@@ -90,10 +90,16 @@ class ServiceFactory:
                 temperature=config.get('temperature', 0.4)
             )
         elif provider == 'openai':
+            params = None
+            if config.get('service_tier'):
+                params = OpenAILLMService.InputParams(
+                    service_tier=config['service_tier']
+                )
             llm = OpenAILLMService(
                 api_key=config['api_key'],
                 model=config['model'],
-                temperature=config.get('temperature', 0.4)
+                temperature=config.get('temperature', 0.4),
+                params=params
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: openai, groq, anthropic")

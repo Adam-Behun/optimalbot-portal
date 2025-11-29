@@ -7,9 +7,9 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.55
-    eot_threshold: 0.65
-    eot_timeout_ms: 3500
+    eager_eot_threshold: 0.45
+    eot_threshold: 0.55
+    eot_timeout_ms: 2500
 
   # Main LLM for complex tasks: spelling, verification, function calling
   # Used for confirmation, date/time selection, and any node requiring accuracy
@@ -26,6 +26,7 @@ services:
     temperature: 0.4  # Sampling temperature (0-2); higher values make output more creative/random, lower more deterministic/focused.
     api_key: ${OPENAI_API_KEY}  # API authentication key.
     max_tokens: 256  # Maximum tokens in response; limits output length to prevent long delays in generation.
+    service_tier: priority  # Priority processing for lower latency
 
 
   # Classifier LLM for simple conversational tasks
