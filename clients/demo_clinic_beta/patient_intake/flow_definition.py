@@ -17,10 +17,7 @@ from handlers.transcript import save_transcript_to_db
 
 logger = logging.getLogger(__name__)
 
-
 class PatientIntakeFlow:
-    """Patient intake flow for Demo Clinic Beta."""
-
     def __init__(
         self,
         patient_data: Dict[str, Any],
@@ -40,7 +37,7 @@ class PatientIntakeFlow:
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
-        self.facility_name = patient_data.get("facility_name", "Demo Clinic Beta")
+        self.organization_name = patient_data.get("organization_name", "Demo Clinic Beta")
 
     # ========== Node Creation Functions ==========
 
@@ -51,13 +48,13 @@ class PatientIntakeFlow:
             role_messages=[
                 {
                     "role": "system",
-                    "content": f"You are Monica, a friendly Virtual Assistant from {self.facility_name}.",
+                    "content": f"You are Monica, a friendly Virtual Assistant from {self.organization_name}.",
                 }
             ],
             task_messages=[
                 {
                     "role": "system",
-                    "content": f'Say exactly: "Hello! This is Monica from {self.facility_name}, how can I help you today?" Then call proceed_to_patient_type.',
+                    "content": f'Say exactly: "Hello! This is Monica from {self.organization_name}, how can I help you today?" Then call proceed_to_patient_type.',
                 }
             ],
             functions=[
@@ -80,7 +77,7 @@ class PatientIntakeFlow:
             role_messages=[
                 {
                     "role": "system",
-                    "content": f"""You are Monica, a warm and friendly Virtual Assistant from {self.facility_name}. Be conversational and helpful.""",
+                    "content": f"""You are Monica, a warm and friendly Virtual Assistant from {self.organization_name}. Be conversational and helpful.""",
                 }
             ],
             task_messages=[
@@ -319,7 +316,7 @@ Read back all the details and ask if everything is correct.
                     "role": "system",
                     "content": f"""The appointment is booked! Warmly thank the patient.
 
-Say something like: "Your appointment is all set for {state.get('appointment_date', '')} at {state.get('appointment_time', '')}! You'll receive a confirmation email at {state.get('email', '')}. Thank you for choosing {self.facility_name}, {state.get('first_name', '')}! Have a wonderful day!"
+Say something like: "Your appointment is all set for {state.get('appointment_date', '')} at {state.get('appointment_time', '')}! You'll receive a confirmation email at {state.get('email', '')}. Thank you for choosing {self.organization_name}, {state.get('first_name', '')}! Have a wonderful day!"
 
 Then call end_call to finish.""",
                 }

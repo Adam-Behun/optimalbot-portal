@@ -1,6 +1,3 @@
-# Call type determines how calls are initiated
-# dial-out: Bot calls the user (outbound)
-# dial-in: User calls the bot (inbound)
 call_type: "dial-in"
 
 services:
@@ -11,33 +8,20 @@ services:
     eot_threshold: 0.55
     eot_timeout_ms: 2500
 
-  # Main LLM for complex tasks: spelling, verification, function calling
-  # Used for confirmation, date/time selection, and any node requiring accuracy
-#  llm:
-#    provider: anthropic
-#    model: claude-haiku-4-5-20251001
-#    temperature: 0.3
-#    api_key: ${ANTHROPIC_API_KEY}
-#    max_tokens: 256
-
   llm:
-    provider: openai  # Main LLM for conversation and IVR navigation
-    model: gpt-4o-mini  # Capable model for complex tasks
-    temperature: 0.4  # Sampling temperature (0-2); higher values make output more creative/random, lower more deterministic/focused.
-    api_key: ${OPENAI_API_KEY}  # API authentication key.
-    max_tokens: 256  # Maximum tokens in response; limits output length to prevent long delays in generation.
-    service_tier: priority  # Priority processing for lower latency
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.4
+    api_key: ${OPENAI_API_KEY}
+    max_tokens: 256
+    service_tier: priority
 
-
-  # Classifier LLM for simple conversational tasks
-  # Fast model for greetings, simple info collection (name, phone, email)
-  # NO function calling - purely conversational
   classifier_llm:
     provider: groq
-    model: llama-3.3-70b-versatile # llama-3.1-8b-instant  # Ultra-fast for simple interactions
-    temperature: 0.5  # Slightly creative for natural conversation
+    model: llama-3.3-70b-versatile
+    temperature: 0.5
     api_key: ${GROQ_API_KEY}
-    max_tokens: 150  # Keep responses short and snappy
+    max_tokens: 150
 
   tts:
     provider: cartesia
