@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -24,7 +24,7 @@ class AsyncOrganizationRecord:
     async def create(self, org_data: dict) -> Optional[str]:
         try:
             await self._ensure_indexes()
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             org_data.update({"created_at": now, "updated_at": now})
             result = await self.organizations.insert_one(org_data)
             logger.info(f"Created organization: {org_data.get('name')} (ID: {result.inserted_id})")
@@ -49,7 +49,7 @@ class AsyncOrganizationRecord:
 
     async def update(self, org_id: str, update_fields: dict) -> bool:
         try:
-            update_fields["updated_at"] = datetime.utcnow().isoformat()
+            update_fields["updated_at"] = datetime.now(timezone.utc).isoformat()
             result = await self.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": update_fields})
             return result.modified_count > 0
         except Exception as e:

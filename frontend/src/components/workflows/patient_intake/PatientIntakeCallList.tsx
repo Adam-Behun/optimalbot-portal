@@ -6,6 +6,7 @@ import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { Patient, SchemaField, TranscriptMessage } from '@/types';
 import { getPatients, getPatient, deletePatient } from '@/api';
+import { formatDate, formatDatetime, formatTime } from '@/lib/utils';
 import {
   Sheet,
   SheetContent,
@@ -29,17 +30,17 @@ import { toast } from 'sonner';
 // Format value based on field type
 function formatValue(value: unknown, field: SchemaField): string {
   if (value === null || value === undefined || value === '') return '-';
+  const strValue = String(value);
+
   switch (field.type) {
     case 'date':
-      return new Date(value as string).toLocaleDateString();
+      return formatDate(strValue);
     case 'datetime':
-      // Display in user's local timezone with date and time
-      return new Date(value as string).toLocaleString();
+      return formatDatetime(strValue);
     case 'time':
-      // For time-only fields stored as "HH:MM" or "10:30 AM"
-      return String(value);
+      return formatTime(strValue);
     default:
-      return String(value);
+      return strValue;
   }
 }
 

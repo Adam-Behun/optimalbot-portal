@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -31,7 +31,7 @@ class AsyncSessionRecord:
                 session_data["organization_id"] = ObjectId(session_data["organization_id"])
 
             session_data.update({
-                "created_at": datetime.utcnow(),
+                "created_at": datetime.now(timezone.utc),
                 "status": SessionStatus.STARTING.value
             })
             await self.sessions.insert_one(session_data)
@@ -54,7 +54,7 @@ class AsyncSessionRecord:
     async def update_session(self, session_id: str, updates: dict, organization_id: str = None) -> bool:
         try:
             from bson import ObjectId
-            updates["updated_at"] = datetime.utcnow()
+            updates["updated_at"] = datetime.now(timezone.utc)
             query = {"session_id": session_id}
             if organization_id:
                 query["organization_id"] = ObjectId(organization_id)
@@ -78,7 +78,7 @@ class AsyncSessionRecord:
 
     async def cleanup_old_sessions(self, hours: int = 24) -> int:
         try:
-            cutoff = datetime.utcnow().timestamp() - (hours * 3600)
+            cutoff = datetime.now(timezone.utc).timestamp() - (hours * 3600)
             result = await self.sessions.delete_many({
                 "status": {"$in": [SessionStatus.COMPLETED.value, SessionStatus.FAILED.value]},
                 "created_at": {"$lt": datetime.fromtimestamp(cutoff)}

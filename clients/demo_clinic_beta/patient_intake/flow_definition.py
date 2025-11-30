@@ -13,6 +13,7 @@ from pipecat_flows import (
 )
 
 from backend.models import get_async_patient_db
+from backend.utils import parse_natural_date, parse_natural_time
 from handlers.transcript import save_transcript_to_db
 
 logger = logging.getLogger(__name__)
@@ -255,7 +256,7 @@ Once you have ALL five pieces of information, call save_patient_info.""",
         )
 
     def create_confirmation_node(self) -> NodeConfig:
-        """Confirm all appointment details with the patient."""
+        """Confirm booking and offer final assistance."""
         state = self.flow_manager.state
 
         return NodeConfig(
@@ -263,79 +264,24 @@ Once you have ALL five pieces of information, call save_patient_info.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Review all details with the patient:
+                    "content": f"""Deliver this confirmation message:
 
-APPOINTMENT DETAILS:
-- Appointment Type: {state.get('appointment_type', '')}
-- Reason: {state.get('appointment_reason', '')}
-- Date: {state.get('appointment_date', '')}
-- Time: {state.get('appointment_time', '')}
-- Name: {state.get('first_name', '')} {state.get('last_name', '')}
-- Phone: {state.get('phone_number', '')}
-- DOB: {state.get('date_of_birth', '')}
-- Email: {state.get('email', '')}
+"Sounds good, {state.get('first_name', '')}! Your appointment is set for {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. You'll receive a confirmation email at {state.get('email', '')}. Thank you for choosing {self.organization_name}! Is there anything else I can help you with?"
 
-Read back all the details and ask if everything is correct.
-- If they CONFIRM: call confirm_booking
-- If they need to CORRECT something: call correct_info with the field and new value""",
-                }
-            ],
-            context_strategy=ContextStrategyConfig(
-                strategy=ContextStrategy.RESET_WITH_SUMMARY,
-                summary_prompt="Summarize: patient type, service requested, appointment date/time. Keep under 30 words.",
-            ),
-            functions=[
-                FlowsFunctionSchema(
-                    name="confirm_booking",
-                    description="Patient confirms all details are correct - book the appointment.",
-                    properties={},
-                    required=[],
-                    handler=self._confirm_booking_handler,
-                ),
-                FlowsFunctionSchema(
-                    name="correct_info",
-                    description="Patient needs to correct some information.",
-                    properties={
-                        "field": {
-                            "type": "string",
-                            "description": "Field to correct: first_name, last_name, phone_number, date_of_birth, email, appointment_date, appointment_time",
-                        },
-                        "new_value": {
-                            "type": "string",
-                            "description": "The corrected value",
-                        },
-                    },
-                    required=["field", "new_value"],
-                    handler=self._correct_info_handler,
-                ),
-            ],
-            respond_immediately=True,
-        )
-
-    def create_closing_node(self) -> NodeConfig:
-        """Final node - thank patient and end call."""
-        state = self.flow_manager.state
-
-        return NodeConfig(
-            name="closing",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": f"""The appointment is booked! Warmly thank the patient.
-
-Say something like: "Your appointment is all set for {state.get('appointment_date', '')} at {state.get('appointment_time', '')}! You'll receive a confirmation email at {state.get('email', '')}. Thank you for choosing {self.organization_name}, {state.get('first_name', '')}! Have a wonderful day!"
-
-Then call end_call to finish.""",
+Then wait for the patient's response:
+- If they say no, that's it, goodbye, or similar: call end_call
+- If they have another question: answer it helpfully, then ask again if there's anything else
+- If they hang up: the call will end automatically""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="end_call",
-                    description="End the conversation.",
+                    description="Patient has no more questions - end the conversation with a friendly goodbye.",
                     properties={},
                     required=[],
                     handler=self._end_call_handler,
-                )
+                ),
             ],
             respond_immediately=True,
         )
@@ -415,11 +361,16 @@ Then call end_call to finish.""",
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Save appointment date and time."""
-        appointment_date = args.get("appointment_date", "").strip()
-        appointment_time = args.get("appointment_time", "").strip()
+        raw_date = args.get("appointment_date", "").strip()
+        raw_time = args.get("appointment_time", "").strip()
+
+        # Normalize to ISO format for storage
+        appointment_date = parse_natural_date(raw_date) or raw_date
+        appointment_time = parse_natural_time(raw_time) or raw_time
+
         flow_manager.state["appointment_date"] = appointment_date
         flow_manager.state["appointment_time"] = appointment_time
-        logger.info(f"Flow: Scheduled {appointment_date} at {appointment_time}")
+        logger.info(f"Flow: Scheduled {raw_date} → {appointment_date} at {raw_time} → {appointment_time}")
         return "Perfect! Now I just need a few details to complete your booking.", self.create_collect_info_node()
 
     async def _save_patient_info_handler(
@@ -429,8 +380,11 @@ Then call end_call to finish.""",
         first_name = args.get("first_name", "").strip()
         last_name = args.get("last_name", "").strip()
         phone_number = args.get("phone_number", "").strip()
-        date_of_birth = args.get("date_of_birth", "").strip()
+        raw_dob = args.get("date_of_birth", "").strip()
         email = args.get("email", "").strip()
+
+        # Normalize date of birth to ISO format
+        date_of_birth = parse_natural_date(raw_dob) or raw_dob
 
         flow_manager.state["first_name"] = first_name
         flow_manager.state["last_name"] = last_name
@@ -438,7 +392,7 @@ Then call end_call to finish.""",
         flow_manager.state["date_of_birth"] = date_of_birth
         flow_manager.state["email"] = email
 
-        logger.info(f"Flow: Patient info collected - {first_name} {last_name}")
+        logger.info(f"Flow: Patient info collected - {first_name} {last_name}, DOB: {raw_dob} → {date_of_birth}")
         return "Thank you! Let me confirm all the details.", self.create_confirmation_node()
 
     async def _correct_info_handler(
@@ -484,7 +438,7 @@ Then call end_call to finish.""",
                 await db.update_patient(patient_id, update_fields, self.organization_id)
                 logger.info(f"Patient record updated: {patient_id}")
 
-            return "Appointment booked successfully!", self.create_closing_node()
+            return "Appointment booked successfully!", self.create_confirmation_node()
 
         except Exception as e:
             logger.error(f"Error booking appointment: {e}")

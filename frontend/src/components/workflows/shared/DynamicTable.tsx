@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { WorkflowConfig, Patient, SchemaField } from '@/types';
+import { formatDate, formatDatetime, formatTime } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -55,16 +56,19 @@ function formatValue(value: unknown, field: SchemaField): string {
   if (value === null || value === undefined || value === '') {
     return '-';
   }
+  const strValue = String(value);
 
   switch (field.type) {
     case 'date':
-      return new Date(value as string).toLocaleDateString();
+      return formatDate(strValue);
     case 'datetime':
-      return new Date(value as string).toLocaleString();
+      return formatDatetime(strValue);
+    case 'time':
+      return formatTime(strValue);
     case 'phone':
-      return formatPhone(String(value));
+      return formatPhone(strValue);
     default:
-      return String(value);
+      return strValue;
   }
 }
 

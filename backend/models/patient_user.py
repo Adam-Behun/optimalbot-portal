@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Any
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -56,7 +56,7 @@ class AsyncPatientRecord:
     async def add_patient(self, patient_data: dict) -> Optional[str]:
         try:
             await self._ensure_indexes()
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
 
             if "organization_id" in patient_data and isinstance(patient_data["organization_id"], str):
                 patient_data["organization_id"] = ObjectId(patient_data["organization_id"])
@@ -75,7 +75,7 @@ class AsyncPatientRecord:
 
     async def update_patient(self, patient_id: str, update_fields: dict, organization_id: str = None) -> bool:
         try:
-            update_fields["updated_at"] = datetime.utcnow().isoformat()
+            update_fields["updated_at"] = datetime.now(timezone.utc).isoformat()
             query = {"_id": ObjectId(patient_id)}
             if organization_id:
                 query["organization_id"] = ObjectId(organization_id)
@@ -103,7 +103,7 @@ class AsyncPatientRecord:
     ) -> bool:
         update_fields = {
             "last_call_session_id": session_id,
-            "last_call_timestamp": datetime.utcnow().isoformat(),
+            "last_call_timestamp": datetime.now(timezone.utc).isoformat(),
             "call_transcript": transcript_data
         }
         return await self.update_patient(patient_id, update_fields, organization_id)
@@ -200,7 +200,7 @@ class AsyncUserRecord:
                 raise ValueError("Email already registered")
 
             hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             password_expires_at = now + timedelta(days=self.PASSWORD_EXPIRY_DAYS)
 
             user_data = {
@@ -266,16 +266,16 @@ class AsyncUserRecord:
             if is_valid:
                 await self.users.update_one(
                     {"_id": user["_id"]},
-                    {"$set": {"failed_login_attempts": 0, "last_login_at": datetime.utcnow().isoformat()}}
+                    {"$set": {"failed_login_attempts": 0, "last_login_at": datetime.now(timezone.utc).isoformat()}}
                 )
                 return True, user
             else:
                 new_count = user.get("failed_login_attempts", 0) + 1
-                update_data = {"failed_login_attempts": new_count, "updated_at": datetime.utcnow().isoformat()}
+                update_data = {"failed_login_attempts": new_count, "updated_at": datetime.now(timezone.utc).isoformat()}
 
                 if new_count >= self.MAX_FAILED_ATTEMPTS:
                     update_data["status"] = "locked"
-                    update_data["locked_at"] = datetime.utcnow().isoformat()
+                    update_data["locked_at"] = datetime.now(timezone.utc).isoformat()
                     update_data["locked_reason"] = "Too many failed login attempts"
                     logger.warning(f"Account locked due to failed attempts: {email}")
 
@@ -307,7 +307,7 @@ class AsyncUserRecord:
             password_history.insert(0, new_hash)
             password_history = password_history[:self.PASSWORD_HISTORY_SIZE]
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             password_expires_at = now + timedelta(days=self.PASSWORD_EXPIRY_DAYS)
 
             await self.users.update_one(
@@ -337,14 +337,14 @@ class AsyncUserRecord:
                 return False, None
 
             token = secrets.token_urlsafe(32)
-            expires_at = datetime.utcnow() + timedelta(hours=1)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
             await self.users.update_one(
                 {"_id": user["_id"]},
                 {"$set": {
                     "reset_token": token,
                     "reset_token_expires": expires_at.isoformat(),
-                    "updated_at": datetime.utcnow().isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }}
             )
 
@@ -370,7 +370,7 @@ class AsyncUserRecord:
                 return False, None
 
             expires_at = datetime.fromisoformat(expires_str)
-            if datetime.utcnow() > expires_at:
+            if datetime.now(timezone.utc) > expires_at:
                 logger.warning(f"Expired reset token used for {email}")
                 return False, None
 
@@ -406,9 +406,9 @@ class AsyncUserRecord:
                 {"_id": ObjectId(user_id)},
                 {"$set": {
                     "status": "locked",
-                    "locked_at": datetime.utcnow().isoformat(),
+                    "locked_at": datetime.now(timezone.utc).isoformat(),
                     "locked_reason": reason,
-                    "updated_at": datetime.utcnow().isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }}
             )
             logger.info(f"Account locked: {user_id} - Reason: {reason}")
@@ -426,7 +426,7 @@ class AsyncUserRecord:
                     "locked_at": None,
                     "locked_reason": None,
                     "failed_login_attempts": 0,
-                    "updated_at": datetime.utcnow().isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }}
             )
             logger.info(f"Account unlocked: {user_id} by {unlocked_by}")
@@ -441,9 +441,9 @@ class AsyncUserRecord:
                 {"_id": ObjectId(user_id)},
                 {"$set": {
                     "status": "inactive",
-                    "deactivated_at": datetime.utcnow().isoformat(),
+                    "deactivated_at": datetime.now(timezone.utc).isoformat(),
                     "deactivated_by": deactivated_by,
-                    "updated_at": datetime.utcnow().isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }}
             )
             logger.info(f"Account deactivated: {user_id} by {deactivated_by}")
