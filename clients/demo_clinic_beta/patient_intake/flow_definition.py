@@ -39,78 +39,77 @@ class PatientIntakeFlow:
         self.organization_id = organization_id
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Beta")
 
+    def _get_global_instructions(self) -> str:
+        """Global behavioral rules for patient interactions."""
+        return f"""BEHAVIORAL RULES:
+1. You are Monica, an Appointment Scheduling Assistant for {self.organization_name}. Never pretend to be human.
+2. Speak ONLY in English. Be warm, professional, and helpful.
+3. Stay on topic - this is for scheduling appointments only. Politely redirect off-topic questions.
+4. NEVER provide medical advice, diagnoses, or treatment recommendations.
+5. If asked about pricing, insurance, or medical questions, say: "I can help schedule your appointment, but for those questions you'll want to speak with our office staff."
+6. Keep responses concise and conversational - this is a phone call, not a chat.
+7. If the patient seems frustrated or wants to speak to a human, say: "I understand. Let me connect you with our office staff." Then end the call gracefully."""
+
     # ========== Node Creation Functions ==========
 
     def create_greeting_node(self) -> NodeConfig:
-        """Initial greeting node - uses classifier_llm for fast response."""
+        greeting_text = f"Hello! This is Monica from {self.organization_name}. How can I help you?"
+
         return NodeConfig(
             name="greeting",
             role_messages=[
                 {
                     "role": "system",
-                    "content": f"You are Monica, a friendly Virtual Assistant from {self.organization_name}.",
+                    "content": self._get_global_instructions(),
                 }
             ],
             task_messages=[
                 {
                     "role": "system",
-                    "content": f'Say exactly: "Hello! This is Monica from {self.organization_name}, how can I help you today?" Then call proceed_to_patient_type.',
-                }
-            ],
-            functions=[
-                FlowsFunctionSchema(
-                    name="proceed_to_patient_type",
-                    description="Proceed to asking if the patient is new or returning.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_patient_type_handler,
-                )
-            ],
-            respond_immediately=True,
-            pre_actions=[{"type": "function", "handler": self._switch_to_classifier_llm}],
-        )
+                    "content": """Respond warmly to the patient's greeting, then ask if they are new or returning.
 
-    def create_patient_type_node(self) -> NodeConfig:
-        """Determine if new or returning patient - uses classifier_llm for fast response."""
-        return NodeConfig(
-            name="patient_type",
-            role_messages=[
-                {
-                    "role": "system",
-                    "content": f"""You are Monica, a warm and friendly Virtual Assistant from {self.organization_name}. Be conversational and helpful.""",
-                }
-            ],
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": """Ask: "Is this your first time visiting us, or have you been here before?"
+Example: "Sounds good, let me schedule an appointment for you. Are you a new patient, or have you been here before?"
 
-Once you determine if this is a NEW or RETURNING patient, respond appropriately:
-- If NEW patient: call set_new_patient
-- If RETURNING patient: call set_returning_patient""",
+Once they answer:
+- If NEW patient (first time, never been here): call set_new_patient
+- If RETURNING patient (been here before): call set_returning_patient
+Never speak or mention internal function calls outloud.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="set_new_patient",
-                    description="Mark the patient as a new patient (first time visiting).",
-                    properties={},
+                    description="Patient is new (first time visiting).",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "Patient's first name if they mentioned it in their greeting (e.g., 'Hi, this is John' → 'John')",
+                        }
+                    },
                     required=[],
                     handler=self._set_new_patient_handler,
                 ),
                 FlowsFunctionSchema(
                     name="set_returning_patient",
-                    description="Mark the patient as a returning patient (been here before).",
-                    properties={},
+                    description="Patient is returning (been here before).",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "Patient's first name if they mentioned it in their greeting (e.g., 'Hi, this is John' → 'John')",
+                        }
+                    },
                     required=[],
                     handler=self._set_returning_patient_handler,
                 ),
             ],
-            respond_immediately=False,
+            respond_immediately=True,
+            pre_actions=[
+                {"type": "function", "handler": self._switch_to_classifier_llm},
+                {"type": "tts_say", "text": greeting_text},
+            ],
         )
 
     def create_visit_reason_node(self) -> NodeConfig:
-        """Ask for the reason for the visit - switches to main_llm for function calling."""
         appointment_type = self.flow_manager.state.get("appointment_type", "")
 
         return NodeConfig(
@@ -186,6 +185,13 @@ Once they select both a date AND time, call schedule_appointment with the detail
         """Collect patient information: name, phone, DOB, email."""
         appointment_date = self.flow_manager.state.get("appointment_date", "")
         appointment_time = self.flow_manager.state.get("appointment_time", "")
+        existing_first_name = self.flow_manager.state.get("first_name", "")
+
+        # Build instructions based on whether we captured the first name from greeting
+        if existing_first_name:
+            first_name_instruction = f"""1. First name - You heard their name as "{existing_first_name}". Confirm it by saying something like: "I have your first name as {existing_first_name}, is that correct?" If they say no or it's unclear, ask them to spell it out."""
+        else:
+            first_name_instruction = """1. First name - Ask for it and confirm you heard it correctly. If unclear, ask them to spell it out."""
 
         return NodeConfig(
             name="collect_info",
@@ -195,7 +201,7 @@ Once they select both a date AND time, call schedule_appointment with the detail
                     "content": f"""Collect patient information to complete the booking for {appointment_date} at {appointment_time}.
 
 Collect the following in a natural conversation:
-1. First name
+{first_name_instruction}
 2. Last name - Ask them to SPELL IT OUT letter by letter
 3. Phone number
 4. Date of birth
@@ -367,20 +373,18 @@ Then call end_call to finish.""",
 
     # ========== Function Handlers ==========
 
-    async def _proceed_to_patient_type_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
-        """Transition from greeting to patient_type."""
-        logger.info("Flow: greeting → patient_type")
-        return "", self.create_patient_type_node()
-
     async def _set_new_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Patient is new."""
         appointment_type = "New Patient"
         flow_manager.state["appointment_type"] = appointment_type
-        logger.info(f"Flow: {appointment_type}")
+        first_name = args.get("first_name", "").strip()
+        if first_name:
+            flow_manager.state["first_name"] = first_name
+            logger.info(f"Flow: {appointment_type} - captured name: {first_name}")
+        else:
+            logger.info(f"Flow: {appointment_type}")
         return "Welcome!", self.create_visit_reason_node()
 
     async def _set_returning_patient_handler(
@@ -389,7 +393,12 @@ Then call end_call to finish.""",
         """Patient is returning."""
         appointment_type = "Returning Patient"
         flow_manager.state["appointment_type"] = appointment_type
-        logger.info(f"Flow: {appointment_type}")
+        first_name = args.get("first_name", "").strip()
+        if first_name:
+            flow_manager.state["first_name"] = first_name
+            logger.info(f"Flow: {appointment_type} - captured name: {first_name}")
+        else:
+            logger.info(f"Flow: {appointment_type}")
         return "Welcome back!", self.create_visit_reason_node()
 
     async def _save_visit_reason_handler(

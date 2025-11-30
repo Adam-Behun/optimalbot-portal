@@ -18,10 +18,10 @@ services:
 
   classifier_llm:
     provider: groq
-    model: llama-3.3-70b-versatile
-    temperature: 0.5
+    model: llama-3.1-8b-instant
+    temperature: 0.3
     api_key: ${GROQ_API_KEY}
-    max_tokens: 150
+    max_tokens: 100
 
   tts:
     provider: cartesia

@@ -1,3 +1,6 @@
+# this is the first flow into which a patient's call is routed
+# from here the patient can be scheduled for an appointment or routed to a live agent or get any other questions answered
+
 import logging
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema

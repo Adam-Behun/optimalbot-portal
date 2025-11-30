@@ -1,10 +1,34 @@
 """Daily.co transport event handlers"""
 
+import asyncio
+import os
 from datetime import datetime
 from loguru import logger
+from openai import AsyncOpenAI
 from pipecat.frames.frames import EndFrame
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
+
+
+async def warmup_openai():
+    """Warm up OpenAI connection pool with a minimal request.
+
+    This runs as a background task while Groq handles the initial greeting,
+    so OpenAI is ready with low latency when we switch to it.
+    """
+    try:
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Minimal request - just enough to establish connection and warm caches
+        await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1,
+        )
+        logger.info("✅ OpenAI connection warmed up")
+    except Exception as e:
+        # Don't fail the call if warmup fails - it's just an optimization
+        logger.warning(f"⚠️ OpenAI warmup failed (non-critical): {e}")
 
 
 def setup_transport_handlers(pipeline, call_type: str):
@@ -23,7 +47,11 @@ def setup_dialin_handlers(pipeline):
         """Handle when caller connects - initialize flow and bot speaks first."""
         logger.info(f"✅ Caller connected: {participant['id']}")
 
-        # Initialize flow with greeting node (respond_immediately=True makes bot speak first)
+        # Warm up OpenAI in background while Groq handles greeting
+        # This reduces TTFB when we switch to OpenAI later in the conversation
+        asyncio.create_task(warmup_openai())
+
+        # Initialize flow with greeting node (respond_immediately=True makes bot speaks first)
         if pipeline.flow and pipeline.flow_manager:
             initial_node = pipeline.flow.create_greeting_node()
             await pipeline.flow_manager.initialize(initial_node)
@@ -85,6 +113,10 @@ def setup_dialout_handlers(pipeline):
     @pipeline.transport.event_handler("on_joined")
     async def on_joined(transport, data):
         logger.info(f"✅ Bot joined Daily room, dialing {pipeline.phone_number}")
+
+        # Warm up OpenAI in background while waiting for call to connect
+        # This reduces TTFB when we switch to OpenAI later in the conversation
+        asyncio.create_task(warmup_openai())
 
         try:
             await transport.start_dialout({"phoneNumber": pipeline.phone_number})
