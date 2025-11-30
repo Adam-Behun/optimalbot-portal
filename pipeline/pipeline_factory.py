@@ -132,15 +132,15 @@ class PipelineFactory:
         flow_loader = FlowLoader(organization_slug, client_name)
         FlowClass = flow_loader.load_flow_class()
 
-        # IVRNavigator uses active_llm (either llm_switcher or main_llm directly)
-        # When llm_switcher is available: starts with classifier_llm for fast detection,
-        # switches to main_llm when IVR is detected (handlers/ivr.py manages switches)
-        # When single LLM mode: uses main_llm directly without switching
-        ivr_navigator = FixedIVRNavigator(
-            llm=services['active_llm'],
-            ivr_prompt="Navigate to provider services for prior authorization verification",
-            ivr_vad_params=VADParams(stop_secs=2.0)
-        )
+        # IVRNavigator is only needed for dial-out calls (calling insurance companies)
+        # For dial-in calls (patients calling us), skip IVR navigation
+        ivr_navigator = None
+        if call_type == "dial-out":
+            ivr_navigator = FixedIVRNavigator(
+                llm=services['active_llm'],
+                ivr_prompt="Navigate to provider services for prior authorization verification",
+                ivr_vad_params=VADParams(stop_secs=2.0)
+            )
 
         flow = FlowClass(
             patient_data=session_data['patient_data'],
@@ -177,15 +177,24 @@ class PipelineFactory:
             )
         )
 
-        # IVRNavigator replaces the LLM in the pipeline (it contains the LLM internally)
-        # See: https://docs.pipecat.ai/guides/fundamentals/ivr-navigator
+        # Build pipeline based on call type:
+        # - dial-out: IVRNavigator wraps LLM for IVR menu navigation
+        # - dial-in: LLM used directly (no IVR navigation needed)
+        if components['ivr_navigator']:
+            # IVRNavigator replaces the LLM in the pipeline (it contains the LLM internally)
+            # See: https://docs.pipecat.ai/guides/fundamentals/ivr-navigator
+            llm_component = components['ivr_navigator']
+        else:
+            # Direct LLM for dial-in calls
+            llm_component = components['active_llm']
+
         pipeline = Pipeline([
             services['transport'].input(),
             services['stt'],
             stt_mute_processor,  # Mute user input during first speech (greeting)
             components['transcript_processor'].user(),
             components['context_aggregator'].user(),
-            components['ivr_navigator'],  # Contains llm_switcher internally, replaces LLM
+            llm_component,
             services['tts'],
             components['transcript_processor'].assistant(),
             components['context_aggregator'].assistant(),

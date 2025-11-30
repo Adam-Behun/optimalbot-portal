@@ -10,6 +10,8 @@ from pipecat.transports.daily.transport import DailyDialinSettings, DailyParams,
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
 
+from utils.function_call_text_filter import FunctionCallTextFilter
+
 
 class ServiceFactory:
     @staticmethod
@@ -170,7 +172,8 @@ class ServiceFactory:
             voice_id=config['voice_id'],
             model=config['model'],
             params=params,
-            aggregate_sentences=config.get('aggregate_sentences', True)
+            aggregate_sentences=config.get('aggregate_sentences', True),
+            text_filters=[FunctionCallTextFilter()]
         )
         return service
 
@@ -209,7 +212,8 @@ class ServiceFactory:
             voice_id=config['voice_id'],
             model=config['model'],
             params=params,
-            aggregate_sentences=config.get('aggregate_sentences', True)
+            aggregate_sentences=config.get('aggregate_sentences', True),
+            text_filters=[FunctionCallTextFilter()]
         )
         return service
 

@@ -18,7 +18,7 @@ services:
 
   classifier_llm:
     provider: groq
-    model: llama-3.1-8b-instant
+    model: llama-3.3-70b-versatile #llama-3.1-8b-instant
     temperature: 0.3
     api_key: ${GROQ_API_KEY}
     max_tokens: 100
@@ -26,7 +26,7 @@ services:
   tts:
     provider: cartesia
     model: sonic-3-2025-10-27
-    voice_id: 829ccd10-f8b3-43cd-b8a0-4aeaa81f3b30
+    voice_id: f786b574-daa5-4673-aa0c-cbe3e8534c02 #829ccd10-f8b3-43cd-b8a0-4aeaa81f3b30
     api_key: ${CARTESIA_API_KEY}
     generation_config:
       speed: 1

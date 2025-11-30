@@ -73,7 +73,8 @@ Example: "Sounds good, let me schedule an appointment for you. Are you a new pat
 Once they answer:
 - If NEW patient (first time, never been here): call set_new_patient
 - If RETURNING patient (been here before): call set_returning_patient
-Never speak or mention internal function calls outloud.""",
+
+CRITICAL: Never output function call syntax in your speech. Do NOT say things like "function=set_new_patient" or any JSON. Just speak naturally and use the tool/function calling mechanism silently.""",
                 }
             ],
             functions=[
@@ -83,10 +84,10 @@ Never speak or mention internal function calls outloud.""",
                     properties={
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name if they mentioned it in their greeting (e.g., 'Hi, this is John' → 'John')",
+                            "description": "Patient's first name if they mentioned it (e.g., 'Hi, this is John' → 'John'), or 'unknown' if not mentioned.",
                         }
                     },
-                    required=[],
+                    required=["first_name"],
                     handler=self._set_new_patient_handler,
                 ),
                 FlowsFunctionSchema(
@@ -95,14 +96,14 @@ Never speak or mention internal function calls outloud.""",
                     properties={
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name if they mentioned it in their greeting (e.g., 'Hi, this is John' → 'John')",
+                            "description": "Patient's first name if they mentioned it (e.g., 'Hi, this is John' → 'John'), or 'unknown' if not mentioned.",
                         }
                     },
-                    required=[],
+                    required=["first_name"],
                     handler=self._set_returning_patient_handler,
                 ),
             ],
-            respond_immediately=True,
+            respond_immediately=False,
             pre_actions=[
                 {"type": "function", "handler": self._switch_to_classifier_llm},
                 {"type": "tts_say", "text": greeting_text},
@@ -191,7 +192,7 @@ Once they select both a date AND time, call schedule_appointment with the detail
         if existing_first_name:
             first_name_instruction = f"""1. First name - You heard their name as "{existing_first_name}". Confirm it by saying something like: "I have your first name as {existing_first_name}, is that correct?" If they say no or it's unclear, ask them to spell it out."""
         else:
-            first_name_instruction = """1. First name - Ask for it and confirm you heard it correctly. If unclear, ask them to spell it out."""
+            first_name_instruction = """1. First name - Ask for their first name."""
 
         return NodeConfig(
             name="collect_info",
@@ -375,31 +376,31 @@ Then call end_call to finish.""",
 
     async def _set_new_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
+    ) -> tuple[None, NodeConfig]:
         """Patient is new."""
         appointment_type = "New Patient"
         flow_manager.state["appointment_type"] = appointment_type
         first_name = args.get("first_name", "").strip()
-        if first_name:
+        if first_name.lower() != "unknown":
             flow_manager.state["first_name"] = first_name
             logger.info(f"Flow: {appointment_type} - captured name: {first_name}")
         else:
             logger.info(f"Flow: {appointment_type}")
-        return "Welcome!", self.create_visit_reason_node()
+        return None, self.create_visit_reason_node()
 
     async def _set_returning_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
+    ) -> tuple[None, NodeConfig]:
         """Patient is returning."""
         appointment_type = "Returning Patient"
         flow_manager.state["appointment_type"] = appointment_type
         first_name = args.get("first_name", "").strip()
-        if first_name:
+        if first_name.lower() != "unknown":
             flow_manager.state["first_name"] = first_name
             logger.info(f"Flow: {appointment_type} - captured name: {first_name}")
         else:
             logger.info(f"Flow: {appointment_type}")
-        return "Welcome back!", self.create_visit_reason_node()
+        return None, self.create_visit_reason_node()
 
     async def _save_visit_reason_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
