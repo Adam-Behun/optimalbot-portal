@@ -101,9 +101,12 @@ class ConversationPipeline:
             enable_turn_tracking=True,
             conversation_id=self.session_id,
             additional_span_attributes={
-                "patient.id": self.patient_id,
-                "phone.number": self.phone_number,
-                "client.name": self.client_name,
+                # Langfuse-recognized attributes (filterable/queryable)
+                "langfuse.user.id": self.patient_id,
+                "langfuse.session.id": self.session_id,
+                "langfuse.trace.metadata.organization_id": self.organization_id,
+                "langfuse.trace.metadata.workflow": self.client_name,
+                "langfuse.trace.metadata.phone_number": self.phone_number,
             },
             observers=[self.latency_observer],
         )
