@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, Any
 from pipecat.pipeline.runner import PipelineRunner
@@ -81,6 +82,12 @@ class ConversationPipeline:
         )
 
         self.flow = components['flow']
+
+        # Start OpenAI warmup early - while pipeline is being assembled
+        # This primes OpenAI's prompt cache BEFORE the first user turn
+        organization_name = self.patient_data.get("organization_name", "Demo Clinic Beta")
+        from clients.demo_clinic_beta.patient_intake.flow_definition import warmup_openai
+        warmup_task = asyncio.create_task(warmup_openai(organization_name))
         self.ivr_navigator = components['ivr_navigator']
         self.context_aggregator = components['context_aggregator']
         self.transcript_processor = components['transcript_processor']

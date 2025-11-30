@@ -1,12 +1,10 @@
+import asyncio
 import logging
+import os
 from typing import Any, Dict
 
-from pipecat.frames.frames import ManuallySwitchServiceFrame
-from pipecat.processors.frame_processor import FrameDirection
-
+from openai import AsyncOpenAI
 from pipecat_flows import (
-    ContextStrategy,
-    ContextStrategyConfig,
     FlowManager,
     FlowsFunctionSchema,
     NodeConfig,
@@ -18,13 +16,78 @@ from handlers.transcript import save_transcript_to_db
 
 logger = logging.getLogger(__name__)
 
+
+async def warmup_openai(organization_name: str = "Demo Clinic Beta"):
+    """Warm up OpenAI with system prompt prefix for cache hits.
+
+    OpenAI caches prompt prefixes of 1024+ tokens. We need to send a request
+    with the same system prompt structure we use in actual calls to prime the cache.
+    """
+    try:
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Build a prompt that matches the structure used in actual calls
+        # This needs to be 1024+ tokens for OpenAI to cache it
+        global_instructions = f"""You are Monica, scheduling assistant for {organization_name}. Be warm, concise, professional.
+
+# Guardrails
+- Scheduling only. Redirect pricing/insurance/medical questions to office staff.
+- If frustrated or wants human: "I understand. Let me connect you with our office staff." then end call.
+- Never guess at information—always confirm with the patient. This step is important.
+
+# Data Formats
+When collecting emails: "at" → @, "dot" → .
+Phone numbers: write as digits only (e.g., "5551234567")."""
+
+        # Simulate the task messages structure to build up token count
+        task_context = """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
+- NEW patient → call set_new_patient
+- RETURNING patient → call set_returning_patient"""
+
+        # Add padding context to reach 1024 tokens (OpenAI's cache threshold)
+        # This simulates what the context looks like after a few turns
+        conversation_padding = """
+Patient is New Patient. Ask: "What brings you in today?"
+Once they explain, call save_visit_reason with brief summary.
+
+Ask which day works. Offer times: 9:00 AM, 10:30 AM, 1:00 PM, 3:30 PM.
+Once they pick date AND time, call schedule_appointment.
+
+Collect for booking:
+1. Ask first name
+2. Last name (ask to spell letter by letter)
+3. Phone number
+4. Date of birth
+5. Email (ask to spell letter by letter)
+
+Acknowledge briefly: "Got it." When ALL 5 collected, call save_patient_info.
+
+Confirm appointment details. Confirmation email will be sent. Anything else?
+- If no/goodbye → call end_call
+- If question → answer, then ask again"""
+
+        await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": global_instructions},
+                {"role": "system", "content": task_context},
+                {"role": "system", "content": conversation_padding},
+                {"role": "user", "content": "Hello, I'd like to schedule an appointment"},
+                {"role": "assistant", "content": "Hello! I'd be happy to help you schedule an appointment. Are you a new patient, or have you been here before?"},
+                {"role": "user", "content": "I'm a new patient"},
+            ],
+            max_tokens=1,
+        )
+        logger.info("OpenAI connection warmed up with prompt prefix")
+    except Exception as e:
+        logger.warning(f"OpenAI warmup failed (non-critical): {e}")
+
 class PatientIntakeFlow:
     def __init__(
         self,
         patient_data: Dict[str, Any],
         flow_manager: FlowManager,
         main_llm,
-        classifier_llm=None,
         context_aggregator=None,
         transport=None,
         pipeline=None,
@@ -33,7 +96,6 @@ class PatientIntakeFlow:
         self.patient_data = patient_data
         self.flow_manager = flow_manager
         self.main_llm = main_llm
-        self.classifier_llm = classifier_llm
         self.context_aggregator = context_aggregator
         self.transport = transport
         self.pipeline = pipeline
@@ -42,14 +104,16 @@ class PatientIntakeFlow:
 
     def _get_global_instructions(self) -> str:
         """Global behavioral rules for patient interactions."""
-        return f"""BEHAVIORAL RULES:
-1. You are Monica, an Appointment Scheduling Assistant for {self.organization_name}. Never pretend to be human.
-2. Speak ONLY in English. Be warm, professional, and helpful.
-3. Stay on topic - this is for scheduling appointments only. Politely redirect off-topic questions.
-4. NEVER provide medical advice, diagnoses, or treatment recommendations.
-5. If asked about pricing, insurance, or medical questions, say: "I can help schedule your appointment, but for those questions you'll want to speak with our office staff."
-6. Keep responses concise and conversational - this is a phone call, not a chat.
-7. If the patient seems frustrated or wants to speak to a human, say: "I understand. Let me connect you with our office staff." Then end the call gracefully."""
+        return f"""You are Monica, scheduling assistant for {self.organization_name}. Be warm, concise, professional.
+
+# Guardrails
+- Scheduling only. Redirect pricing/insurance/medical questions to office staff.
+- If frustrated or wants human: "I understand. Let me connect you with our office staff." then end call.
+- Never guess at information—always confirm with the patient. This step is important.
+
+# Data Formats
+When collecting emails: "at" → @, "dot" → .
+Phone numbers: write as digits only (e.g., "5551234567")."""
 
     # ========== Node Creation Functions ==========
 
@@ -67,21 +131,16 @@ class PatientIntakeFlow:
             task_messages=[
                 {
                     "role": "system",
-                    "content": """Respond warmly to the patient's greeting, then ask if they are new or returning.
-
-Example: "Sounds good, let me schedule an appointment for you. Are you a new patient, or have you been here before?"
-
-Once they answer:
-- If NEW patient (first time, never been here): call set_new_patient
-- If RETURNING patient (been here before): call set_returning_patient
-
-CRITICAL: Never output function call syntax in your speech. Do NOT say things like "function=set_new_patient" or any JSON. Just speak naturally and use the tool/function calling mechanism silently.""",
+                    "content": """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
+- "new", "first time", "never been" → call set_new_patient
+- "returning", "been here before", "existing" → call set_returning_patient
+- Unclear → ask again before calling any function""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="set_new_patient",
-                    description="Patient is new (first time visiting).",
+                    description="Call when patient confirms they are NEW (first time visiting).",
                     properties={
                         "first_name": {
                             "type": "string",
@@ -93,7 +152,7 @@ CRITICAL: Never output function call syntax in your speech. Do NOT say things li
                 ),
                 FlowsFunctionSchema(
                     name="set_returning_patient",
-                    description="Patient is returning (been here before).",
+                    description="Call when patient confirms they are RETURNING (been here before).",
                     properties={
                         "first_name": {
                             "type": "string",
@@ -106,7 +165,6 @@ CRITICAL: Never output function call syntax in your speech. Do NOT say things li
             ],
             respond_immediately=False,
             pre_actions=[
-                {"type": "function", "handler": self._switch_to_classifier_llm},
                 {"type": "tts_say", "text": greeting_text},
             ],
         )
@@ -119,17 +177,14 @@ CRITICAL: Never output function call syntax in your speech. Do NOT say things li
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""The patient is a {appointment_type}.
-
-Ask them about the reason for their visit. Say something like: "What brings you in today?"
-
-Once they explain, call save_visit_reason with a brief summary of their reason.""",
+                    "content": f"""Patient is {appointment_type}. Ask: "What brings you in today?"
+Once they explain, call save_visit_reason with brief summary.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="save_visit_reason",
-                    description="Save the patient's reason for visiting.",
+                    description="Call after patient explains their visit reason. Don't call if they only said 'appointment' without details.",
                     properties={
                         "reason": {
                             "type": "string",
@@ -141,7 +196,6 @@ Once they explain, call save_visit_reason with a brief summary of their reason."
                 )
             ],
             respond_immediately=True,
-            pre_actions=[{"type": "function", "handler": self._switch_to_main_llm}],
         )
 
     def create_scheduling_node(self) -> NodeConfig:
@@ -155,25 +209,24 @@ Once they explain, call save_visit_reason with a brief summary of their reason."
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Schedule the patient's appointment.
+                    "content": f"""Ask which day works. Offer times: {', '.join(available_times)}.
+Once they confirm BOTH date AND time, call schedule_appointment.
 
-Ask which day works best for them. When they provide a date, confirm it and offer these available times: {', '.join(available_times)}.
-
-Once they select both a date AND time, call schedule_appointment with the details.""",
+Example: "Tuesday at 10:30" → call schedule_appointment with date and time.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="schedule_appointment",
-                    description="Schedule the appointment with the selected date and time.",
+                    description="Call ONLY after patient confirms BOTH date AND time. Don't call with partial info.",
                     properties={
                         "appointment_date": {
                             "type": "string",
-                            "description": "The selected date (e.g., 'Monday December 15th', 'next Tuesday')",
+                            "description": "The selected date in 'Month Day, Year' format (e.g., 'December 15, 2025', 'January 3, 2025'). Always include the full year.",
                         },
                         "appointment_time": {
                             "type": "string",
-                            "description": "The selected time slot",
+                            "description": "The selected time in 12-hour format with AM/PM (e.g., '9:00 AM', '3:30 PM')",
                         },
                     },
                     required=["appointment_date", "appointment_time"],
@@ -189,43 +242,33 @@ Once they select both a date AND time, call schedule_appointment with the detail
         appointment_time = self.flow_manager.state.get("appointment_time", "")
         existing_first_name = self.flow_manager.state.get("first_name", "")
 
-        # Build instructions based on whether we captured the first name from greeting
+        # Build first name instruction based on whether we captured it from greeting
         if existing_first_name:
-            first_name_instruction = f"""1. First name - You heard their name as "{existing_first_name}". Confirm it by saying something like: "I have your first name as {existing_first_name}, is that correct?" If they say no or it's unclear, ask them to spell it out."""
+            first_name_instruction = f'Confirm first name "{existing_first_name}"'
         else:
-            first_name_instruction = """1. First name - Ask for their first name."""
+            first_name_instruction = "Ask first name"
 
         return NodeConfig(
             name="collect_info",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Collect patient information to complete the booking for {appointment_date} at {appointment_time}.
-
-Collect the following in a natural conversation:
-{first_name_instruction}
-2. Last name - Ask them to SPELL IT OUT letter by letter
-3. Phone number
+                    "content": f"""Collect for booking on {appointment_date} at {appointment_time}:
+1. {first_name_instruction}
+2. Last name (ask to spell letter by letter)
+3. Phone number (digits only)
 4. Date of birth
-5. Email address - Ask them to SPELL IT OUT letter by letter
+5. Email (ask to spell letter by letter)
 
-Be conversational - you can collect multiple pieces of info if the patient volunteers them.
-When they provide each piece, acknowledge it briefly:
-- "My date of birth is January 5th." → "January 5th, got it."
-- "My phone number is 555-1234." → "555-1234, got it."
-- First name: "John, got it."
+Acknowledge briefly: "Got it." When ALL 5 collected, call save_patient_info.
 
-For last name and email, specifically instruct them to spell it out:
-- "Can you spell your last name for me, letter by letter?"
-- "Can you spell your email address for me, letter by letter?"
-
-Once you have ALL five pieces of information, call save_patient_info.""",
+If unclear or incomplete, ask to repeat. Don't guess.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="save_patient_info",
-                    description="Save all collected patient information.",
+                    description="Call ONLY after ALL 5 fields are collected. Don't call with missing info.",
                     properties={
                         "first_name": {
                             "type": "string",
@@ -237,15 +280,15 @@ Once you have ALL five pieces of information, call save_patient_info.""",
                         },
                         "phone_number": {
                             "type": "string",
-                            "description": "Patient's phone number",
+                            "description": "Patient's phone number as digits only (e.g., '5551234567')",
                         },
                         "date_of_birth": {
                             "type": "string",
-                            "description": "Patient's date of birth",
+                            "description": "Patient's date of birth in 'Month Day, Year' format (e.g., 'January 15, 1990', 'March 3, 1985'). Always include the full year.",
                         },
                         "email": {
                             "type": "string",
-                            "description": "Patient's email address (spelled out)",
+                            "description": "Patient's email in written format (convert 'at' → @, 'dot' → .)",
                         },
                     },
                     required=["first_name", "last_name", "phone_number", "date_of_birth", "email"],
@@ -264,20 +307,32 @@ Once you have ALL five pieces of information, call save_patient_info.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Deliver this confirmation message:
-
-"Sounds good, {state.get('first_name', '')}! Your appointment is set for {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. You'll receive a confirmation email at {state.get('email', '')}. Thank you for choosing {self.organization_name}! Is there anything else I can help you with?"
-
-Then wait for the patient's response:
-- If they say no, that's it, goodbye, or similar: call end_call
-- If they have another question: answer it helpfully, then ask again if there's anything else
-- If they hang up: the call will end automatically""",
+                    "content": f"""Confirm: "{state.get('first_name', '')}, your appointment is {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. Confirmation email to {state.get('email', '')}. Anything else?"
+- If no/goodbye → call end_call
+- If they want to correct something → call correct_info
+- If question → answer, then ask again""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
+                    name="correct_info",
+                    description="Patient wants to correct information. Call when they say something is wrong.",
+                    properties={
+                        "field": {
+                            "type": "string",
+                            "description": "Field to correct: 'first_name', 'last_name', 'phone_number', 'date_of_birth', 'email', 'appointment_date', or 'appointment_time'",
+                        },
+                        "new_value": {
+                            "type": "string",
+                            "description": "The corrected value",
+                        },
+                    },
+                    required=["field", "new_value"],
+                    handler=self._correct_info_handler,
+                ),
+                FlowsFunctionSchema(
                     name="end_call",
-                    description="Patient has no more questions - end the conversation with a friendly goodbye.",
+                    description="Patient confirms details and has no more questions - end with friendly goodbye.",
                     properties={},
                     required=[],
                     handler=self._end_call_handler,
@@ -299,24 +354,6 @@ Then wait for the patient's response:
             functions=[],
             post_actions=[{"type": "end_conversation"}],
         )
-
-    async def _switch_to_classifier_llm(self, action: dict, flow_manager: FlowManager):
-        """Switch to classifier LLM for fast greeting."""
-        if self.context_aggregator and self.classifier_llm:
-            await self.context_aggregator.assistant().push_frame(
-                ManuallySwitchServiceFrame(service=self.classifier_llm),
-                FrameDirection.UPSTREAM,
-            )
-            logger.info("LLM switched to: classifier_llm")
-
-    async def _switch_to_main_llm(self, action: dict, flow_manager: FlowManager):
-        """Switch to main LLM for conversation handling."""
-        if self.context_aggregator and self.main_llm:
-            await self.context_aggregator.assistant().push_frame(
-                ManuallySwitchServiceFrame(service=self.main_llm),
-                FrameDirection.UPSTREAM,
-            )
-            logger.info("LLM switched to: main_llm")
 
     # ========== Function Handlers ==========
 
@@ -376,7 +413,7 @@ Then wait for the patient's response:
     async def _save_patient_info_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
-        """Save all patient information."""
+        """Save all patient information to state and database."""
         first_name = args.get("first_name", "").strip()
         last_name = args.get("last_name", "").strip()
         phone_number = args.get("phone_number", "").strip()
@@ -393,6 +430,29 @@ Then wait for the patient's response:
         flow_manager.state["email"] = email
 
         logger.info(f"Flow: Patient info collected - {first_name} {last_name}, DOB: {raw_dob} → {date_of_birth}")
+
+        # Save to database
+        try:
+            patient_id = self.patient_data.get("patient_id")
+            if patient_id:
+                db = get_async_patient_db()
+                update_fields = {
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "patient_name": f"{last_name}, {first_name}",
+                    "phone_number": phone_number,
+                    "date_of_birth": date_of_birth,
+                    "email": email,
+                    "appointment_date": flow_manager.state.get("appointment_date"),
+                    "appointment_time": flow_manager.state.get("appointment_time"),
+                    "appointment_type": flow_manager.state.get("appointment_type"),
+                    "appointment_reason": flow_manager.state.get("appointment_reason"),
+                }
+                await db.update_patient(patient_id, update_fields, self.organization_id)
+                logger.info(f"Patient record saved to database: {patient_id}")
+        except Exception as e:
+            logger.error(f"Error saving patient info to database: {e}")
+
         return "Thank you! Let me confirm all the details.", self.create_confirmation_node()
 
     async def _correct_info_handler(

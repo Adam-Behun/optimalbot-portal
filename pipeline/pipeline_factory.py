@@ -142,14 +142,19 @@ class PipelineFactory:
                 ivr_vad_params=VADParams(stop_secs=2.0)
             )
 
-        flow = FlowClass(
-            patient_data=session_data['patient_data'],
-            flow_manager=None,
-            main_llm=services['main_llm'],
-            classifier_llm=services['classifier_llm'],
-            context_aggregator=context_aggregator,
-            organization_id=organization_id
-        )
+        # Build flow class constructor kwargs dynamically based on available services
+        flow_kwargs = {
+            'patient_data': session_data['patient_data'],
+            'flow_manager': None,
+            'main_llm': services['main_llm'],
+            'context_aggregator': context_aggregator,
+            'organization_id': organization_id
+        }
+        # Only pass classifier_llm if it exists (for flows that support dual-LLM)
+        if services['classifier_llm']:
+            flow_kwargs['classifier_llm'] = services['classifier_llm']
+
+        flow = FlowClass(**flow_kwargs)
 
         return {
             'context_aggregator': context_aggregator,

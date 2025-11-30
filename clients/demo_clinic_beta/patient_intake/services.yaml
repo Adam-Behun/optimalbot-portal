@@ -4,24 +4,18 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.45
-    eot_threshold: 0.55
-    eot_timeout_ms: 2500
+    eager_eot_threshold: 0.45  # More aggressive early turn detection
+    eot_threshold: 0.55        # Lower threshold for faster turn detection
+    eot_timeout_ms: 1800       # Reduced from 2500ms for faster response
+    keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]
 
   llm:
     provider: openai
     model: gpt-4o-mini
     temperature: 0.4
     api_key: ${OPENAI_API_KEY}
-    max_tokens: 256
+    max_tokens: 128
     service_tier: priority
-
-  classifier_llm:
-    provider: groq
-    model: llama-3.3-70b-versatile #llama-3.1-8b-instant
-    temperature: 0.3
-    api_key: ${GROQ_API_KEY}
-    max_tokens: 100
 
   tts:
     provider: cartesia
