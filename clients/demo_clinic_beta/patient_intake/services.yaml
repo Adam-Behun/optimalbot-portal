@@ -4,9 +4,9 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.45  # More aggressive early turn detection
-    eot_threshold: 0.55        # Lower threshold for faster turn detection
-    eot_timeout_ms: 1800       # Reduced from 2500ms for faster response
+    eager_eot_threshold: 0.55  # Higher = less sensitive to short utterances like "Yes"/"Okay"
+    eot_threshold: 0.65        # Higher = wait for more confident end-of-turn
+    eot_timeout_ms: 2500       # Give user time to finish speaking
     keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]
 
   llm:
