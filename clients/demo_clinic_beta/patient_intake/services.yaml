@@ -4,9 +4,10 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.55  # Higher = less sensitive to short utterances like "Yes"/"Okay"
-    eot_threshold: 0.65        # Higher = wait for more confident end-of-turn
-    eot_timeout_ms: 2500       # Give user time to finish speaking
+    # AGGRESSIVE LATENCY SETTINGS - Target: 800ms V2V
+    eager_eot_threshold: 0.40  # Very aggressive eager detection
+    eot_threshold: 0.50        # Fast end-of-turn confirmation
+    eot_timeout_ms: 1200       # Short max wait (was 2500)
     keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]
 
   llm:
@@ -23,10 +24,10 @@ services:
     voice_id: f786b574-daa5-4673-aa0c-cbe3e8534c02 #829ccd10-f8b3-43cd-b8a0-4aeaa81f3b30
     api_key: ${CARTESIA_API_KEY}
     generation_config:
-      speed: 1
+      speed: 1.0
       volume: 1.0
       emotion: neutral
-    aggregate_sentences: true
+    aggregate_sentences: true  # Keep enabled - word-by-word is terrible
 
   transport:
     provider: daily
