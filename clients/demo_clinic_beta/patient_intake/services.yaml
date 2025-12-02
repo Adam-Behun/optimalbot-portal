@@ -4,7 +4,6 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    # AGGRESSIVE LATENCY SETTINGS - Target: 800ms V2V
     eager_eot_threshold: 0.40  # Very aggressive eager detection
     eot_threshold: 0.50        # Fast end-of-turn confirmation
     eot_timeout_ms: 1200       # Short max wait (was 2500)
@@ -36,3 +35,6 @@ services:
     enable_echo_cancellation: true
     audio_in_sample_rate: 16000
     audio_out_sample_rate: 24000
+
+warm_transfer:
+  staff_number: "+13146967837"

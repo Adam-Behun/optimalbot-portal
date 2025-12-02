@@ -36,3 +36,6 @@ services:
     enable_echo_cancellation: true
     audio_in_sample_rate: 16000
     audio_out_sample_rate: 24000
+
+warm_transfer:
+  staff_number: "+15551234567"  # Demo Clinic Beta questions staff

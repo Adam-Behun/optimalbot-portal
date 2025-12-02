@@ -108,6 +108,7 @@ class PatientIntakeFlow:
         transport=None,
         pipeline=None,
         organization_id: str = None,
+        warm_transfer_config: Dict[str, Any] = None,
     ):
         self.patient_data = patient_data
         self.flow_manager = flow_manager
@@ -117,6 +118,7 @@ class PatientIntakeFlow:
         self.pipeline = pipeline
         self.organization_id = organization_id
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Beta")
+        self.warm_transfer_config = warm_transfer_config or {}
 
     def _get_global_instructions(self) -> str:
         """Global behavioral rules for patient interactions."""
@@ -166,6 +168,7 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     "content": """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
 - "new", "first time", "never been" → call set_new_patient
 - "returning", "been here before", "existing" → call set_returning_patient
+- If frustrated or asks for human → call request_staff
 - Unclear → ask again before calling any function""",
                 }
             ],
@@ -193,6 +196,13 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     },
                     required=["first_name"],
                     handler=self._set_returning_patient_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="request_staff",
+                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
+                    properties={},
+                    required=[],
+                    handler=self._request_staff_handler,
                 ),
             ],
             respond_immediately=False,
@@ -336,7 +346,6 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
         )
 
     def create_confirmation_node(self) -> NodeConfig:
-        """Confirm booking and offer final assistance."""
         state = self.flow_manager.state
 
         return NodeConfig(
@@ -347,6 +356,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
                     "content": f"""Confirm: "{state.get('first_name', '')}, your appointment is {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. Confirmation email to {state.get('email', '')}. Anything else?"
 - If no/goodbye → call end_call
 - If they want to correct something → call correct_info
+- If frustrated or asks for human → call request_staff
 - If question → answer, then ask again""",
                 }
             ],
@@ -368,6 +378,13 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
                     handler=self._correct_info_handler,
                 ),
                 FlowsFunctionSchema(
+                    name="request_staff",
+                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
+                    properties={},
+                    required=[],
+                    handler=self._request_staff_handler,
+                ),
+                FlowsFunctionSchema(
                     name="end_call",
                     description="Patient confirms details and has no more questions - end with friendly goodbye.",
                     properties={},
@@ -379,7 +396,6 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
         )
 
     def _create_end_node(self) -> NodeConfig:
-        """Final termination node - uses post_actions to end conversation properly."""
         return NodeConfig(
             name="end",
             task_messages=[
@@ -390,6 +406,76 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
             ],
             functions=[],
             post_actions=[{"type": "end_conversation"}],
+        )
+
+    # ========== Warm Transfer Nodes ==========
+
+    def create_transferring_to_staff_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="transferring_to_staff",
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": "Say: 'I understand. Let me connect you with our office staff. Please hold for just a moment.' Be warm and reassuring.",
+                }
+            ],
+            functions=[],
+            post_actions=[
+                {"type": "function", "handler": self._mute_caller},
+                {"type": "function", "handler": self._dial_office_staff},
+            ],
+        )
+
+    def create_staff_briefing_node(self) -> NodeConfig:
+        state = self.flow_manager.state
+        first_name = state.get("first_name", "Unknown")
+        last_name = state.get("last_name", "")
+        reason = state.get("appointment_reason", "Not specified")
+        appt_date = state.get("appointment_date", "None")
+        appt_time = state.get("appointment_time", "")
+
+        return NodeConfig(
+            name="staff_briefing",
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": f"""You're now speaking to office staff. The patient cannot hear you.
+
+Briefly explain:
+- Patient: {first_name} {last_name}
+- Visit reason: {reason}
+- Appointment: {appt_date} at {appt_time}
+- Why transfer: Patient requested to speak with a person.
+
+Ask if they're ready to be connected. When they confirm, call connect_to_patient.""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="connect_to_patient",
+                    description="Staff is ready - connect them to the waiting patient.",
+                    properties={},
+                    required=[],
+                    handler=self._connect_staff_to_patient_handler,
+                )
+            ],
+            respond_immediately=True,
+        )
+
+    def create_warm_transfer_complete_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="warm_transfer_complete",
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": "Say briefly: 'Connecting you now. Goodbye!'",
+                }
+            ],
+            functions=[],
+            post_actions=[
+                {"type": "function", "handler": self._connect_and_exit},
+                {"type": "end_conversation"},
+            ],
         )
 
     # ========== Function Handlers ==========
@@ -569,5 +655,82 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
                 except Exception as db_error:
                     logger.error(f"Failed to update status to Failed: {db_error}")
 
-        # Return the end node which uses post_actions to properly terminate
         return None, self._create_end_node()
+
+    # ========== Warm Transfer Handlers ==========
+
+    async def _request_staff_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        logger.info("Flow: Patient requested staff - initiating warm transfer")
+        return None, self.create_transferring_to_staff_node()
+
+    async def _mute_caller(self, action: dict, flow_manager: FlowManager):
+        if self.transport:
+            # For dial-in: caller is the first participant that joined
+            # For dial-out: we dialed them, they have no user_id set
+            participants = self.transport.participants()
+            for p in participants.values():
+                if not p["info"]["isLocal"]:
+                    participant_id = p["id"]
+                    await self.transport.update_remote_participants(
+                        remote_participants={
+                            participant_id: {"permissions": {"canSend": []}}
+                        }
+                    )
+                    logger.info(f"Muted caller: {participant_id}")
+                    break
+
+    async def _dial_office_staff(self, action: dict, flow_manager: FlowManager):
+        office_number = self.warm_transfer_config.get("staff_number")
+
+        if office_number and self.transport:
+            flow_manager.state["warm_transfer_in_progress"] = True
+            await self.transport.start_dialout({"phoneNumber": office_number})
+            logger.info(f"Dialing office staff: {office_number}")
+        else:
+            logger.error("No staff_number in warm_transfer config")
+
+    async def _connect_staff_to_patient_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        logger.info("Flow: Staff ready - transitioning to connect")
+        return None, self.create_warm_transfer_complete_node()
+
+    async def _connect_and_exit(self, action: dict, flow_manager: FlowManager):
+        if self.transport:
+            participants = self.transport.participants()
+            caller_id = None
+            staff_id = None
+
+            for p in participants.values():
+                if p["info"]["isLocal"]:
+                    continue
+                user_id = p["info"].get("userId", "")
+                if user_id == "staff":
+                    staff_id = p["id"]
+                elif not staff_id or not caller_id:
+                    # First non-local, non-staff participant is the caller
+                    if caller_id is None:
+                        caller_id = p["id"]
+
+            if caller_id and staff_id:
+                await self.transport.update_remote_participants(
+                    remote_participants={
+                        caller_id: {
+                            "permissions": {
+                                "canSend": ["microphone"],
+                                "canReceive": {"base": False, "byUserId": {"staff": True}},
+                            },
+                            "inputsEnabled": {"microphone": True},
+                        },
+                        staff_id: {
+                            "permissions": {
+                                "canReceive": {"base": True},
+                            },
+                        },
+                    }
+                )
+                logger.info("Connected caller and staff")
+            else:
+                logger.error(f"Could not connect: caller={caller_id}, staff={staff_id}")

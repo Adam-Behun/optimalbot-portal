@@ -74,7 +74,8 @@ class PipelineFactory:
             'main_llm': main_llm,
             'classifier_llm': classifier_llm,
             'llm_switcher': llm_switcher,
-            'active_llm': active_llm  # The LLM to use in pipeline (switcher or main_llm)
+            'active_llm': active_llm,
+            'warm_transfer': services_config.get('warm_transfer')
         }
 
         components = PipelineFactory._create_conversation_components(
@@ -153,6 +154,9 @@ class PipelineFactory:
         # Only pass classifier_llm if it exists (for flows that support dual-LLM)
         if services['classifier_llm']:
             flow_kwargs['classifier_llm'] = services['classifier_llm']
+        # Pass warm_transfer config if configured
+        if services.get('warm_transfer'):
+            flow_kwargs['warm_transfer_config'] = services['warm_transfer']
 
         flow = FlowClass(**flow_kwargs)
 

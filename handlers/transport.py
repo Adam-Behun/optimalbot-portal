@@ -93,11 +93,35 @@ def setup_dialout_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_dialout_answered")
     async def on_dialout_answered(transport, data):
-        # Check if this is a transfer completion or initial call answer
+        # Check for warm transfer (bot stays to brief staff)
+        if (
+            hasattr(pipeline, "flow_manager")
+            and pipeline.flow_manager
+            and pipeline.flow_manager.state.get("warm_transfer_in_progress")
+        ):
+            logger.info("✅ Office staff answered - initiating warm transfer briefing")
+
+            pipeline.transcripts.append({
+                "role": "system",
+                "content": "Office staff answered - warm transfer in progress",
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": "transfer"
+            })
+
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, "Warm Transfer", pipeline.organization_id
+            )
+
+            # Transition to staff briefing node (bot stays on call)
+            if pipeline.flow:
+                briefing_node = pipeline.flow.create_staff_briefing_node()
+                await pipeline.flow_manager.set_node_from_config(briefing_node)
+            return
+
+        # Check for cold transfer (supervisor - bot exits immediately)
         if pipeline.transfer_in_progress:
             logger.info("✅ Supervisor transfer completed")
 
-            # Add transfer event to transcript
             pipeline.transcripts.append({
                 "role": "system",
                 "content": "Call transferred to supervisor",
@@ -105,16 +129,13 @@ def setup_dialout_handlers(pipeline):
                 "type": "transfer"
             })
 
-            # Update call status to 'Supervisor Dialed'
             await get_async_patient_db().update_call_status(
                 pipeline.patient_id, "Supervisor Dialed", pipeline.organization_id
             )
             logger.info("✅ Database status updated: Supervisor Dialed")
 
-            # Save transcript before bot exits
             await save_transcript_to_db(pipeline)
 
-            # Bot leaves call gracefully (cold transfer - EndFrame allows cleanup)
             await pipeline.task.queue_frames([EndFrame()])
             logger.info("✅ EndFrame queued - bot will exit after transfer completes")
 
@@ -184,14 +205,52 @@ def setup_dialout_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_dialout_error")
     async def on_dialout_error(transport, data):
-        # Check if this is a transfer error or initial dialout error
-        if pipeline.transfer_in_progress:
-            logger.error(f"❌ Supervisor transfer failed - continuing call")
+        # Check for warm transfer error
+        if (
+            hasattr(pipeline, "flow_manager")
+            and pipeline.flow_manager
+            and pipeline.flow_manager.state.get("warm_transfer_in_progress")
+        ):
+            logger.error("❌ Warm transfer failed - returning to patient")
 
-            # Reset transfer flag
+            pipeline.flow_manager.state["warm_transfer_in_progress"] = False
+
+            pipeline.transcripts.append({
+                "role": "system",
+                "content": "Transfer to office staff failed",
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": "transfer"
+            })
+
+            # Unmute patient and return to confirmation node
+            if pipeline.flow and pipeline.transport:
+                participants = pipeline.transport.participants()
+                for p in participants.values():
+                    if not p["info"]["isLocal"]:
+                        await pipeline.transport.update_remote_participants(
+                            remote_participants={
+                                p["id"]: {
+                                    "permissions": {"canSend": ["microphone"]},
+                                    "inputsEnabled": {"microphone": True},
+                                }
+                            }
+                        )
+                        break
+                # Return to confirmation with apology
+                confirmation_node = pipeline.flow.create_confirmation_node()
+                confirmation_node.task_messages[0]["content"] = (
+                    "Apologize that you couldn't reach office staff and offer to help with anything else. "
+                    + confirmation_node.task_messages[0]["content"]
+                )
+                await pipeline.flow_manager.set_node_from_config(confirmation_node)
+            return
+
+        # Check for cold transfer error
+        if pipeline.transfer_in_progress:
+            logger.error("❌ Supervisor transfer failed - continuing call")
+
             pipeline.transfer_in_progress = False
 
-            # Add error event to transcript
             pipeline.transcripts.append({
                 "role": "system",
                 "content": "Transfer to supervisor failed",
@@ -199,23 +258,19 @@ def setup_dialout_handlers(pipeline):
                 "type": "transfer"
             })
 
-            # Don't terminate or update status - call continues with insurance rep
             logger.info("✅ Call continuing with insurance representative")
 
         else:
             # Initial dialout failed - call never connected
             logger.error(f"❌ Call failed - Dialout error: {data}")
 
-            # Update database status to Failed
             await get_async_patient_db().update_call_status(
                 pipeline.patient_id, "Failed", pipeline.organization_id
             )
             logger.info("✅ Database status updated: Failed")
 
-            # Save transcript even on error (may have partial conversation)
             await save_transcript_to_db(pipeline)
 
-            # Immediate termination - call never connected
             if pipeline.task:
                 await pipeline.task.cancel()
                 logger.info("✅ Pipeline cancelled immediately (dialout error)")
