@@ -61,6 +61,9 @@ class PipelineFactory:
             active_llm = main_llm
             logger.info("Single LLM mode: classifier_llm not configured, using main_llm only")
 
+        # Extract turn_detection config if present (for Smart Turn + VAD)
+        turn_detection_config = services_config.get('turn_detection')
+
         services = {
             'stt': ServiceFactory.create_stt(services_config['services']['stt']),
             'tts': ServiceFactory.create_tts(services_config['services']['tts']),
@@ -69,7 +72,8 @@ class PipelineFactory:
                 room_config['room_url'],
                 room_config['room_token'],
                 room_config['room_name'],
-                dialin_settings
+                dialin_settings,
+                turn_detection_config
             ),
             'main_llm': main_llm,
             'classifier_llm': classifier_llm,

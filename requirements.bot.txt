@@ -1,5 +1,7 @@
 # Core pipecat with required providers (includes openai, daily-python, opentelemetry packages)
-pipecat-ai[daily,cartesia,deepgram,groq,tracing]
+# silero: VAD for voice activity detection
+# local-smart-turn-v3: Smart Turn v3 for semantic turn detection (CPU inference)
+pipecat-ai[daily,cartesia,deepgram,groq,tracing,silero,local-smart-turn-v3]
 pipecat-ai-flows
 
 # Required by pipecat even if not used (imported at module level)

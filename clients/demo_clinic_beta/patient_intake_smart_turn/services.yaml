@@ -1,0 +1,55 @@
+call_type: "dial-in"
+
+# Smart Turn v3 configuration - aggressive settings for fast response
+turn_detection:
+  vad:
+    type: silero
+    stop_secs: 0.1          # Very short - Smart Turn makes the real decision
+    start_secs: 0.1         # Quick speech detection
+    confidence: 0.5         # Lower threshold - catch more speech
+    min_volume: 0.4         # More sensitive to quiet speech
+  smart_turn:
+    type: local_v3
+    stop_secs: 1.5          # Shorter max silence before forcing turn end
+    max_duration_secs: 8.0  # Max audio chunk for analysis
+
+services:
+  stt:
+    type: deepgram
+    api_key: ${DEEPGRAM_API_KEY}
+    model: nova-3
+    language: en-US
+    interim_results: true
+    smart_format: true
+    punctuate: true
+    keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]
+
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.4
+    api_key: ${OPENAI_API_KEY}
+    max_tokens: 128
+    service_tier: priority
+
+  tts:
+    provider: cartesia
+    model: sonic-3-2025-10-27
+    voice_id: f786b574-daa5-4673-aa0c-cbe3e8534c02
+    api_key: ${CARTESIA_API_KEY}
+    generation_config:
+      speed: 1.0
+      volume: 1.0
+      emotion: neutral
+    aggregate_sentences: true
+
+  transport:
+    provider: daily
+    api_key: ${DAILY_API_KEY}
+    phone_number_id: ${DAILY_PHONE_NUMBER_ID}
+    enable_echo_cancellation: true
+    audio_in_sample_rate: 16000
+    audio_out_sample_rate: 24000
+
+warm_transfer:
+  staff_number: "+15165667132"
