@@ -23,11 +23,55 @@ def setup_dialin_handlers(pipeline):
         """Handle when caller connects - initialize flow and bot speaks first."""
         logger.info(f"✅ Caller connected: {participant['id']}")
 
+        # Store the original caller's participant ID for warm transfer
+        pipeline.caller_participant_id = participant["id"]
+
+        # Start capturing caller's audio for transcription
+        await transport.capture_participant_transcription(participant["id"])
+
         # Initialize flow with greeting node (respond_immediately=True makes bot speaks first)
         if pipeline.flow and pipeline.flow_manager:
             initial_node = pipeline.flow.create_greeting_node()
             await pipeline.flow_manager.initialize(initial_node)
             logger.info("✅ Flow initialized with greeting node")
+
+    @pipeline.transport.event_handler("on_participant_joined")
+    async def on_participant_joined(transport, participant):
+        """Handle when a new participant joins - could be staff during warm transfer."""
+        participant_id = participant["id"]
+        logger.info(f"✅ Participant joined: {participant_id}")
+
+        # Check if this is staff joining during warm transfer
+        if (
+            hasattr(pipeline, "flow_manager")
+            and pipeline.flow_manager
+            and pipeline.flow_manager.state.get("warm_transfer_in_progress")
+            and participant_id != getattr(pipeline, "caller_participant_id", None)
+        ):
+            logger.info("✅ Office staff joined - initiating warm transfer briefing")
+
+            # Store staff participant ID
+            pipeline.staff_participant_id = participant_id
+
+            # Capture staff's audio for transcription
+            await transport.capture_participant_transcription(participant_id)
+
+            pipeline.transcripts.append({
+                "role": "system",
+                "content": "Office staff joined - warm transfer in progress",
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": "transfer"
+            })
+
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, "Warm Transfer", pipeline.organization_id
+            )
+
+            # Transition to staff briefing node
+            if pipeline.flow:
+                briefing_node = pipeline.flow.create_staff_briefing_node()
+                await pipeline.flow_manager.set_node_from_config(briefing_node)
+                logger.info("✅ Transitioned to staff briefing node")
 
     @pipeline.transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
@@ -77,6 +121,50 @@ def setup_dialin_handlers(pipeline):
         if pipeline.task:
             await pipeline.task.cancel()
             logger.info("✅ Pipeline cancelled (dialin error)")
+
+    @pipeline.transport.event_handler("on_dialout_error")
+    async def on_dialout_error(transport, data):
+        """Handle dial-out error during warm transfer."""
+        if (
+            hasattr(pipeline, "flow_manager")
+            and pipeline.flow_manager
+            and pipeline.flow_manager.state.get("warm_transfer_in_progress")
+        ):
+            logger.error("❌ Warm transfer dial-out failed - returning to patient")
+
+            pipeline.flow_manager.state["warm_transfer_in_progress"] = False
+
+            pipeline.transcripts.append({
+                "role": "system",
+                "content": "Transfer to office staff failed",
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": "transfer"
+            })
+
+            # Unmute and unisolate the original caller
+            if hasattr(pipeline, "caller_participant_id"):
+                await transport.update_remote_participants(
+                    remote_participants={
+                        pipeline.caller_participant_id: {
+                            "permissions": {
+                                "canSend": ["microphone"],
+                                "canReceive": {"base": True},
+                            },
+                            "inputsEnabled": {"microphone": True},
+                        }
+                    }
+                )
+                logger.info("✅ Unmuted and unisolated caller after failed transfer")
+
+            # Return to confirmation with apology
+            if pipeline.flow:
+                confirmation_node = pipeline.flow.create_confirmation_node()
+                confirmation_node.task_messages[0]["content"] = (
+                    "Apologize that you couldn't reach office staff and offer to help with anything else. "
+                    + confirmation_node.task_messages[0]["content"]
+                )
+                await pipeline.flow_manager.set_node_from_config(confirmation_node)
+                logger.info("✅ Returned to confirmation node after failed transfer")
 
 
 def setup_dialout_handlers(pipeline):

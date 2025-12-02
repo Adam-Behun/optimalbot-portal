@@ -54,3 +54,4 @@ evals-course-voice/
 # Local example repos
 whisker/
 *.bin
+warm_transfer_example.py

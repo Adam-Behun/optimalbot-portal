@@ -5,10 +5,12 @@ from typing import Any, Dict
 
 from openai import AsyncOpenAI
 from pipecat_flows import (
+    ContextStrategyConfig,
     FlowManager,
     FlowsFunctionSchema,
     NodeConfig,
 )
+from pipecat_flows.types import ContextStrategy
 
 from backend.models import get_async_patient_db
 from backend.utils import parse_natural_date, parse_natural_time
@@ -420,8 +422,10 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
                 }
             ],
             functions=[],
-            post_actions=[
+            pre_actions=[
                 {"type": "function", "handler": self._mute_caller},
+            ],
+            post_actions=[
                 {"type": "function", "handler": self._dial_office_staff},
             ],
         )
@@ -450,6 +454,10 @@ Briefly explain:
 Ask if they're ready to be connected. When they confirm, call connect_to_patient.""",
                 }
             ],
+            context_strategy=ContextStrategyConfig(
+                strategy=ContextStrategy.RESET_WITH_SUMMARY,
+                summary_prompt="Briefly summarize: patient name (if known), visit reason (if mentioned), and that they asked to speak with staff. If little info was collected, just say 'Patient requested to speak with staff early in the call.'",
+            ),
             functions=[
                 FlowsFunctionSchema(
                     name="connect_to_patient",
@@ -668,17 +676,24 @@ Ask if they're ready to be connected. When they confirm, call connect_to_patient
     async def _mute_caller(self, action: dict, flow_manager: FlowManager):
         if self.transport:
             # For dial-in: caller is the first participant that joined
-            # For dial-out: we dialed them, they have no user_id set
             participants = self.transport.participants()
             for p in participants.values():
                 if not p["info"]["isLocal"]:
                     participant_id = p["id"]
+                    # Store caller ID in state for later use
+                    flow_manager.state["caller_participant_id"] = participant_id
+                    # Mute caller AND make them not hear the bot (they'll wait in silence)
                     await self.transport.update_remote_participants(
                         remote_participants={
-                            participant_id: {"permissions": {"canSend": []}}
+                            participant_id: {
+                                "permissions": {
+                                    "canSend": [],
+                                    "canReceive": {"base": False},  # Can't hear anything during transfer
+                                }
+                            }
                         }
                     )
-                    logger.info(f"Muted caller: {participant_id}")
+                    logger.info(f"Muted and isolated caller: {participant_id}")
                     break
 
     async def _dial_office_staff(self, action: dict, flow_manager: FlowManager):
@@ -699,38 +714,37 @@ Ask if they're ready to be connected. When they confirm, call connect_to_patient
 
     async def _connect_and_exit(self, action: dict, flow_manager: FlowManager):
         if self.transport:
-            participants = self.transport.participants()
-            caller_id = None
-            staff_id = None
+            # Get caller ID from state (stored during _mute_caller)
+            caller_id = flow_manager.state.get("caller_participant_id")
 
+            # Find staff ID (non-local participant that's not the caller)
+            staff_id = None
+            participants = self.transport.participants()
             for p in participants.values():
                 if p["info"]["isLocal"]:
                     continue
-                user_id = p["info"].get("userId", "")
-                if user_id == "staff":
+                if p["id"] != caller_id:
                     staff_id = p["id"]
-                elif not staff_id or not caller_id:
-                    # First non-local, non-staff participant is the caller
-                    if caller_id is None:
-                        caller_id = p["id"]
+                    break
 
             if caller_id and staff_id:
+                # Connect caller and staff directly - they can hear each other
                 await self.transport.update_remote_participants(
                     remote_participants={
                         caller_id: {
                             "permissions": {
                                 "canSend": ["microphone"],
-                                "canReceive": {"base": False, "byUserId": {"staff": True}},
+                                "canReceive": {"base": True},  # Can hear everyone (including staff)
                             },
                             "inputsEnabled": {"microphone": True},
                         },
                         staff_id: {
                             "permissions": {
-                                "canReceive": {"base": True},
+                                "canReceive": {"base": True},  # Can hear everyone (including caller)
                             },
                         },
                     }
                 )
-                logger.info("Connected caller and staff")
+                logger.info(f"Connected caller ({caller_id}) and staff ({staff_id})")
             else:
                 logger.error(f"Could not connect: caller={caller_id}, staff={staff_id}")
