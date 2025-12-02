@@ -50,3 +50,7 @@ Thumbs.db
 # Evaluation results (generated output)
 evals/**/results/
 evals-course-voice/
+
+# Local example repos
+whisker/
+*.bin

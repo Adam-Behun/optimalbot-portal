@@ -234,17 +234,22 @@ Once they explain, call save_visit_reason with brief summary.""",
         """Collect appointment date and time."""
         appointment_type = self.flow_manager.state.get("appointment_type", "appointment")
 
-        available_times = ["9:00 AM", "10:30 AM", "1:00 PM", "3:30 PM"]
+        # Demo: hardcoded slots for next week (Dec 2-6, 2025)
+        available_slots = [
+            "Monday December 2nd at 9:00 AM",
+            "Tuesday December 3rd at 10:30 AM",
+            "Wednesday December 4th at 1:00 PM",
+            "Thursday December 5th at 3:30 PM",
+            "Friday December 6th at 9:00 AM",
+        ]
 
         return NodeConfig(
             name="scheduling",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Ask which day works. Offer times: {', '.join(available_times)}.
-Once they confirm BOTH date AND time, call schedule_appointment.
-
-Example: "Tuesday at 10:30" → call schedule_appointment with date and time.""",
+                    "content": f"""Offer these available slots: {', '.join(available_slots)}.
+Once they pick one, call schedule_appointment with the date and time.""",
                 }
             ],
             functions=[

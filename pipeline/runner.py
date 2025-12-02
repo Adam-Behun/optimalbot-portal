@@ -11,6 +11,7 @@ from handlers import (
     setup_ivr_handlers,
 )
 from observers import LangfuseLatencyObserver
+from pipecat_whisker import WhiskerObserver
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,18 @@ class ConversationPipeline:
             patient_id=self.patient_id
         )
 
+        # Create Whisker observer for pipeline debugging (only in debug mode)
+        observers = [self.latency_observer]
+        if self.debug_mode:
+            self.whisker_observer = WhiskerObserver(
+                self.pipeline,
+                host="localhost",
+                port=9090,
+                file_name=f"whisker_{self.session_id}.bin"  # Save session for later review
+            )
+            observers.append(self.whisker_observer)
+            logger.info("ᓚᘏᗢ Whisker debugger enabled - connect to ws://localhost:9090")
+
         # Use params from factory, which includes audio sample rates and other settings
         self.task = PipelineTask(
             self.pipeline,
@@ -115,7 +128,7 @@ class ConversationPipeline:
                 "langfuse.trace.metadata.workflow": self.client_name,
                 "langfuse.trace.metadata.phone_number": self.phone_number,
             },
-            observers=[self.latency_observer],
+            observers=observers,
         )
 
         self.flow_manager = FlowManager(
