@@ -55,6 +55,9 @@ python bot.py
 ### Backend Development
 
 ```bash
+# Activate virtual environment (required for all Python commands)
+source venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -475,3 +478,78 @@ When testing pipeline components, mock Daily.co rooms and MongoDB connections to
 - Return `(result, next_node)` tuple
 - Result is provided to LLM for context
 - next_node transitions flow (or None to stay in current node)
+
+## Claude Code Best Practices
+
+These guidelines ensure Claude produces high-quality, minimal, modular code that follows best practices.
+
+### Code Exploration Before Changes
+
+ALWAYS read and understand relevant files before proposing code edits. Do not speculate about code you have not inspected. If referencing a specific file/path, you MUST open and inspect it before explaining or proposing fixes. Be rigorous and persistent in searching code for key facts. Thoroughly review the style, conventions, and abstractions of the codebase before implementing new features.
+
+### Default to Action
+
+Implement changes rather than only suggesting them. If the user's intent is unclear, infer the most useful likely action and proceed, using tools to discover any missing details instead of guessing. If the task is unreasonable or infeasible, inform the user rather than working around it.
+
+### Avoid Over-Engineering
+
+Only make changes that are directly requested or clearly necessary. Keep solutions simple and focused.
+
+**Feature scope:**
+- Don't add features, refactor code, or make "improvements" beyond what was asked
+- A bug fix doesn't need surrounding code cleaned up
+- A simple feature doesn't need extra configurability
+- Don't add docstrings, comments, or type annotations to code you didn't change
+- Only add comments where the logic isn't self-evident
+
+**Validation rules:**
+- Don't add error handling, fallbacks, or validation for scenarios that can't happen
+- Trust internal code and framework guarantees
+- Only validate at system boundaries (user input, external APIs)
+- Don't use feature flags or backwards-compatibility shims when you can just change the code
+
+**Abstraction rules:**
+- Don't create helpers, utilities, or abstractions for one-time operations
+- Don't design for hypothetical future requirements
+- The right amount of complexity is the minimum needed for the current task
+- Three similar lines of code is better than a premature abstraction
+- Reuse existing abstractions where possible and follow the DRY principle
+
+### Parallel Tool Calling
+
+When reading multiple files or executing independent operations, do them in parallel:
+- Read several files at once to build context faster
+- Run independent bash commands simultaneously
+- Execute multiple speculative searches during research
+
+However, if tool calls depend on previous results, execute them sequentially. Never use placeholders or guess missing parameters.
+
+### Frontend Development
+
+When modifying React components in `frontend/src/`, follow established patterns:
+
+**Existing patterns to follow:**
+- Use Shadcn/Radix UI components from `frontend/src/components/ui/`
+- Use TailwindCSS classes consistently with existing components
+- Follow the component structure in `frontend/src/components/workflows/`
+
+**Avoid generic aesthetics:**
+- Don't default to generic fonts (Inter, Roboto, Arial) unless already used in the codebase
+- Match the existing color scheme and design system
+- Commit to cohesive aesthetics rather than mixing styles
+
+### Testing Guidelines
+
+When writing tests or implementing solutions:
+- Implement solutions that work correctly for all valid inputs, not just test cases
+- Do not hard-code values or create solutions that only work for specific test inputs
+- Implement the actual logic that solves the problem generally
+- If tests are incorrect, inform the user rather than working around them
+
+### State Management with Git
+
+Use git effectively for tracking progress:
+- Make atomic commits for logical units of work
+- Use git log and git diff to understand what's been done
+- Commit working states before attempting risky changes
+- Use descriptive commit messages that explain the "why"

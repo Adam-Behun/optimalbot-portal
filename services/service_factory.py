@@ -12,8 +12,7 @@ from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+# Smart Turn imports are lazy-loaded only when needed (requires pipecat-ai[local-smart-turn-v3])
 
 from utils.function_call_text_filter import FunctionCallTextFilter
 
@@ -63,8 +62,17 @@ class ServiceFactory:
                 params_dict['vad_analyzer'] = SileroVADAnalyzer(params=vad_params)
                 logger.info(f"VAD configured: stop_secs={vad_params.stop_secs}, confidence={vad_params.confidence}")
 
-            # Configure Smart Turn v3
+            # Configure Smart Turn v3 (lazy import - requires pipecat-ai[local-smart-turn-v3])
             if smart_turn_config.get('type') == 'local_v3':
+                try:
+                    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+                    from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+                except ImportError as e:
+                    raise ImportError(
+                        "Smart Turn v3 requires additional dependencies. "
+                        "Install with: pip install pipecat-ai[local-smart-turn-v3]"
+                    ) from e
+
                 smart_turn_params = SmartTurnParams(
                     stop_secs=smart_turn_config.get('stop_secs', 3.0),
                     max_duration_secs=smart_turn_config.get('max_duration_secs', 8.0)
@@ -86,25 +94,9 @@ class ServiceFactory:
 
         if stt_type == 'deepgram':
             # Regular Deepgram STT (use with Smart Turn for turn detection)
-            params_dict = {}
-            if config.get('interim_results') is not None:
-                params_dict['interim_results'] = config['interim_results']
-            if config.get('smart_format') is not None:
-                params_dict['smart_format'] = config['smart_format']
-            if config.get('punctuate') is not None:
-                params_dict['punctuate'] = config['punctuate']
-            if config.get('keyterm'):
-                params_dict['keyterm'] = config['keyterm']
-
-            params = DeepgramSTTService.InputParams(**params_dict) if params_dict else None
-
-            service = DeepgramSTTService(
-                api_key=config['api_key'],
-                model=config.get('model', 'nova-3'),
-                language=config.get('language', 'en-US'),
-                params=params
-            )
-            logger.info(f"Deepgram STT configured: model={config.get('model', 'nova-3')}")
+            # Pipecat 0.0.95: simple API with just api_key
+            service = DeepgramSTTService(api_key=config['api_key'])
+            logger.info("Deepgram STT configured")
             return service
 
         else:

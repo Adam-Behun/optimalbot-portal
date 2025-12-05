@@ -19,7 +19,7 @@ from handlers.transcript import save_transcript_to_db
 logger = logging.getLogger(__name__)
 
 
-async def warmup_openai(organization_name: str = "Demo Clinic Beta"):
+async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
     """Warm up OpenAI with system prompt prefix for cache hits.
 
     OpenAI caches prompt prefixes of 1024+ tokens. We need to send a request
@@ -119,7 +119,7 @@ class PatientIntakeFlow:
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
-        self.organization_name = patient_data.get("organization_name", "Demo Clinic Beta")
+        self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
         self.warm_transfer_config = warm_transfer_config or {}
 
     def _get_global_instructions(self) -> str:

@@ -55,3 +55,4 @@ evals-course-voice/
 whisker/
 *.bin
 warm_transfer_example.py
+examples/
