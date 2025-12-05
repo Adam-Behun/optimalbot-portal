@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from pipecat.runner.types import DailyRunnerArguments
 from pipeline.runner import ConversationPipeline
 from backend.sessions import get_async_session_db
+from backend.models import get_async_patient_db
 try:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from pipecat.utils.tracing.setup import setup_tracing
@@ -137,8 +138,14 @@ async def bot(args: DailyRunnerArguments):
                 "completed_at": datetime.now(timezone.utc),
                 "error": str(e)
             }, organization_id if 'organization_id' in dir() else None)
-        except Exception:
-            pass
+
+            # Update patient call_status to Failed so frontend stops polling
+            if patient_id and organization_id:
+                patient_db = get_async_patient_db()
+                await patient_db.update_call_status(patient_id, "Failed", organization_id)
+                logger.info(f"Updated patient {patient_id} call_status to Failed")
+        except Exception as cleanup_error:
+            logger.error(f"Failed to update status on error: {cleanup_error}")
 
         raise
 

@@ -56,3 +56,5 @@ whisker/
 *.bin
 warm_transfer_example.py
 examples/
+pipecat_src/
+Change.md

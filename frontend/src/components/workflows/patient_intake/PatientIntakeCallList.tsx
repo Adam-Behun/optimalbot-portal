@@ -117,20 +117,31 @@ export function PatientIntakeCallList() {
     loadPatients();
   }, [loadPatients]);
 
-  // Auto-refresh when calls are active
+  // Poll only active call statuses (not full page reload)
   useEffect(() => {
-    const hasActiveCalls = patients.some(p =>
-      p.call_status === 'Dialing' || p.call_status === 'In Progress'
-    );
+    const activePatientIds = patients
+      .filter(p => p.call_status === 'Dialing' || p.call_status === 'In Progress')
+      .map(p => p.patient_id);
 
-    if (hasActiveCalls) {
-      const interval = setInterval(() => {
-        loadPatients();
-      }, 3000);
+    if (activePatientIds.length === 0) return;
 
-      return () => clearInterval(interval);
-    }
-  }, [patients, loadPatients]);
+    const interval = setInterval(async () => {
+      for (const patientId of activePatientIds) {
+        try {
+          const updatedPatient = await getPatient(patientId);
+          setPatients(prev => prev.map(p =>
+            p.patient_id === patientId
+              ? { ...p, call_status: updatedPatient.call_status }
+              : p
+          ));
+        } catch {
+          // Patient fetch failed, skip
+        }
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [patients]);
 
   const handleViewPatient = async (patient: Patient) => {
     try {

@@ -143,6 +143,10 @@ class ConversationPipeline:
         self.flow.transport = self.transport
         self.flow.pipeline = self
 
+        # Initialize flow state now that flow_manager is available
+        if hasattr(self.flow, '_init_flow_state'):
+            self.flow._init_flow_state()
+
         logger.info("✅ FlowManager initialized")
 
         setup_transport_handlers(self, self.call_type)

@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 class PriorAuthFlow:
 
-    def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager,
-                 main_llm, classifier_llm, context_aggregator=None, transport=None, pipeline=None,
+    def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager = None,
+                 main_llm=None, classifier_llm=None, context_aggregator=None, transport=None, pipeline=None,
                  organization_id: str = None, cold_transfer_config: Dict[str, Any] = None):
         self.flow_manager = flow_manager
         self.main_llm = main_llm
@@ -22,15 +22,21 @@ class PriorAuthFlow:
         self.pipeline = pipeline
         self.organization_id = organization_id
         self.cold_transfer_config = cold_transfer_config or {}
+        # Store patient_data for later initialization when flow_manager is set
+        self._patient_data = patient_data
 
-        flow_manager.state["patient_id"] = patient_data.get("patient_id")
-        flow_manager.state["patient_name"] = patient_data.get("patient_name", "")
-        flow_manager.state["date_of_birth"] = patient_data.get("date_of_birth", "")
-        flow_manager.state["insurance_member_id"] = patient_data.get("insurance_member_id", "")
-        flow_manager.state["cpt_code"] = patient_data.get("cpt_code", "")
-        flow_manager.state["provider_npi"] = patient_data.get("provider_npi", "")
-        flow_manager.state["provider_name"] = patient_data.get("provider_name", "")
-        flow_manager.state["facility_name"] = patient_data.get("facility_name", "")
+    def _init_flow_state(self):
+        """Initialize flow_manager state with patient data. Called after flow_manager is set."""
+        if not self.flow_manager:
+            return
+        self.flow_manager.state["patient_id"] = self._patient_data.get("patient_id")
+        self.flow_manager.state["patient_name"] = self._patient_data.get("patient_name", "")
+        self.flow_manager.state["date_of_birth"] = self._patient_data.get("date_of_birth", "")
+        self.flow_manager.state["insurance_member_id"] = self._patient_data.get("insurance_member_id", "")
+        self.flow_manager.state["cpt_code"] = self._patient_data.get("cpt_code", "")
+        self.flow_manager.state["provider_npi"] = self._patient_data.get("provider_npi", "")
+        self.flow_manager.state["provider_name"] = self._patient_data.get("provider_name", "")
+        self.flow_manager.state["facility_name"] = self._patient_data.get("facility_name", "")
 
     def _get_global_instructions(self) -> str:
         state = self.flow_manager.state
