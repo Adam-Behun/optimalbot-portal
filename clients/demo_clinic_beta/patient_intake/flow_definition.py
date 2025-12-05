@@ -396,6 +396,90 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
             post_actions=[{"type": "end_conversation"}],
         )
 
+    def create_staff_confirmation_node(self) -> NodeConfig:
+        """Ask patient to confirm they want to speak with a manager."""
+        return NodeConfig(
+            name="staff_confirmation",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": """You just asked if they'd like to speak with a manager.
+
+- If yes/sure/please/okay → call dial_staff
+- If no/nevermind/continue → call return_to_conversation""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="dial_staff",
+                    description="Transfer to manager when they confirm.",
+                    properties={},
+                    required=[],
+                    handler=self._dial_staff_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="return_to_conversation",
+                    description="Return to conversation if they decline transfer.",
+                    properties={},
+                    required=[],
+                    handler=self._return_to_conversation_handler,
+                ),
+            ],
+            respond_immediately=False,
+            pre_actions=[
+                {"type": "tts_say", "text": "Would you like to speak with my manager?"}
+            ],
+        )
+
+    def create_transfer_initiated_node(self) -> NodeConfig:
+        """Node shown while transfer is in progress."""
+        return NodeConfig(
+            name="transfer_initiated",
+            task_messages=[],
+            functions=[],
+            pre_actions=[
+                {"type": "tts_say", "text": "Transferring you now, please hold."}
+            ],
+            post_actions=[{"type": "end_conversation"}],
+        )
+
+    def create_transfer_failed_node(self) -> NodeConfig:
+        """Node shown when transfer fails."""
+        return NodeConfig(
+            name="transfer_failed",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": "The transfer failed. Apologize and continue helping them.",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="continue_conversation",
+                    description="Continue with the conversation after failed transfer.",
+                    properties={},
+                    required=[],
+                    handler=self._return_to_conversation_handler,
+                )
+            ],
+            respond_immediately=False,
+            pre_actions=[
+                {"type": "tts_say", "text": "I apologize, the transfer didn't go through."}
+            ],
+        )
+
     # ========== Function Handlers ==========
 
     async def _set_new_patient_handler(
@@ -577,29 +661,32 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
 
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Cold transfer to staff - bot exits after transfer completes."""
+    ) -> tuple[None, NodeConfig]:
+        """Transition to staff confirmation node to ask if they want a manager."""
+        logger.info("Flow: transitioning to staff_confirmation")
+        return None, self.create_staff_confirmation_node()
+
+    async def _dial_staff_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        """Cold transfer to staff after confirmation."""
         staff_number = self.cold_transfer_config.get("staff_number")
 
         if not staff_number:
             logger.warning("Cold transfer requested but no staff_number configured")
-            return "I apologize, but I'm unable to transfer you at this time. Is there anything else I can help you with?", None
+            return None, self.create_transfer_failed_node()
 
         try:
             logger.info(f"Cold transfer initiated to: {staff_number}")
 
-            # Set transfer flag before initiating transfer
             if self.pipeline:
                 self.pipeline.transfer_in_progress = True
 
-            # Initiate SIP transfer
             if self.transport:
-                transfer_params = {"toEndPoint": staff_number}
-                await self.transport.sip_call_transfer(transfer_params)
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
                 logger.info(f"SIP call transfer initiated: {staff_number}")
 
-            # Return message for LLM to speak while transfer happens
-            return "I'm transferring you to our staff now. Please hold.", None
+            return None, self.create_transfer_initiated_node()
 
         except Exception as e:
             import traceback
@@ -608,7 +695,14 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False
 
-            return "I apologize, the transfer failed. Is there anything else I can help you with?", None
+            return None, self.create_transfer_failed_node()
+
+    async def _return_to_conversation_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Return to the previous conversation node if they decline transfer."""
+        logger.info("Flow: returning to confirmation node")
+        return "No problem, let me continue helping you.", self.create_confirmation_node()
 
     def _get_request_staff_function(self) -> FlowsFunctionSchema:
         """Return the request_staff function schema for use in multiple nodes."""

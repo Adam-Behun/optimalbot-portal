@@ -8,6 +8,7 @@ services:
     eot_threshold: 0.50        # Fast end-of-turn confirmation
     eot_timeout_ms: 1200       # Short max wait (was 2500)
     keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]
+# https://developers.deepgram.com/docs/keyterm
 
   llm:
     provider: openai

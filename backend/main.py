@@ -9,7 +9,7 @@ from backend.lifespan import lifespan
 from backend.middleware import SecurityHeadersMiddleware
 from backend.exceptions import register_exception_handlers
 from backend.dependencies import get_user_id_from_request
-from backend.api import health, auth, patients, calls, dialin
+from backend.api import health, auth, patients, dialout, dialin
 from backend.config import validate_env_vars, REQUIRED_BACKEND_ENV_VARS
 
 logging.basicConfig(
@@ -56,5 +56,5 @@ register_exception_handlers(app)
 app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(patients.router, prefix="/patients", tags=["Patients"])
-app.include_router(calls.router, tags=["Calls"])
+app.include_router(dialout.router, tags=["Dial-Out"])
 app.include_router(dialin.router, tags=["Dial-In"])

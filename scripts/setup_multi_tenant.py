@@ -68,7 +68,6 @@ async def main():
                         {"key": "facility_name", "label": "Facility", "type": "string", "required": True, "display_in_list": False, "display_order": 9},
                         {"key": "cpt_code", "label": "CPT Code", "type": "string", "required": True, "display_in_list": True, "display_order": 10},
                         {"key": "appointment_time", "label": "Appointment Time", "type": "datetime", "required": True, "display_in_list": False, "display_order": 11},
-                        {"key": "supervisor_phone", "label": "Supervisor Phone", "type": "phone", "required": False, "display_in_list": False, "display_order": 12},
                         {"key": "prior_auth_status", "label": "Auth Status", "type": "select", "options": ["Pending", "Approved", "Denied"], "default": "Pending", "required": False, "display_in_list": True, "display_order": 13, "computed": True},
                         {"key": "reference_number", "label": "Reference #", "type": "string", "required": False, "display_in_list": True, "display_order": 14, "computed": True}
                     ]

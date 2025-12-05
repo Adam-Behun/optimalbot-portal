@@ -1,8 +1,7 @@
 import logging
-import re
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
-from pipecat.frames.frames import ManuallySwitchServiceFrame, LLMMessagesAppendFrame
+from pipecat.frames.frames import ManuallySwitchServiceFrame
 from pipecat.processors.frame_processor import FrameDirection
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
@@ -14,8 +13,7 @@ class PriorAuthFlow:
 
     def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager,
                  main_llm, classifier_llm, context_aggregator=None, transport=None, pipeline=None,
-                 organization_id: str = None):
-        self.patient_data = patient_data
+                 organization_id: str = None, cold_transfer_config: Dict[str, Any] = None):
         self.flow_manager = flow_manager
         self.main_llm = main_llm
         self.classifier_llm = classifier_llm
@@ -23,179 +21,72 @@ class PriorAuthFlow:
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
+        self.cold_transfer_config = cold_transfer_config or {}
 
-        # Format fields for TTS pronunciation (happens ONCE at initialization)
-        self._format_speech_fields()
-
-    def _format_speech_fields(self):
-        """Format patient data fields with Cartesia <spell> tags for pronunciation.
-
-        This runs ONCE at flow initialization, adding '_speech' versions of fields
-        that need to be spelled out. Zero runtime overhead during conversation.
-        """
-        # Phone numbers: spell with breaks between segments
-        insurance_phone = self.patient_data.get('insurance_phone')
-        if insurance_phone:
-            self.patient_data['insurance_phone_speech'] = self._format_phone(insurance_phone)
-
-        supervisor_phone = self.patient_data.get('supervisor_phone')
-        if supervisor_phone:
-            self.patient_data['supervisor_phone_speech'] = self._format_phone(supervisor_phone)
-
-        # Member ID: spell out alphanumeric
-        member_id = self.patient_data.get('insurance_member_id')
-        if member_id:
-            self.patient_data['insurance_member_id_speech'] = f"<spell>{member_id}</spell>"
-
-        # NPI: spell with breaks every 3 digits
-        npi = self.patient_data.get('provider_npi')
-        if npi:
-            if len(npi) == 10 and npi.isdigit():
-                self.patient_data['provider_npi_speech'] = (
-                    f"<spell>{npi[:3]}</spell><break time=\"150ms\"/>"
-                    f"<spell>{npi[3:6]}</spell><break time=\"150ms\"/>"
-                    f"<spell>{npi[6:]}</spell>"
-                )
-            else:
-                self.patient_data['provider_npi_speech'] = f"<spell>{npi}</spell>"
-
-        # CPT code: spell entire code
-        cpt = self.patient_data.get('cpt_code')
-        if cpt:
-            self.patient_data['cpt_code_speech'] = f"<spell>{cpt}</spell>"
-
-    def _format_reference_number(self, ref_number: str) -> str:
-        """Format reference/authorization number with <spell> tags and breaks.
-
-        Reference numbers can be alphanumeric with various formats.
-        This method groups characters in chunks of 3 for clarity with pauses between segments.
-        """
-        if not ref_number:
-            return ""
-
-        # Remove any whitespace or special characters for processing
-        cleaned = re.sub(r'[^A-Za-z0-9]', '', ref_number)
-
-        if not cleaned:
-            return f"<spell>{ref_number}</spell>"
-
-        # 5 or less: spell as one unit
-        if len(cleaned) <= 5:
-            return f"<spell>{cleaned}</spell>"
-
-        # 6 or more: break into groups of 3
-        chunks = [cleaned[i:i+3] for i in range(0, len(cleaned), 3)]
-        formatted_chunks = [f"<spell>{chunk}</spell>" for chunk in chunks]
-        return "<break time=\"200ms\"/>".join(formatted_chunks)
-
-    def _format_phone(self, phone: str) -> str:
-        """Format phone number with <spell> tags and breaks."""
-        # Remove +1 prefix and any formatting
-        cleaned = re.sub(r'[^\d]', '', phone)
-        if cleaned.startswith('1'):
-            cleaned = cleaned[1:]
-
-        if len(cleaned) == 10:
-            # Format: (123) <break> 456 <break> 7890
-            return (
-                f"<spell>({cleaned[:3]})</spell><break time=\"200ms\"/>"
-                f"<spell>{cleaned[3:6]}</spell><break time=\"200ms\"/>"
-                f"<spell>{cleaned[6:]}</spell>"
-            )
-        return f"<spell>{phone}</spell>"
+        flow_manager.state["patient_id"] = patient_data.get("patient_id")
+        flow_manager.state["patient_name"] = patient_data.get("patient_name", "")
+        flow_manager.state["date_of_birth"] = patient_data.get("date_of_birth", "")
+        flow_manager.state["insurance_member_id"] = patient_data.get("insurance_member_id", "")
+        flow_manager.state["cpt_code"] = patient_data.get("cpt_code", "")
+        flow_manager.state["provider_npi"] = patient_data.get("provider_npi", "")
+        flow_manager.state["provider_name"] = patient_data.get("provider_name", "")
+        flow_manager.state["facility_name"] = patient_data.get("facility_name", "")
 
     def _get_global_instructions(self) -> str:
-        """Global behavioral rules applied to all states."""
-        # Read all fields FLAT from patient_data
-        facility = self.patient_data.get('facility_name', '')
-        insurance_company = self.patient_data.get('insurance_company_name', '')
-        member_id = self.patient_data.get('insurance_member_id', '')
-        cpt_code = self.patient_data.get('cpt_code', '')
-        provider_npi = self.patient_data.get('provider_npi', '')
+        state = self.flow_manager.state
+        facility = state.get("facility_name", "")
 
-        return f"""PATIENT INFORMATION (USE EXACT VALUES):
-- Patient Name: {self.patient_data.get('patient_name')}
-- Date of Birth: {self.patient_data.get('date_of_birth')}
-- Facility: {facility}
-- Insurance Company: {insurance_company}
-- Member ID: {member_id}
-- Insurance Phone: {self.patient_data.get('insurance_phone')}
-- CPT Code: {cpt_code}
-- Provider NPI: {provider_npi}
-- Provider Name: {self.patient_data.get('provider_name')}
-- Appointment Time: {self.patient_data.get('appointment_time')}
+        return f"""You are Alexandra, a Virtual Assistant from {facility}.
 
-PRONUNCIATION GUIDE - When asked to SPELL OUT or REPEAT information:
-- Member ID (spelled): {self.patient_data.get('insurance_member_id_speech', member_id)}
-- Insurance Phone (spelled): {self.patient_data.get('insurance_phone_speech', self.patient_data.get('insurance_phone'))}
-- CPT Code (spelled): {self.patient_data.get('cpt_code_speech', cpt_code)}
-- Provider NPI (spelled): {self.patient_data.get('provider_npi_speech', provider_npi)}
+# Voice Conversation Style
+You are making an outbound phone call. Your responses will be converted to speech, so:
+- Speak naturally like a professional on the phone—use contractions and conversational flow
+- Keep responses short and direct. One or two sentences is usually enough.
+- Never use bullet points, numbered lists, special formatting, or markdown
+- Use natural acknowledgments: "Got it" or "Perfect" instead of formal phrasing
 
-CRITICAL BEHAVIORAL RULES:
-1. AI TRANSPARENCY: You are a Virtual Assistant. Disclose this in your initial greeting. Say "I'm Alexandra, a Virtual Assistant helping {facility}" when first introducing yourself. Never pretend to be human.
+# AI Transparency
+Disclose you're a Virtual Assistant in your initial greeting. Never pretend to be human.
 
-2. LANGUAGE: Speak ONLY in English. If the caller speaks another language, politely redirect in English: "I apologize, but I can only communicate in English for this verification."
+# Guardrails
+- ONLY use patient information from Patient Data below. Never guess or invent details.
+- If asked for information you don't have, say: "I don't have that information available."
+- If the representative seems uncomfortable with AI, offer to transfer them to a manager.
+- Stay on topic: insurance verification only. Redirect off-topic requests politely.
 
-3. TONE: Maintain a professional, courteous medical office assistant tone at ALL TIMES. Never mirror the caller's informal language, slang, accent, or emotional tone. Stay calm and professional even if the caller is frustrated, rude, or casual.
-
-4. DATA ACCURACY: ONLY use patient information explicitly provided in the PATIENT INFORMATION section above. NEVER guess, estimate, or invent any details. If you don't have information, say "I don't have that information available" rather than making it up.
-
-5. STAY ON TOPIC: This is an insurance verification call. Do not engage in personal conversations, medical advice, billing disputes, or any topics unrelated to insurance verification. If caller goes off-topic, politely redirect: "I appreciate that, but I'm only able to assist with the insurance verification today."
-
-6. SPEAKING STYLE: Use complete, grammatically correct sentences. Do not use slang, informal contractions beyond standard ones, or casual phrases. Maintain consistency regardless of how the caller speaks.
-
-7. ANSWERING QUESTIONS: You can answer questions about ANY of the patient information fields listed above at ANY time during the call, regardless of the current conversation state. Always use the exact values provided.
-
-8. HESITATION & TRUST DETECTION: If the representative shows ANY signs of hesitation, discomfort, or distrust about speaking with AI, proactively offer supervisor transfer:
-   - Hesitation signals: "Are you AI?", "Is this a bot?", "Can I trust this?", "I'm not comfortable with this", "This doesn't sound right", "I'd rather speak to a person", long pauses after disclosure, skeptical tone
-   - Response pattern: Acknowledge their concern professionally, then offer: "I completely understand. Would you like to speak with my supervisor?"
-   - Do NOT be defensive or try to convince them - immediately offer the human option"""
+# Patient Data
+- Patient Name: {state.get("patient_name")}
+- Date of Birth: {state.get("date_of_birth")}
+- Member ID: {state.get("insurance_member_id")}
+- CPT Code: {state.get("cpt_code")}
+- Provider NPI: {state.get("provider_npi")}
+- Provider Name: {state.get("provider_name")}
+- Facility: {facility}"""
 
     def create_greeting_node_after_ivr_completed(self) -> NodeConfig:
-        """
-        Greeting node used after IVR navigation completes.
-
-        - Waits for user to speak first (respond_immediately=False)
-        - Resets context to clear IVR navigation messages (context_strategy=RESET)
-        - Automatically transitions to verification after speaking (via post_actions)
-        """
-        facility = self.patient_data.get('facility_name', 'a medical facility')
-        global_instructions = self._get_global_instructions()
+        facility = self.flow_manager.state.get("facility_name", "a medical facility")
 
         return NodeConfig(
             name="greeting_after_ivr",
             role_messages=[{
                 "role": "system",
-                "content": f"""You are Alexandra, a Virtual Assistant from {facility}.
-
-{global_instructions}"""
+                "content": self._get_global_instructions()
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""YOU called the insurance company representative. After navigating the IVR system, a human has now answered. Greet them, disclose you're a Virtual Assistant, and provide initial patient context.
+                "content": f"""A human answered after IVR navigation. Greet them professionally.
 
-STEP 1 - ANALYZE THE CONVERSATION HISTORY:
-- Look through ALL previous user messages in this conversation
-- Check if the representative introduced themselves with a name (e.g., "Hello, this is Jennifer", "This is Adam from Aetna", "Jennifer speaking")
-- Extract ONLY the first name if present (e.g., "Jennifer" or "Adam")
+If they introduced themselves with a name → "Hi [Name], this is Alexandra from {facility}."
+If no name given → "Hi, this is Alexandra from {facility}."
 
-STEP 2 - CONSTRUCT YOUR GREETING:
-- If you found a name → Start with "Hi [FirstName], this is Alexandra from {facility}."
-- If NO name was found → Start with "Hi, this is Alexandra from {facility}."
-- Then add: "Can you help me verify eligibility and benefits for a patient?"
+Then ask: "Can you help me verify eligibility and benefits for a patient?"
 
-EXAMPLES:
-- They said "Hello, this is Adam from Aetna" → You respond: "Hi Adam, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
-- They said "Hello?" → You respond: "Hi, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
-
-STEP 3 - AFTER SPEAKING THE GREETING:
-- Immediately call the proceed_to_verification() function to transition to the verification node
-- This must happen right after you speak your greeting"""
+After speaking your greeting → call proceed_to_verification"""
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="proceed_to_verification",
-                    description="Transition to verification node after greeting is complete.",
+                    description="Transition to verification after greeting is complete.",
                     properties={},
                     required=[],
                     handler=self._proceed_to_verification_handler
@@ -212,50 +103,29 @@ STEP 3 - AFTER SPEAKING THE GREETING:
         )
 
     def create_greeting_node_without_ivr(self) -> NodeConfig:
-        """
-        Greeting node used when human answers directly (no IVR navigation).
-
-        - Speaks immediately (respond_immediately=True)
-        - Appends to existing context (default context strategy)
-        - Automatically transitions to verification after speaking (via post_actions)
-        """
-        facility = self.patient_data.get('facility_name', 'a medical facility')
-        global_instructions = self._get_global_instructions()
+        facility = self.flow_manager.state.get("facility_name", "a medical facility")
 
         return NodeConfig(
             name="greeting_without_ivr",
             role_messages=[{
                 "role": "system",
-                "content": f"""You are Alexandra, a Virtual Assistant from {facility}.
-
-{global_instructions}"""
+                "content": self._get_global_instructions()
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""YOU called the insurance company representative. A human answered directly. Greet them, disclose you're a Virtual Assistant, and provide initial patient context.
+                "content": f"""A human answered directly. Greet them professionally.
 
-STEP 1 - ANALYZE THE CONVERSATION HISTORY:
-- Look through ALL previous user messages in this conversation
-- Check if the representative introduced themselves with a name (e.g., "Hello, this is Jennifer", "This is Adam from Aetna", "Jennifer speaking")
-- Extract ONLY the first name if present (e.g., "Jennifer" or "Adam")
+If they introduced themselves with a name → "Hi [Name], this is Alexandra from {facility}."
+If no name given → "Hi, this is Alexandra from {facility}."
 
-STEP 2 - CONSTRUCT YOUR GREETING:
-- If you found a name → Start with "Hi [FirstName], this is Alexandra from {facility}."
-- If NO name was found → Start with "Hi, this is Alexandra from {facility}."
-- Then add: "Can you help me verify eligibility and benefits for a patient?"
+Then ask: "Can you help me verify eligibility and benefits for a patient?"
 
-EXAMPLES:
-- They said "Hello, this is Adam from Aetna" → You respond: "Hi Adam, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
-- They said "Hello?" → You respond: "Hi, this is Alexandra from {facility}. Can you help me verify eligibility and benefits for a patient?"
-
-STEP 3 - AFTER SPEAKING THE GREETING:
-- Immediately call the proceed_to_verification() function to transition to the verification node
-- This must happen right after you speak your greeting"""
+After speaking your greeting → call proceed_to_verification"""
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="proceed_to_verification",
-                    description="Transition to verification node after greeting is complete.",
+                    description="Transition to verification after greeting is complete.",
                     properties={},
                     required=[],
                     handler=self._proceed_to_verification_handler
@@ -269,89 +139,39 @@ STEP 3 - AFTER SPEAKING THE GREETING:
         )
 
     def create_verification_node(self) -> NodeConfig:
-        # Read all fields FLAT from patient_data
-        patient_name = self.patient_data.get('patient_name', '')
-        dob = self.patient_data.get('date_of_birth', '')
-        member_id = self.patient_data.get('insurance_member_id', '')
-        cpt_code = self.patient_data.get('cpt_code', '')
-        provider_npi = self.patient_data.get('provider_npi', '')
-        provider_name = self.patient_data.get('provider_name', '')
-        facility = self.patient_data.get('facility_name', '')
-        insurance_company = self.patient_data.get('insurance_company_name', '')
-        appointment_time = self.patient_data.get('appointment_time', '')
-        patient_id = self.patient_data.get('patient_id')
-        global_instructions = self._get_global_instructions()
+        state = self.flow_manager.state
+        patient_name = state.get("patient_name", "")
+        dob = state.get("date_of_birth", "")
+        member_id = state.get("insurance_member_id", "")
+        cpt_code = state.get("cpt_code", "")
+        provider_npi = state.get("provider_npi", "")
 
         return NodeConfig(
             name="verification",
             role_messages=[{
                 "role": "system",
-                "content": f"""You are Alexandra, a Virtual Assistant from {facility} verifying insurance benefits.
-
-{global_instructions}"""
+                "content": self._get_global_instructions()
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""You are in a conversation with an insurance representative. You just greeted them in the previous step, asking "Can you help me verify eligibility and benefits for a patient?"
+                "content": f"""You just greeted the representative. Now verify eligibility for {patient_name}.
 
-IMPORTANT: You are now in the verification node. The greeting has been spoken. Now WAIT for the representative's response to your question.
+Provide information proactively:
+- "I'm calling about {patient_name}, date of birth {dob}."
+- "The member ID is {member_id}."
+- "We're verifying CPT code {cpt_code}, provider NPI {provider_npi}."
 
-FIRST: ANALYZE THE CONVERSATION CONTEXT AND REPRESENTATIVE'S RESPONSE
-- Review ALL previous messages in the conversation history
-- Look at the MOST RECENT user message - this is the representative's response to your question
-- Understand what they said: Did they say they can help with this request?
-- Remember: YOU are the caller, so YOU should drive the conversation forward AFTER they respond
+Answer their questions from Patient Data. Spell out IDs clearly when asked.
 
-VERIFICATION WORKFLOW - Navigate naturally through these steps:
+Once they confirm coverage status:
+- APPROVED/AUTHORIZED → call record_authorization_status with status "Approved"
+- DENIED/NOT COVERED → call record_authorization_status with status "Denied"
+- PENDING/UNDER REVIEW → call record_authorization_status with status "Pending"
 
-STEP 1: INITIAL ENGAGEMENT (Respond to their greeting response)
-- WAIT for them to respond to your greeting first
-- If they just said "Yes" or "Sure" or acknowledged your greeting → Proactively start providing information: "I'm calling about {patient_name}, date of birth {dob}. I need to verify eligibility for CPT code {cpt_code}."
-- If they asked "How can I help?" or "What do you need?" → Start with patient basics: "I need to verify eligibility for {patient_name}, born {dob}. The member ID is {member_id}."
-- If they asked a specific question → Answer it directly from PATIENT INFORMATION
-- DO NOT ask "What information do you need from me?" - YOU are driving this call
+After recording status, ask: "Could you provide a reference number for this verification?"
+When they provide it → call record_reference_number
 
-STEP 2: PROVIDE INFORMATION PROACTIVELY
-- After initial engagement, continue with remaining key details unless they interrupt:
-  * "The member ID is {member_id}"
-  * "We're verifying CPT code {cpt_code}"
-  * "The provider NPI is {provider_npi}"
-- If they ask for specific information, provide it immediately from PATIENT INFORMATION
-- Spell out IDs and numbers clearly
-- Repeat information as many times as needed
-- If asked for information NOT in PATIENT INFORMATION, say: "I don't have that information available"
-
-STEP 3: VERIFY INSURANCE COVERAGE
-- Once you've provided the information they requested, ask: "Can you confirm if this procedure is covered under their plan?"
-- Listen for their response about coverage/authorization status
-
-STEP 4: RECORD AUTHORIZATION STATUS (First Function Call)
-Use the record_authorization_status function based on their response:
-- If APPROVED/AUTHORIZED/COVERED → Call: record_authorization_status(status="Approved")
-- If DENIED/NOT COVERED → Call: record_authorization_status(status="Denied")
-- If PENDING/UNDER REVIEW → Call: record_authorization_status(status="Pending")
-- This function will record the status and you'll stay in verification node
-
-STEP 5: GET REFERENCE NUMBER (Second Function Call)
-- After recording status, ask: "Could you provide a reference or authorization number for this verification?"
-- Listen for their response with the reference number
-- When they provide it, call: record_reference_number(reference_number="their_response")
-- This function will record the number and automatically transition to confirmation node
-- The confirmation node will speak both status and reference number back to the rep
-
-SUPERVISOR TRANSFER DETECTION:
-- If the representative requests to speak with a supervisor, manager, or real person
-- Examples: "Can I speak to your manager?", "I need to talk to a real person", "Transfer me to a supervisor"
-- Call request_supervisor function
-
-CONVERSATION GUIDELINES:
-- YOU are the caller - be proactive and drive the conversation forward
-- Read the conversation history to understand context before responding
-- Be natural and conversational, not robotic
-- Keep individual responses under 30 words unless providing multiple data points
-- Stay professional and helpful
-- Don't repeat information already provided in greeting unless asked
-- Answer questions directly and clearly from PATIENT INFORMATION"""
+If they ask to speak with a human or manager → call request_staff"""
             }],
             functions=[
                 FlowsFunctionSchema(
@@ -379,11 +199,11 @@ CONVERSATION GUIDELINES:
                     handler=self.record_reference_number
                 ),
                 FlowsFunctionSchema(
-                    name="request_supervisor",
-                    description="Request to speak with a supervisor when representative asks for transfer.",
+                    name="request_staff",
+                    description="Call when representative asks to speak with a human or manager.",
                     properties={},
                     required=[],
-                    handler=self._request_supervisor_handler
+                    handler=self._request_staff_handler
                 )
             ],
             respond_immediately=False,
@@ -393,129 +213,103 @@ CONVERSATION GUIDELINES:
             }]
         )
 
-    def create_supervisor_confirmation_node(self) -> NodeConfig:
-        facility = self.patient_data.get('facility_name')
-        global_instructions = self._get_global_instructions()
-
+    def create_staff_confirmation_node(self) -> NodeConfig:
         return NodeConfig(
-            name="supervisor_confirmation",
+            name="staff_confirmation",
             role_messages=[{
                 "role": "system",
-                "content": f"""You are Alexandra, a Virtual Assistant from {facility}.
-
-{global_instructions}"""
+                "content": self._get_global_instructions()
             }],
             task_messages=[{
                 "role": "system",
-                "content": """The representative has requested to speak with a supervisor.
+                "content": """You just asked if they'd like to speak with your manager.
 
-1. Ask: "Would you like to speak with my supervisor?"
-2. Wait for their response
-
-IF THEY CONFIRM (yes, sure, please):
-   - Call dial_supervisor() function
-   - The function will handle the transfer and goodbye message
-
-IF THEY DECLINE (no, nevermind):
-   - Say: "No problem, let's continue."
-   - Call return_to_verification()"""
+- If yes/sure/please/okay → call dial_staff
+- If no/nevermind/continue → call return_to_verification"""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="dial_supervisor",
-                    description="Execute supervisor transfer via SIP call transfer.",
+                    name="dial_staff",
+                    description="Transfer to manager when they confirm.",
                     properties={},
                     required=[],
-                    handler=self._dial_supervisor_handler
+                    handler=self._dial_staff_handler
                 ),
                 FlowsFunctionSchema(
                     name="return_to_verification",
-                    description="Return to verification node from supervisor confirmation.",
+                    description="Return to verification if they decline transfer.",
                     properties={},
                     required=[],
                     handler=self._return_to_verification_handler
                 )
             ],
-            respond_immediately=True
+            respond_immediately=False,
+            pre_actions=[{
+                "type": "tts_say",
+                "text": "Would you like to speak with my manager?"
+            }]
+        )
+
+    def create_transfer_initiated_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="transfer_initiated",
+            task_messages=[],
+            functions=[],
+            pre_actions=[{
+                "type": "tts_say",
+                "text": "Transferring you now, please hold."
+            }],
+            post_actions=[{
+                "type": "end_conversation"
+            }]
+        )
+
+    def create_transfer_failed_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="transfer_failed",
+            role_messages=[{
+                "role": "system",
+                "content": self._get_global_instructions()
+            }],
+            task_messages=[{
+                "role": "system",
+                "content": "The transfer failed. Apologize and continue helping them."
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="continue_verification",
+                    description="Continue with verification after failed transfer.",
+                    properties={},
+                    required=[],
+                    handler=self._return_to_verification_handler
+                )
+            ],
+            respond_immediately=False,
+            pre_actions=[{
+                "type": "tts_say",
+                "text": "I apologize, the transfer didn't go through."
+            }]
         )
 
     def create_authorization_confirmation_node(self) -> NodeConfig:
-        """Node for confirming authorization, then checking if rep needs anything else before ending call.
-
-        This node combines confirmation and closing logic into a single interaction.
-
-        IMPORTANT: This node reads from self.patient_data which has been updated with
-        database-verified values by record_reference_number(). The values spoken back
-        to the representative are guaranteed to match what's persisted in MongoDB.
-
-        After confirming the recorded information, it asks if the rep needs anything else,
-        then either ends the call or returns to verification based on their response.
-        """
-        facility = self.patient_data.get('facility_name')
-        global_instructions = self._get_global_instructions()
-
-        # Get the database-verified values (updated by record_reference_number)
-        status = self.patient_data.get('prior_auth_status', 'Unknown')
-        ref_number = self.patient_data.get('reference_number', '')
-
-        # Format reference number for speech with proper pronunciation tags
-        ref_number_speech = self._format_reference_number(ref_number) if ref_number else ""
+        state = self.flow_manager.state
+        status = state.get("prior_auth_status", "Unknown")
+        ref_number = state.get("reference_number", "")
 
         return NodeConfig(
             name="authorization_confirmation",
             role_messages=[{
                 "role": "system",
-                "content": f"""You are Alexandra, a Virtual Assistant from {facility}.
-
-{global_instructions}"""
+                "content": self._get_global_instructions()
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""You just recorded the authorization information in the database. Now confirm it back to the representative and wrap up the call.
+                "content": f"""Confirm the recorded information:
+"I have that recorded. The authorization status is {status}, reference number {ref_number}. Is there anything else I can help with?"
 
-RECORDED INFORMATION:
-- Authorization Status: {status}
-- Reference Number: {ref_number}
-
-PRONUNCIATION FOR REFERENCE NUMBER:
-- Use this formatted version when speaking: {ref_number_speech}
-
-WORKFLOW:
-
-STEP 1 - FIRST RESPONSE (upon entering this node):
-Confirm the recorded information clearly:
-"Perfect, I have that recorded. The authorization status is {status}, and the reference number is [speak the formatted version]. Is there anything else I can help you with?"
-
-STEP 2 - EVALUATE THEIR RESPONSE:
-
-A. IF THEY SAY NO / ALL SET / NOTHING ELSE / THAT'S ALL:
-   - Say: "Great! Have a wonderful day. Goodbye!"
-   - Immediately call: end_call()
-
-B. IF THEY ASK TO REPEAT/VERIFY INFORMATION:
-   Examples:
-   - "Can you repeat the reference number?"
-   - "What was the member ID again?"
-   - "Can you spell that reference number?"
-
-   Action: Answer their question directly using exact values from PATIENT INFORMATION section.
-   Then ask: "Anything else I can help with?"
-   Wait for response and repeat Step 2.
-
-C. IF THEY HAVE COMPLEX QUESTIONS OR NEED MORE VERIFICATION:
-   Examples:
-   - "I need to verify another procedure"
-   - "Can we go through the information again?"
-
-   Action: Call return_to_verification() to handle detailed interaction
-
-CRITICAL RULES:
-- Use the formatted reference number version for clear pronunciation
-- Keep individual responses under 20 words
-- Stay professional and helpful
-- You can answer questions about ANY patient information at ANY time
-- Only say goodbye and end call when they confirm nothing else needed
-- After saying goodbye, immediately call end_call()"""
+- If no/all set → say "Great! Have a wonderful day. Goodbye!" then call end_call
+- If they ask to repeat info → answer from Patient Data, then ask again
+- If they need more verification → call return_to_verification"""
             }],
             functions=[
                 FlowsFunctionSchema(
@@ -548,343 +342,119 @@ CRITICAL RULES:
         logger.info("✅ LLM: classifier (fast greeting)")
 
     async def _switch_to_main_llm(self, action: dict, flow_manager: FlowManager):
-        """Pre-action: Switch to main_llm before node starts.
-
-        Used by verification node to enable function calling capabilities.
-        """
         await self.context_aggregator.assistant().push_frame(
             ManuallySwitchServiceFrame(service=self.main_llm),
             FrameDirection.UPSTREAM
         )
         logger.info("✅ LLM: main (function calling)")
 
-    async def _auto_transition_to_verification(self, action: dict, flow_manager: FlowManager):
-        """Post-action: Automatically transition to verification node after greeting is spoken.
-
-        This post_action runs after the greeting node's LLM has finished speaking.
-        It transitions the flow to the verification node, which will then wait for
-        the user's response before the LLM generates any output.
-        """
-        logger.info("✅ Flow: greeting → verification (auto-transition after greeting spoken)")
-        await flow_manager.set_node_from_config(self.create_verification_node())
-
-    async def _proceed_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
-        """
-        Handler for proceed_to_verification function.
-
-        This function moves the conversation forward after the initial greeting,
-        transitioning to the verification node where patient information collection begins.
-
-        Args:
-            args: Function arguments (may be None/empty dict).
-            flow_manager: The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[None, NodeConfig]: Returns (None, verification_node_config).
-        """
-        logger.info("✅ Flow: greeting → verification")
+    async def _proceed_to_verification_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, "NodeConfig"]:
+        logger.info("Flow: greeting → verification")
         return None, self.create_verification_node()
 
     async def record_authorization_status(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, None]:
-        """
-        Record authorization status with database round-trip verification (step 1 of 2-step workflow).
-
-        This function:
-        1. Writes the authorization status to MongoDB
-        2. Immediately reads back from database to verify persistence
-        3. Updates in-memory patient_data with verified database values
-
-        This ensures we only confirm data that's actually persisted in the database.
-
-        Args:
-            args (Dict[str, Any]): Function arguments containing 'status' key.
-            flow_manager (FlowManager): The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[str, None]: Returns (result_message, None).
-                - str: Confirmation message for LLM context (e.g., "Recorded status: Approved").
-                - None: Stays in current verification node to collect reference number.
-        """
         try:
-            status = args['status']
-            patient_id = self.patient_data.get('patient_id')
-            if not patient_id:
-                logger.error("❌ No patient_id found in patient_data")
-                return "Error: No patient ID available", None
+            status = args["status"]
+            patient_id = flow_manager.state.get("patient_id")
+            flow_manager.state["prior_auth_status"] = status
 
-            db = get_async_patient_db()
+            if patient_id:
+                db = get_async_patient_db()
+                await db.update_field(patient_id, "prior_auth_status", status, self.organization_id)
 
-            # STEP 1: Write to database using update_field (flat field)
-            await db.update_field(patient_id, 'prior_auth_status', status, self.organization_id)
-            logger.info(f"✅ Wrote authorization status to database: {status}")
-
-            # STEP 2: Read back from database to verify
-            patient_doc = await db.find_patient_by_id(patient_id, self.organization_id)
-
-            if not patient_doc:
-                logger.error(f"❌ Failed to read patient {patient_id} from database after write")
-                return "Error: Could not verify saved data", None
-
-            # STEP 3: Extract verified values from database (flat field)
-            db_status = patient_doc.get('prior_auth_status')
-
-            if db_status != status:
-                logger.error(f"❌ Database mismatch! Wrote '{status}' but read back '{db_status}'")
-                return f"Error: Database verification failed", None
-
-            # STEP 4: Update in-memory data with verified database values (flat)
-            self.patient_data['prior_auth_status'] = db_status
-
-            logger.info(f"✅ Verified authorization status from database: {db_status}")
-            return f"Recorded and verified status: {db_status}. Now ask for reference number.", None
-
+            return f"Recorded status: {status}. Now ask for reference number.", None
         except Exception as e:
-            import traceback
-            logger.error(f"❌ Failed to record authorization status: {traceback.format_exc()}")
+            logger.error(f"Failed to record authorization status: {e}")
             return f"Error recording status: {str(e)}", None
 
     async def record_reference_number(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, 'NodeConfig']:
-        """
-        Record reference number with database round-trip verification (step 2 of 2-step workflow).
-
-        This function:
-        1. Writes the reference number to MongoDB
-        2. Immediately reads back from database to verify persistence
-        3. Updates in-memory patient_data with BOTH verified status and reference number
-        4. Transitions to authorization_confirmation node
-
-        This ensures the confirmation node speaks ONLY data that's verified in the database.
-
-        Args:
-            args (Dict[str, Any]): Function arguments containing 'reference_number' key.
-            flow_manager (FlowManager): The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[str, NodeConfig]: Returns (result_message, next_node).
-                - str: Confirmation message for LLM context.
-                - NodeConfig: authorization_confirmation node for confirming verified data to rep.
-        """
+    ) -> tuple[str, "NodeConfig"]:
         try:
-            reference_number = args['reference_number']
-            patient_id = self.patient_data.get('patient_id')
-            if not patient_id:
-                logger.error("❌ No patient_id found in patient_data")
-                return "Error: No patient ID available", None
+            reference_number = args["reference_number"]
+            patient_id = flow_manager.state.get("patient_id")
+            flow_manager.state["reference_number"] = reference_number
 
-            db = get_async_patient_db()
-
-            # STEP 1: Write to database using update_field (flat field)
-            await db.update_field(patient_id, 'reference_number', reference_number, self.organization_id)
-            logger.info(f"✅ Wrote reference number to database: {reference_number}")
-
-            # STEP 2: Read back from database to verify BOTH status and reference number
-            patient_doc = await db.find_patient_by_id(patient_id, self.organization_id)
-
-            if not patient_doc:
-                logger.error(f"❌ Failed to read patient {patient_id} from database after write")
-                return "Error: Could not verify saved data", None
-
-            # STEP 3: Extract BOTH verified values from database (flat fields)
-            db_status = patient_doc.get('prior_auth_status', 'Unknown')
-            db_ref_number = patient_doc.get('reference_number', '')
-
-            if db_ref_number != reference_number:
-                logger.error(f"❌ Database mismatch! Wrote '{reference_number}' but read back '{db_ref_number}'")
-                return f"Error: Database verification failed", None
-
-            # STEP 4: Update in-memory data with BOTH verified database values (flat)
-            self.patient_data['prior_auth_status'] = db_status
-            self.patient_data['reference_number'] = db_ref_number
-
-            logger.info(f"✅ Verified from database - Status: {db_status}, Reference: {db_ref_number}")
-            logger.info("✅ Flow: verification → authorization_confirmation")
-
-            # Transition to confirmation node with verified data
-            return "Recorded and verified all authorization data", self.create_authorization_confirmation_node()
-
-        except Exception as e:
-            import traceback
-            logger.error(f"❌ Failed to record reference number: {traceback.format_exc()}")
-            return f"Error recording reference number: {str(e)}", None
-
-    async def _request_supervisor_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
-        """
-        Handler for request_supervisor function.
-
-        This function transitions the conversation to the supervisor confirmation node,
-        where the LLM will confirm the transfer request before executing it.
-
-        Args:
-            args: Function arguments (may be None/empty dict).
-            flow_manager: The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[None, NodeConfig]: Returns (None, supervisor_confirmation_node_config).
-        """
-        logger.info("✅ Flow: verification → supervisor_confirmation")
-        return None, self.create_supervisor_confirmation_node()
-
-    async def _dial_supervisor_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, None]:
-        """
-        Handler for dial_supervisor function.
-
-        This function performs a cold transfer to the configured supervisor phone number.
-        It validates the phone format, speaks a goodbye message, then initiates the SIP
-        transfer. The bot will exit when the supervisor answers.
-
-        Args:
-            args: Function arguments (may be None/empty dict).
-            flow_manager: The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[str, None]: Returns (result_message, None).
-        """
-        supervisor_phone = self.patient_data.get("supervisor_phone")
-
-        if not supervisor_phone:
-            error_msg = {
-                "role": "system",
-                "content": "I apologize, I don't have a supervisor number available. Let's continue with the verification."
-            }
-            await self.context_aggregator.assistant().push_frame(
-                LLMMessagesAppendFrame([error_msg], run_llm=True)
-            )
-            return "No supervisor available", None
-
-        import re
-        if not re.match(r'^\+\d{10,15}$', supervisor_phone):
-            logger.error(f"❌ Invalid supervisor phone format: {supervisor_phone}")
-            error_msg = {
-                "role": "system",
-                "content": "I apologize, the supervisor phone number is not configured correctly. Let's continue."
-            }
-            await self.context_aggregator.assistant().push_frame(
-                LLMMessagesAppendFrame([error_msg], run_llm=True)
-            )
-            return "Invalid phone format", None
-
-        try:
-            # Update patient status
-            patient_id = self.patient_data.get('patient_id')
             if patient_id:
                 db = get_async_patient_db()
-                await db.update_call_status(patient_id, 'Supervisor Requested', self.organization_id)
+                await db.update_field(patient_id, "reference_number", reference_number, self.organization_id)
 
-            # Add to transcript
-            if self.pipeline and hasattr(self.pipeline, 'transcripts'):
-                from datetime import datetime
-                self.pipeline.transcripts.append({
-                    "role": "system",
-                    "content": "Supervisor Transfer Initiated",
-                    "timestamp": datetime.now().isoformat(),
-                    "type": "system_event"
-                })
+            return "Recorded reference number", self.create_authorization_confirmation_node()
+        except Exception as e:
+            logger.error(f"Failed to record reference number: {e}")
+            return f"Error recording reference number: {str(e)}", None
 
-            # Speak goodbye BEFORE transferring (critical for cold transfer)
-            goodbye_msg = {
-                "role": "system",
-                "content": "I'm transferring you to my supervisor now. Please hold while I connect you. Goodbye."
-            }
-            await self.context_aggregator.assistant().push_frame(
-                LLMMessagesAppendFrame([goodbye_msg], run_llm=True)
-            )
+    async def _request_staff_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, "NodeConfig"]:
+        logger.info("Flow: verification → staff_confirmation")
+        return None, self.create_staff_confirmation_node()
 
-            # Set transfer flag before initiating transfer
+    async def _dial_staff_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, "NodeConfig"]:
+        staff_number = self.cold_transfer_config.get("staff_number")
+
+        if not staff_number:
+            logger.warning("Cold transfer requested but no staff_number configured")
+            return None, self.create_transfer_failed_node()
+
+        try:
+            logger.info(f"Cold transfer initiated to: {staff_number}")
+
             if self.pipeline:
                 self.pipeline.transfer_in_progress = True
 
-            # Initiate SIP transfer (asynchronous - happens after goodbye completes)
             if self.transport:
-                transfer_params = {"toEndPoint": supervisor_phone}
-                await self.transport.sip_call_transfer(transfer_params)
-                logger.info(f"✅ Supervisor transfer initiated: {supervisor_phone}")
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                logger.info(f"SIP call transfer initiated: {staff_number}")
 
-            # Note: Bot will exit when supervisor answers (via on_dialout_answered handler)
-            # The handler will use EndFrame for graceful termination after saving transcript
-            return "Transfer initiated", None
+            return None, self.create_transfer_initiated_node()
 
         except Exception as e:
             import traceback
-            logger.error(f"❌ Transfer failed: {traceback.format_exc()}")
+            logger.error(f"Cold transfer failed: {traceback.format_exc()}")
+
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False
 
-            error_msg = {
-                "role": "system",
-                "content": "I apologize, the transfer failed. Let's continue with the verification."
-            }
-            await self.context_aggregator.assistant().push_frame(
-                LLMMessagesAppendFrame([error_msg], run_llm=True)
-            )
-            return "Transfer failed", None
+            return None, self.create_transfer_failed_node()
 
-    async def _return_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, 'NodeConfig']:
-        """
-        Handler for return_to_verification function.
-
-        This function allows the conversation to loop back to the verification node,
-        useful when the representative indicates they need to provide more information
-        after reaching the closing node.
-
-        Args:
-            args: Function arguments (may be None/empty dict).
-            flow_manager: The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[None, NodeConfig]: Returns (None, verification_node_config).
-        """
-        logger.info("✅ Flow: returning to verification")
+    async def _return_to_verification_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, "NodeConfig"]:
+        logger.info("Flow: returning to verification")
         return None, self.create_verification_node()
 
-    async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:
-        """
-        Handler for end_call function.
-
-        This function gracefully ends the call by:
-        1. Saving the transcript to database
-        2. Updating database status to 'Completed'
-        3. Pushing EndTaskFrame upstream to terminate after goodbye message completes
-
-        Args:
-            args: Function arguments (may be None/empty dict).
-            flow_manager: The flow manager instance controlling conversation flow.
-
-        Returns:
-            tuple[None, None]: Returns (None, None).
-        """
+    async def _end_call_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, None]:
         from pipecat.frames.frames import EndTaskFrame
         from pipecat.processors.frame_processor import FrameDirection
 
-        logger.info("✅ Call ended by flow - graceful termination")
+        logger.info("Call ended by flow")
 
         try:
-            # CRITICAL: Save transcript BEFORE termination
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
-                logger.info("✅ Transcript saved before termination")
+                logger.info("Transcript saved")
 
-            # Update database status AFTER transcript save
-            patient_id = self.patient_data.get('patient_id')
+            patient_id = flow_manager.state.get("patient_id")
             if patient_id:
                 db = get_async_patient_db()
                 await db.update_call_status(patient_id, "Completed", self.organization_id)
-                logger.info("✅ Database status updated: Completed")
+                logger.info("Database: call_status = Completed")
 
-            # Push EndTaskFrame upstream for graceful shutdown
-            # This allows the goodbye message to complete before termination
             if self.context_aggregator:
                 await self.context_aggregator.assistant().push_frame(
-                    EndTaskFrame(),
-                    FrameDirection.UPSTREAM
+                    EndTaskFrame(), FrameDirection.UPSTREAM
                 )
-                logger.info("✅ EndTaskFrame pushed - pipeline will terminate after goodbye message")
 
         except Exception as e:
-            import traceback
-            logger.error(f"❌ Error in end_call_handler: {traceback.format_exc()}")
+            logger.error(f"Error in end_call_handler: {e}")
 
         return None, None

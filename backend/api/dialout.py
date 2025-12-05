@@ -1,16 +1,10 @@
 import os
 import logging
 import traceback
-import asyncio
 import uuid
-import datetime
-import aiohttp
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from slowapi import Limiter
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from pipecatcloud.session import Session, SessionParams
-from pipecatcloud.exception import AgentStartError
 
 from backend.dependencies import (
     get_current_user,
@@ -27,7 +21,8 @@ from backend.schemas import CallRequest
 from backend.server_utils import (
     BotRequest,
     create_daily_room,
-    start_bot_local
+    start_bot_local,
+    start_bot_production
 )
 from backend.utils import convert_objectid
 from backend.constants import SessionStatus
@@ -36,7 +31,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
-PIPECAT_TIMEOUT_SECONDS = int(os.getenv("PIPECAT_TIMEOUT_SECONDS", "90"))
 ENV = os.getenv("ENV", "local")
 
 
@@ -46,19 +40,6 @@ class CallResponse(BaseModel):
     room_name: str
     room_url: str
     message: str
-
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type((ConnectionError, TimeoutError)),
-    reraise=True
-)
-async def start_pipecat_session_with_retry(session: Session) -> dict:
-    return await asyncio.wait_for(
-        session.start(),
-        timeout=PIPECAT_TIMEOUT_SECONDS
-    )
 
 
 @router.post("/start-call")
@@ -126,158 +107,54 @@ async def start_call(
 
         logger.info(f"Starting bot session in {ENV.upper()} mode...")
 
+        http_session = request.app.state.http_session
         try:
+            daily_config = await create_daily_room(phone_number, http_session)
+            room_url = daily_config.room_url
+            token = daily_config.token
+            logger.info(f"Daily room created: {room_url}")
+
+            bot_request = BotRequest(
+                room_url=room_url,
+                token=token,
+                session_id=session_id,
+                patient_id=call_request.patient_id,
+                patient_data=patient,
+                phone_number=phone_number,
+                client_name=call_request.client_name,
+                organization_id=str(org_id),
+                organization_slug=org.get("slug")
+            )
+
             if ENV == "production":
-                logger.info("Using PRODUCTION mode - Pipecat Cloud")
-
-                agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
-                pipecat_api_key = os.getenv("PIPECAT_API_KEY")
-
-                if not pipecat_api_key:
-                    raise HTTPException(status_code=500, detail="PIPECAT_API_KEY not configured")
-
-                pipecat_session = Session(
-                    agent_name=agent_name,
-                    api_key=pipecat_api_key,
-                    params=SessionParams(
-                        use_daily=True,
-                        daily_room_properties={
-                            "enable_dialout": True,
-                            "enable_chat": False,
-                            "enable_screenshare": False,
-                            "enable_recording": "cloud",
-                            "exp": int(datetime.datetime.now().timestamp()) + 3600
-                        },
-                        data={
-                            "session_id": session_id,
-                            "patient_id": call_request.patient_id,
-                            "patient_data": patient,
-                            "phone_number": phone_number,
-                            "client_name": call_request.client_name,
-                            "organization_id": str(org_id),
-                            "organization_slug": org.get("slug")
-                        }
-                    )
-                )
-
-                # Start bot with retry
-                response = await start_pipecat_session_with_retry(pipecat_session)
-                room_url = response.get("dailyRoom")
-                token = response.get("dailyToken")
-
-                logger.info(f"✅ Bot started via Pipecat Cloud")
-                logger.info(f"Room: {room_url}")
-
+                await start_bot_production(bot_request, http_session)
             else:
-                logger.info("Using LOCAL mode - local bot server")
+                await start_bot_local(bot_request, http_session)
 
-                async with aiohttp.ClientSession() as http_session:
-                    daily_config = await create_daily_room(phone_number, http_session)
-
-                room_url = daily_config.room_url
-                token = daily_config.token
-
-                logger.info(f"✅ Daily room created: {room_url}")
-
-                bot_request = BotRequest(
-                    room_url=room_url,
-                    token=token,
-                    session_id=session_id,
-                    patient_id=call_request.patient_id,
-                    patient_data=patient,
-                    phone_number=phone_number,
-                    client_name=call_request.client_name,
-                    organization_id=str(org_id),
-                    organization_slug=org.get("slug")
-                )
-
-                async with aiohttp.ClientSession() as http_session:
-                    await start_bot_local(bot_request, http_session)
-
-                logger.info(f"✅ Bot started via local server")
+            logger.info(f"Bot started successfully in {ENV.upper()} mode")
 
             await session_db.update_session(session_id, {
                 "room_url": room_url,
                 "status": SessionStatus.RUNNING.value
             })
 
-        except AgentStartError as e:
-            error_msg = str(e).lower()
-            logger.error(f"Pipecat Cloud start error: {e}")
-
-            if any(keyword in error_msg for keyword in ["daily", "room", "telephony", "dialout"]):
-                await session_db.update_session(session_id, {
-                    "status": SessionStatus.FAILED.value,
-                    "error": f"Telephony service error: {e}",
-                    "error_type": "daily_service"
-                })
-                raise HTTPException(
-                    status_code=503,
-                    detail="Telephony service temporarily unavailable. Please try again in a few moments."
-                )
-            elif any(keyword in error_msg for keyword in ["timeout", "timed out"]):
-                await session_db.update_session(session_id, {
-                    "status": SessionStatus.FAILED.value,
-                    "error": f"Bot startup timeout: {e}",
-                    "error_type": "timeout"
-                })
-                raise HTTPException(
-                    status_code=504,
-                    detail="Bot startup took too long. Our team has been notified. Please try again."
-                )
-            elif any(keyword in error_msg for keyword in ["authentication", "api key", "unauthorized"]):
-                logger.critical(f"CRITICAL: API credentials may be invalid - {e}")
-                await session_db.update_session(session_id, {
-                    "status": SessionStatus.FAILED.value,
-                    "error": f"Authentication error: {e}",
-                    "error_type": "auth"
-                })
-                raise HTTPException(
-                    status_code=500,
-                    detail="Service configuration error. Our team has been notified."
-                )
-            else:
-                await session_db.update_session(session_id, {
-                    "status": SessionStatus.FAILED.value,
-                    "error": f"Bot start error: {e}",
-                    "error_type": "pipecat_generic"
-                })
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to start call. Please try again or contact support."
-                )
-
-        except asyncio.TimeoutError:
-            logger.error(f"Pipecat session start timed out after {PIPECAT_TIMEOUT_SECONDS}s")
-            await session_db.update_session(session_id, {
-                "status": SessionStatus.FAILED.value,
-                "error": f"Session start timeout after {PIPECAT_TIMEOUT_SECONDS}s",
-                "error_type": "timeout"
-            })
-            raise HTTPException(
-                status_code=504,
-                detail=f"Call setup timed out after {PIPECAT_TIMEOUT_SECONDS} seconds. Please try again."
-            )
-
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error starting call: {e}")
+            logger.error(f"Error starting bot: {e}")
             logger.error(traceback.format_exc())
             await session_db.update_session(session_id, {
                 "status": SessionStatus.FAILED.value,
-                "error": str(e),
-                "error_type": "unexpected"
+                "error": str(e)
             })
-            raise HTTPException(
-                status_code=500,
-                detail="An unexpected error occurred. Our team has been notified."
-            )
+            raise HTTPException(status_code=500, detail=f"Failed to start call: {str(e)}")
 
         return CallResponse(
             status="initiated",
             session_id=session_id,
             room_name=f"call_{session_id}",
             room_url=room_url,
-            message="Call session initiated via Pipecat Cloud"
+            message=f"Call session initiated ({ENV} mode)"
         )
 
     except HTTPException:
