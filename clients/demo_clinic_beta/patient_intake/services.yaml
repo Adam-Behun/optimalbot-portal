@@ -36,5 +36,5 @@ services:
     audio_in_sample_rate: 16000
     audio_out_sample_rate: 24000
 
-warm_transfer:
-  staff_number: "+15165667132"
+cold_transfer:
+  staff_number: "+15165668219"

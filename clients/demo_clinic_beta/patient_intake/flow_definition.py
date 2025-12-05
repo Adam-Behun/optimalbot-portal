@@ -1,16 +1,13 @@
-import asyncio
 import logging
 import os
 from typing import Any, Dict
 
 from openai import AsyncOpenAI
 from pipecat_flows import (
-    ContextStrategyConfig,
     FlowManager,
     FlowsFunctionSchema,
     NodeConfig,
 )
-from pipecat_flows.types import ContextStrategy
 
 from backend.models import get_async_patient_db
 from backend.utils import parse_natural_date, parse_natural_time
@@ -110,7 +107,7 @@ class PatientIntakeFlow:
         transport=None,
         pipeline=None,
         organization_id: str = None,
-        warm_transfer_config: Dict[str, Any] = None,
+        cold_transfer_config: Dict[str, Any] = None,
     ):
         self.patient_data = patient_data
         self.flow_manager = flow_manager
@@ -120,7 +117,7 @@ class PatientIntakeFlow:
         self.pipeline = pipeline
         self.organization_id = organization_id
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Beta")
-        self.warm_transfer_config = warm_transfer_config or {}
+        self.cold_transfer_config = cold_transfer_config or {}
 
     def _get_global_instructions(self) -> str:
         """Global behavioral rules for patient interactions."""
@@ -170,7 +167,6 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     "content": """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
 - "new", "first time", "never been" → call set_new_patient
 - "returning", "been here before", "existing" → call set_returning_patient
-- If frustrated or asks for human → call request_staff
 - Unclear → ask again before calling any function""",
                 }
             ],
@@ -199,13 +195,7 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     required=["first_name"],
                     handler=self._set_returning_patient_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="request_staff",
-                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
-                    properties={},
-                    required=[],
-                    handler=self._request_staff_handler,
-                ),
+                self._get_request_staff_function(),
             ],
             respond_immediately=False,
             pre_actions=[
@@ -222,8 +212,7 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                 {
                     "role": "system",
                     "content": f"""Patient is {appointment_type}. Ask: "What brings you in today?"
-Once they explain, call save_visit_reason with brief summary.
-If frustrated or asks for human → call request_staff""",
+Once they explain, call save_visit_reason with brief summary.""",
                 }
             ],
             functions=[
@@ -239,13 +228,7 @@ If frustrated or asks for human → call request_staff""",
                     required=["reason"],
                     handler=self._save_visit_reason_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="request_staff",
-                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
-                    properties={},
-                    required=[],
-                    handler=self._request_staff_handler,
-                ),
+                self._get_request_staff_function(),
             ],
             respond_immediately=True,
         )
@@ -269,8 +252,7 @@ If frustrated or asks for human → call request_staff""",
                 {
                     "role": "system",
                     "content": f"""Offer these available slots: {', '.join(available_slots)}.
-Once they pick one, call schedule_appointment with the date and time.
-If frustrated or asks for human → call request_staff""",
+Once they pick one, call schedule_appointment with the date and time.""",
                 }
             ],
             functions=[
@@ -290,13 +272,7 @@ If frustrated or asks for human → call request_staff""",
                     required=["appointment_date", "appointment_time"],
                     handler=self._schedule_appointment_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="request_staff",
-                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
-                    properties={},
-                    required=[],
-                    handler=self._request_staff_handler,
-                ),
+                self._get_request_staff_function(),
             ],
             respond_immediately=True,
         )
@@ -327,8 +303,7 @@ If frustrated or asks for human → call request_staff""",
 
 Acknowledge briefly: "Got it." When ALL 5 collected, call save_patient_info.
 
-If unclear or incomplete, ask to repeat. Don't guess.
-If frustrated or asks for human → call request_staff""",
+If unclear or incomplete, ask to repeat. Don't guess.""",
                 }
             ],
             functions=[
@@ -360,13 +335,7 @@ If frustrated or asks for human → call request_staff""",
                     required=["first_name", "last_name", "phone_number", "date_of_birth", "email"],
                     handler=self._save_patient_info_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="request_staff",
-                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
-                    properties={},
-                    required=[],
-                    handler=self._request_staff_handler,
-                ),
+                self._get_request_staff_function(),
             ],
             respond_immediately=True,
         )
@@ -382,7 +351,6 @@ If frustrated or asks for human → call request_staff""",
                     "content": f"""Confirm: "{state.get('first_name', '')}, your appointment is {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. Confirmation email to {state.get('email', '')}. Anything else?"
 - If no/goodbye → call end_call
 - If they want to correct something → call correct_info
-- If frustrated or asks for human → call request_staff
 - If question → answer, then ask again""",
                 }
             ],
@@ -404,52 +372,13 @@ If frustrated or asks for human → call request_staff""",
                     handler=self._correct_info_handler,
                 ),
                 FlowsFunctionSchema(
-                    name="request_staff",
-                    description="Patient is frustrated or explicitly asks to speak with a human/staff member.",
-                    properties={},
-                    required=[],
-                    handler=self._request_staff_handler,
-                ),
-                FlowsFunctionSchema(
                     name="end_call",
                     description="Patient confirms details and has no more questions - end with friendly goodbye.",
                     properties={},
                     required=[],
                     handler=self._end_call_handler,
                 ),
-            ],
-            respond_immediately=True,
-        )
-
-    def create_confirm_transfer_node(self) -> NodeConfig:
-        """Ask user to confirm they want to speak with a manager before transferring."""
-        return NodeConfig(
-            name="confirm_transfer",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": """The patient seems hesitant or has asked about speaking with someone else.
-Ask warmly: "Would you like me to connect you with my manager?"
-- If they confirm (yes, please, sure) → call confirm_transfer
-- If they decline (no, nevermind, I'm fine) → call cancel_transfer
-- If unclear → ask again to clarify""",
-                }
-            ],
-            functions=[
-                FlowsFunctionSchema(
-                    name="confirm_transfer",
-                    description="Patient confirmed they want to speak with a manager.",
-                    properties={},
-                    required=[],
-                    handler=self._confirm_transfer_handler,
-                ),
-                FlowsFunctionSchema(
-                    name="cancel_transfer",
-                    description="Patient declined the transfer, wants to continue with the bot.",
-                    properties={},
-                    required=[],
-                    handler=self._cancel_transfer_handler,
-                ),
+                self._get_request_staff_function(),
             ],
             respond_immediately=True,
         )
@@ -465,89 +394,6 @@ Ask warmly: "Would you like me to connect you with my manager?"
             ],
             functions=[],
             post_actions=[{"type": "end_conversation"}],
-        )
-
-    # ========== Warm Transfer Nodes ==========
-
-    def create_transferring_to_staff_node(self) -> NodeConfig:
-        """Transfer node - uses tts_say for immediate response, then mutes caller and dials staff."""
-        return NodeConfig(
-            name="transferring_to_staff",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": "Wait silently. The patient is on hold and cannot hear you.",
-                }
-            ],
-            functions=[],
-            pre_actions=[
-                # Immediate TTS - no LLM delay
-                {"type": "tts_say", "text": "I understand. Let me connect you with my manager. Please hold for just a moment."},
-                {"type": "function", "handler": self._mute_caller},
-                {"type": "function", "handler": self._dial_office_staff},
-            ],
-            post_actions=[],
-        )
-
-    def create_staff_briefing_node(self) -> NodeConfig:
-        state = self.flow_manager.state
-        first_name = state.get("first_name", "Unknown")
-        last_name = state.get("last_name", "")
-        reason = state.get("appointment_reason", "Not specified")
-        appt_date = state.get("appointment_date", "None")
-        appt_time = state.get("appointment_time", "")
-
-        return NodeConfig(
-            name="staff_briefing",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": f"""You're now speaking to office staff. The patient cannot hear you.
-
-Briefly explain:
-- Patient: {first_name} {last_name}
-- Visit reason: {reason}
-- Appointment: {appt_date} at {appt_time}
-- Why transfer: Patient requested to speak with a person.
-
-Ask if they're ready to be connected. When they confirm, call connect_to_patient.""",
-                }
-            ],
-            context_strategy=ContextStrategyConfig(
-                strategy=ContextStrategy.RESET_WITH_SUMMARY,
-                summary_prompt="Briefly summarize: patient name (if known), visit reason (if mentioned), and that they asked to speak with staff. If little info was collected, just say 'Patient requested to speak with staff early in the call.'",
-            ),
-            functions=[
-                FlowsFunctionSchema(
-                    name="connect_to_patient",
-                    description="Staff is ready - connect them to the waiting patient.",
-                    properties={},
-                    required=[],
-                    handler=self._connect_staff_to_patient_handler,
-                )
-            ],
-            respond_immediately=True,
-        )
-
-    def create_warm_transfer_complete_node(self) -> NodeConfig:
-        """Final node - connects caller and staff, then bot exits."""
-        return NodeConfig(
-            name="warm_transfer_complete",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": "Wait silently. The transfer is in progress.",
-                }
-            ],
-            functions=[],
-            pre_actions=[
-                # Immediate TTS - no LLM delay
-                {"type": "tts_say", "text": "Connecting you now. Goodbye!"},
-            ],
-            post_actions=[
-                {"type": "function", "handler": self._connect_and_exit},
-                {"type": "end_conversation"},
-            ],
         )
 
     # ========== Function Handlers ==========
@@ -729,117 +575,47 @@ Ask if they're ready to be connected. When they confirm, call connect_to_patient
 
         return None, self._create_end_node()
 
-    # ========== Warm Transfer Handlers ==========
-
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, NodeConfig]:
-        """Patient expressed interest in speaking with staff - ask for confirmation first."""
-        # Store the current node so we can return if they decline
-        flow_manager.state["previous_node_before_transfer"] = flow_manager.current_node
-        logger.info(f"Flow: Patient may want staff - asking for confirmation (from {flow_manager.current_node})")
-        return None, self.create_confirm_transfer_node()
+    ) -> tuple[str, None]:
+        """Cold transfer to staff - bot exits after transfer completes."""
+        staff_number = self.cold_transfer_config.get("staff_number")
 
-    async def _confirm_transfer_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, NodeConfig]:
-        """Patient confirmed they want to speak with manager - initiate warm transfer."""
-        logger.info("Flow: Patient confirmed transfer - initiating warm transfer")
-        return None, self.create_transferring_to_staff_node()
+        if not staff_number:
+            logger.warning("Cold transfer requested but no staff_number configured")
+            return "I apologize, but I'm unable to transfer you at this time. Is there anything else I can help you with?", None
 
-    async def _cancel_transfer_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, NodeConfig]:
-        """Patient declined transfer - return to where they were."""
-        previous_node = flow_manager.state.get("previous_node_before_transfer", "greeting")
-        logger.info(f"Flow: Patient declined transfer - returning to {previous_node}")
+        try:
+            logger.info(f"Cold transfer initiated to: {staff_number}")
 
-        # Return to the appropriate node based on where they were
-        node_creators = {
-            "greeting": self.create_greeting_node,
-            "visit_reason": self.create_visit_reason_node,
-            "scheduling": self.create_scheduling_node,
-            "collect_info": self.create_collect_info_node,
-            "confirmation": self.create_confirmation_node,
-        }
+            # Set transfer flag before initiating transfer
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
 
-        creator = node_creators.get(previous_node, self.create_confirmation_node)
-        return "No problem! Let's continue.", creator()
+            # Initiate SIP transfer
+            if self.transport:
+                transfer_params = {"toEndPoint": staff_number}
+                await self.transport.sip_call_transfer(transfer_params)
+                logger.info(f"SIP call transfer initiated: {staff_number}")
 
-    async def _mute_caller(self, action: dict, flow_manager: FlowManager):
-        if self.transport:
-            # For dial-in: caller is the first participant that joined
-            participants = self.transport.participants()
-            for p in participants.values():
-                if not p["info"]["isLocal"]:
-                    participant_id = p["id"]
-                    # Store caller ID in state for later use
-                    flow_manager.state["caller_participant_id"] = participant_id
-                    # Mute caller AND make them not hear the bot (they'll wait in silence)
-                    await self.transport.update_remote_participants(
-                        remote_participants={
-                            participant_id: {
-                                "permissions": {
-                                    "canSend": [],
-                                    "canReceive": {"base": False},  # Can't hear anything during transfer
-                                }
-                            }
-                        }
-                    )
-                    logger.info(f"Muted and isolated caller: {participant_id}")
-                    break
+            # Return message for LLM to speak while transfer happens
+            return "I'm transferring you to our staff now. Please hold.", None
 
-    async def _dial_office_staff(self, action: dict, flow_manager: FlowManager):
-        office_number = self.warm_transfer_config.get("staff_number")
+        except Exception as e:
+            import traceback
+            logger.error(f"Cold transfer failed: {traceback.format_exc()}")
 
-        if office_number and self.transport:
-            flow_manager.state["warm_transfer_in_progress"] = True
-            await self.transport.start_dialout({"phoneNumber": office_number})
-            logger.info(f"Dialing office staff: {office_number}")
-        else:
-            logger.error("No staff_number in warm_transfer config")
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
 
-    async def _connect_staff_to_patient_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, NodeConfig]:
-        logger.info("Flow: Staff ready - transitioning to connect")
-        return None, self.create_warm_transfer_complete_node()
+            return "I apologize, the transfer failed. Is there anything else I can help you with?", None
 
-    async def _connect_and_exit(self, action: dict, flow_manager: FlowManager):
-        if self.transport:
-            # Get caller ID from state (stored during _mute_caller)
-            caller_id = flow_manager.state.get("caller_participant_id")
-
-            # Find staff ID (non-local participant that's not the caller)
-            staff_id = None
-            participants = self.transport.participants()
-            for p in participants.values():
-                if p["info"]["isLocal"]:
-                    continue
-                if p["id"] != caller_id:
-                    staff_id = p["id"]
-                    break
-
-            if caller_id and staff_id:
-                # Connect caller and staff directly - they can hear each other
-                await self.transport.update_remote_participants(
-                    remote_participants={
-                        caller_id: {
-                            "permissions": {
-                                "canSend": ["microphone"],
-                                "canReceive": {"base": True},  # Can hear everyone (including staff)
-                            },
-                            "inputsEnabled": {"microphone": True},
-                        },
-                        staff_id: {
-                            "permissions": {
-                                "canSend": ["microphone"],  # Enable staff to send audio
-                                "canReceive": {"base": True},  # Can hear everyone (including caller)
-                            },
-                            "inputsEnabled": {"microphone": True},  # Enable staff microphone
-                        },
-                    }
-                )
-                logger.info(f"Connected caller ({caller_id}) and staff ({staff_id})")
-            else:
-                logger.error(f"Could not connect: caller={caller_id}, staff={staff_id}")
+    def _get_request_staff_function(self) -> FlowsFunctionSchema:
+        """Return the request_staff function schema for use in multiple nodes."""
+        return FlowsFunctionSchema(
+            name="request_staff",
+            description="Call when the patient asks to speak with a human, staff member, or receptionist. Also use if they seem frustrated or confused.",
+            properties={},
+            required=[],
+            handler=self._request_staff_handler,
+        )
