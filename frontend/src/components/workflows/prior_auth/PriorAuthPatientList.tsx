@@ -99,7 +99,9 @@ export function PriorAuthPatientList() {
 
   // Auto-refresh when calls are active
   useEffect(() => {
-    const hasActiveCalls = patients.some(p => p.call_status === 'In Progress');
+    const hasActiveCalls = patients.some(p =>
+      p.call_status === 'Dialing' || p.call_status === 'In Progress'
+    );
 
     if (hasActiveCalls) {
       const interval = setInterval(() => {
@@ -197,19 +199,37 @@ export function PriorAuthPatientList() {
 
   const confirmStartCall = async () => {
     if (patientToCall) {
-      // Single patient call
+      // Single patient call - optimistic update
+      const patientId = patientToCall.patient_id;
+      setPatients(prev => prev.map(p =>
+        p.patient_id === patientId ? { ...p, call_status: 'Dialing' as const } : p
+      ));
+      setCallDialogOpen(false);
+      setPatientToCall(null);
+
       try {
         const phoneNumber = patientToCall.insurance_phone || patientToCall.phone;
-        await startCall(patientToCall.patient_id, phoneNumber, 'prior_auth');
+        await startCall(patientId, phoneNumber, 'prior_auth');
         toast.success('Call started');
-        await loadPatients();
       } catch (err) {
+        // Revert on failure
+        setPatients(prev => prev.map(p =>
+          p.patient_id === patientId ? { ...p, call_status: 'Not Started' as const } : p
+        ));
         toast.error('Failed to start call');
       }
     } else if (patientsToCall.length > 0) {
-      // Bulk calls
+      // Bulk calls - optimistic update
+      const patientIds = patientsToCall.map(p => p.patient_id);
+      setPatients(prev => prev.map(p =>
+        patientIds.includes(p.patient_id) ? { ...p, call_status: 'Dialing' as const } : p
+      ));
+      setCallDialogOpen(false);
+      setPatientsToCall([]);
+
       let successCount = 0;
       let failCount = 0;
+      const failedIds: string[] = [];
 
       for (const patient of patientsToCall) {
         try {
@@ -218,16 +238,23 @@ export function PriorAuthPatientList() {
           successCount++;
         } catch (err) {
           failCount++;
+          failedIds.push(patient.patient_id);
         }
       }
 
-      await loadPatients();
-      toast.success(`Calls started: ${successCount} success, ${failCount} failed`);
-    }
+      // Revert failed ones
+      if (failedIds.length > 0) {
+        setPatients(prev => prev.map(p =>
+          failedIds.includes(p.patient_id) ? { ...p, call_status: 'Not Started' as const } : p
+        ));
+      }
 
-    setCallDialogOpen(false);
-    setPatientToCall(null);
-    setPatientsToCall([]);
+      toast.success(`Calls started: ${successCount} success, ${failCount} failed`);
+    } else {
+      setCallDialogOpen(false);
+      setPatientToCall(null);
+      setPatientsToCall([]);
+    }
   };
 
   const handleDeletePatients = async (selectedPatients: Patient[]) => {
@@ -255,14 +282,24 @@ export function PriorAuthPatientList() {
       return;
     }
 
+    const patientId = selectedPatient.patient_id;
+
+    // Optimistic update
+    setSelectedPatient(prev => prev ? { ...prev, call_status: 'Dialing' as const } : prev);
+    setPatients(prev => prev.map(p =>
+      p.patient_id === patientId ? { ...p, call_status: 'Dialing' as const } : p
+    ));
+
     try {
       setCallLoading(true);
-      await startCall(selectedPatient.patient_id, phoneNumber, 'prior_auth');
+      await startCall(patientId, phoneNumber, 'prior_auth');
       toast.success('Call started');
-      const updated = await getPatient(selectedPatient.patient_id);
-      setSelectedPatient(updated);
-      await loadPatients();
     } catch (err) {
+      // Revert on failure
+      setSelectedPatient(prev => prev ? { ...prev, call_status: 'Not Started' as const } : prev);
+      setPatients(prev => prev.map(p =>
+        p.patient_id === patientId ? { ...p, call_status: 'Not Started' as const } : p
+      ));
       toast.error('Failed to start call');
     } finally {
       setCallLoading(false);
@@ -407,12 +444,12 @@ export function PriorAuthPatientList() {
                     label="Call Status"
                     value={
                       <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        selectedPatient.call_status === 'Completed'
+                        selectedPatient.call_status === 'Completed' || selectedPatient.call_status === 'Supervisor Dialed'
                           ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                          : selectedPatient.call_status === 'Call Transferred'
-                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
-                            : selectedPatient.call_status === 'In Progress'
-                              ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                          : selectedPatient.call_status === 'In Progress' || selectedPatient.call_status === 'Dialing'
+                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                            : selectedPatient.call_status === 'Failed'
+                              ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
                               : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
                       }`}>
                         {selectedPatient.call_status}

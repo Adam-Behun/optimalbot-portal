@@ -48,8 +48,10 @@ function formatValue(value: unknown, field: SchemaField): string {
 function getCallStatusStyle(status: string): string {
   switch (status) {
     case 'Completed':
+    case 'Supervisor Dialed':
       return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
     case 'In Progress':
+    case 'Dialing':
       return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
     case 'Failed':
       return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
@@ -119,7 +121,9 @@ export function PatientQuestionsCallList() {
 
   // Auto-refresh when calls are active
   useEffect(() => {
-    const hasActiveCalls = patients.some(p => p.call_status === 'In Progress');
+    const hasActiveCalls = patients.some(p =>
+      p.call_status === 'Dialing' || p.call_status === 'In Progress'
+    );
 
     if (hasActiveCalls) {
       const interval = setInterval(() => {

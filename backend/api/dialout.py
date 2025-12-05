@@ -22,10 +22,11 @@ from backend.server_utils import (
     BotRequest,
     create_daily_room,
     start_bot_local,
-    start_bot_production
+    start_bot_production,
+    validate_phone_number
 )
 from backend.utils import convert_objectid
-from backend.constants import SessionStatus
+from backend.constants import SessionStatus, CallStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,23 +90,14 @@ async def start_call(
             resource_id=call_request.patient_id
         )
 
-        phone_number = call_request.phone_number or patient.get("phone_number")
-        if not phone_number:
-            raise HTTPException(status_code=400, detail="Phone number required")
+        raw_phone = call_request.phone_number or patient.get("phone_number")
+        valid, phone_result = validate_phone_number(raw_phone)
+        if not valid:
+            raise HTTPException(status_code=400, detail=phone_result)
+        phone_number = phone_result
 
         session_id = str(uuid.uuid4())
-        logger.info(f"Session ID: {session_id}")
-        logger.info(f"Phone number: {phone_number}")
-
-        await session_db.create_session({
-            "session_id": session_id,
-            "patient_id": call_request.patient_id,
-            "phone_number": phone_number,
-            "client_name": call_request.client_name,
-            "organization_id": org_id
-        })
-
-        logger.info(f"Starting bot session in {ENV.upper()} mode...")
+        logger.info(f"Session ID: {session_id}, Phone: {phone_number}")
 
         http_session = request.app.state.http_session
         try:
@@ -133,7 +125,16 @@ async def start_call(
 
             logger.info(f"Bot started successfully in {ENV.upper()} mode")
 
-            await session_db.update_session(session_id, {
+            await patient_db.update_call_status(
+                call_request.patient_id, CallStatus.DIALING.value, org_id
+            )
+
+            await session_db.create_session({
+                "session_id": session_id,
+                "patient_id": call_request.patient_id,
+                "phone_number": phone_number,
+                "client_name": call_request.client_name,
+                "organization_id": org_id,
                 "room_url": room_url,
                 "status": SessionStatus.RUNNING.value
             })
@@ -143,10 +144,6 @@ async def start_call(
         except Exception as e:
             logger.error(f"Error starting bot: {e}")
             logger.error(traceback.format_exc())
-            await session_db.update_session(session_id, {
-                "status": SessionStatus.FAILED.value,
-                "error": str(e)
-            })
             raise HTTPException(status_code=500, detail=f"Failed to start call: {str(e)}")
 
         return CallResponse(

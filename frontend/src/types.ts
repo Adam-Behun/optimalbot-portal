@@ -8,7 +8,7 @@ export interface Patient {
   [key: string]: any;
 
   // System fields
-  call_status: 'Not Started' | 'In Progress' | 'Completed' | 'Failed' | 'Supervisor Requested' | 'Completed - Left VM' | 'Call Transferred';
+  call_status: 'Not Started' | 'Dialing' | 'In Progress' | 'Completed' | 'Failed' | 'Supervisor Dialed';
   call_transcript?: string; // JSON string of transcript array
   last_call_session_id?: string;
   created_at?: string;

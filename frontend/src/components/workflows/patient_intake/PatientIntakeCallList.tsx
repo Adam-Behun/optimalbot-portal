@@ -119,7 +119,9 @@ export function PatientIntakeCallList() {
 
   // Auto-refresh when calls are active
   useEffect(() => {
-    const hasActiveCalls = patients.some(p => p.call_status === 'In Progress');
+    const hasActiveCalls = patients.some(p =>
+      p.call_status === 'Dialing' || p.call_status === 'In Progress'
+    );
 
     if (hasActiveCalls) {
       const interval = setInterval(() => {

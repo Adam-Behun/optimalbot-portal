@@ -23,9 +23,9 @@ export function PatientIntakeDashboard() {
   const today = new Date().toISOString().split('T')[0];
   const metrics = {
     total: patients.length,
-    completed: patients.filter(p => p.call_status === 'Completed' || p.call_status === 'Completed - Left VM').length,
-    completedToday: patients.filter(p => (p.call_status === 'Completed' || p.call_status === 'Completed - Left VM') && p.created_at?.startsWith(today)).length,
-    inProgress: patients.filter(p => p.call_status === 'In Progress').length,
+    completed: patients.filter(p => p.call_status === 'Completed' || p.call_status === 'Supervisor Dialed').length,
+    completedToday: patients.filter(p => (p.call_status === 'Completed' || p.call_status === 'Supervisor Dialed') && p.created_at?.startsWith(today)).length,
+    inProgress: patients.filter(p => p.call_status === 'Dialing' || p.call_status === 'In Progress').length,
     failed: patients.filter(p => p.call_status === 'Failed').length
   };
 

@@ -10,6 +10,7 @@ from backend.models import get_async_patient_db
 from backend.models.organization import get_async_organization_db
 from backend.sessions import get_async_session_db
 from backend.server_utils import DialinBotRequest, start_bot_production, start_bot_local
+from backend.constants import CallStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -84,7 +85,7 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
         "caller_phone_number": call_data.from_phone,
         "organization_id": organization_id,
         "organization_name": organization.get("name", ""),
-        "call_status": "In Progress"
+        "call_status": CallStatus.IN_PROGRESS.value
     }
     patient_id = await patient_db.add_patient(patient_data)
 

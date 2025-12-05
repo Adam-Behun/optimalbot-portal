@@ -7,6 +7,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.extensions.ivr.ivr_navigator import IVRStatus
 from pipecat_flows import ContextStrategy, ContextStrategyConfig
 from backend.models import get_async_patient_db
+from backend.constants import CallStatus
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                 logger.info("✅ IVR complete → greeting_after_ivr (context reset, wait for user)")
 
             elif status == IVRStatus.STUCK:
-                logger.error("❌ IVR navigation failed - ending call")
+                logger.error("IVR navigation failed - ending call")
 
                 pipeline.transcripts.append({
                     "role": "system",
@@ -149,7 +150,7 @@ def setup_ivr_handlers(pipeline, ivr_navigator):
                 })
 
                 await get_async_patient_db().update_call_status(
-                    pipeline.patient_id, "Failed", pipeline.organization_id
+                    pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id
                 )
                 await pipeline.task.queue_frames([EndFrame()])
 

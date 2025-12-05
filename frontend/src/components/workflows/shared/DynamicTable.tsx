@@ -43,8 +43,8 @@ interface DynamicTableProps {
   patients: Patient[];
   onRowClick?: (patient: Patient) => void;
   loading?: boolean;
-  onStartCalls?: (patients: Patient[]) => Promise<void>;
-  onDeletePatients?: (patients: Patient[]) => Promise<void>;
+  onStartCalls?: (patients: Patient[]) => void | Promise<void>;
+  onDeletePatients?: (patients: Patient[]) => void | Promise<void>;
   onViewPatient?: (patient: Patient) => void;
   onEditPatient?: (patient: Patient) => void;
   onStartCall?: (patient: Patient) => void;
@@ -88,17 +88,15 @@ function formatPhone(phone: string): string {
 function getStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   switch (status) {
     case 'Completed':
-    case 'Completed - Left VM':
+    case 'Supervisor Dialed':
       return 'default';
     case 'In Progress':
+    case 'Dialing':
       return 'secondary';
     case 'Failed':
       return 'destructive';
-    case 'Supervisor Requested':
-    case 'Call Transferred':
-      return 'outline';
     default:
-      return 'secondary';
+      return 'outline';
   }
 }
 

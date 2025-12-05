@@ -11,8 +11,11 @@ class SessionStatus(str, Enum):
 
 class CallStatus(str, Enum):
     NOT_STARTED = "Not Started"
+    DIALING = "Dialing"
     IN_PROGRESS = "In Progress"
     COMPLETED = "Completed"
+    FAILED = "Failed"
+    SUPERVISOR_DIALED = "Supervisor Dialed"
 
 
 class UserRole(str, Enum):
