@@ -1,8 +1,6 @@
 import logging
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
-from pipecat.frames.frames import ManuallySwitchServiceFrame
-from pipecat.processors.frame_processor import FrameDirection
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
 
@@ -10,6 +8,45 @@ logger = logging.getLogger(__name__)
 
 
 class PriorAuthFlow:
+    """Prior authorization verification flow with triage support."""
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TRIAGE CONFIGURATION
+    # ═══════════════════════════════════════════════════════════════════
+
+    TRIAGE_CLASSIFIER_PROMPT = """You are a call classification system for OUTBOUND insurance verification calls.
+
+HUMAN CONVERSATION (respond "CONVERSATION"):
+- Personal greetings: "Hello?", "Hi", "Speaking", "This is [name]"
+- Department greetings: "Insurance verification, this is Sarah"
+- Interactive responses: "Who is this?", "How can I help you?"
+- Natural speech with pauses and informal tone
+
+IVR SYSTEM (respond "IVR"):
+- Menu options: "Press 1 for claims", "Press 2 for eligibility"
+- Automated instructions: "Please enter your provider NPI"
+- System prompts: "Thank you for calling [insurance company]"
+- Hold messages: "Please hold while we transfer you"
+
+VOICEMAIL SYSTEM (respond "VOICEMAIL"):
+- Voicemail greetings: "You've reached the claims department, please leave a message"
+- After-hours messages: "Our office is currently closed"
+- Carrier messages: "The number you have dialed is not available"
+- Mailbox messages: "This mailbox is full"
+
+Output exactly one classification word: CONVERSATION, IVR, or VOICEMAIL."""
+
+    IVR_NAVIGATION_GOAL = """Navigate to speak with a representative who can verify:
+- Patient eligibility and benefits
+- Prior authorization status
+- CPT code coverage
+
+Look for options like: "eligibility", "benefits", "prior authorization",
+"provider services", "speak to representative", or "agent"."""
+
+    VOICEMAIL_MESSAGE_TEMPLATE = """Hi, this is Alexandra, a virtual assistant from {facility_name},
+calling about a prior authorization for {patient_name}.
+Please call us back at your earliest convenience. Thank you."""
 
     def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager = None,
                  main_llm=None, classifier_llm=None, context_aggregator=None, transport=None, pipeline=None,
@@ -24,6 +61,24 @@ class PriorAuthFlow:
         self.cold_transfer_config = cold_transfer_config or {}
         # Store patient_data for later initialization when flow_manager is set
         self._patient_data = patient_data
+
+    def get_triage_config(self) -> dict:
+        """Return triage configuration for this flow.
+
+        Called by PipelineFactory to configure TriageDetector and IVRNavigationProcessor.
+        Uses patient_data directly since flow_manager may not be set yet.
+        """
+        facility_name = self._patient_data.get("facility_name", "our facility")
+        patient_name = self._patient_data.get("patient_name", "a patient")
+
+        return {
+            "classifier_prompt": self.TRIAGE_CLASSIFIER_PROMPT,
+            "ivr_navigation_goal": self.IVR_NAVIGATION_GOAL,
+            "voicemail_message": self.VOICEMAIL_MESSAGE_TEMPLATE.format(
+                facility_name=facility_name,
+                patient_name=patient_name,
+            ),
+        }
 
     def _init_flow_state(self):
         """Initialize flow_manager state with patient data. Called after flow_manager is set."""
@@ -98,11 +153,7 @@ After speaking your greeting → call proceed_to_verification"""
                     handler=self._proceed_to_verification_handler
                 )
             ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_classifier_llm
-            }],
+            respond_immediately=True,
             context_strategy=ContextStrategyConfig(
                 strategy=ContextStrategy.RESET
             )
@@ -137,11 +188,7 @@ After speaking your greeting → call proceed_to_verification"""
                     handler=self._proceed_to_verification_handler
                 )
             ],
-            respond_immediately=True,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_classifier_llm
-            }]
+            respond_immediately=True
         )
 
     def create_verification_node(self) -> NodeConfig:
@@ -212,11 +259,7 @@ If they ask to speak with a human or manager → call request_staff"""
                     handler=self._request_staff_handler
                 )
             ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_main_llm
-            }]
+            respond_immediately=False
         )
 
     def create_staff_confirmation_node(self) -> NodeConfig:
@@ -333,26 +376,8 @@ If they ask to speak with a human or manager → call request_staff"""
                     handler=self._end_call_handler
                 )
             ],
-            respond_immediately=True,
-            pre_actions=[{
-                "type": "function",
-                "handler": self._switch_to_main_llm
-            }]
+            respond_immediately=True
         )
-
-    async def _switch_to_classifier_llm(self, action: dict, flow_manager: FlowManager):
-        await self.context_aggregator.assistant().push_frame(
-            ManuallySwitchServiceFrame(service=self.classifier_llm),
-            FrameDirection.UPSTREAM
-        )
-        logger.info("✅ LLM: classifier (fast greeting)")
-
-    async def _switch_to_main_llm(self, action: dict, flow_manager: FlowManager):
-        await self.context_aggregator.assistant().push_frame(
-            ManuallySwitchServiceFrame(service=self.main_llm),
-            FrameDirection.UPSTREAM
-        )
-        logger.info("✅ LLM: main (function calling)")
 
     async def _proceed_to_verification_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager

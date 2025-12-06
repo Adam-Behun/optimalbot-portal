@@ -1,5 +1,10 @@
 call_type: "dial-out"
 
+triage:
+  enabled: true
+  # 2.0s delay allows voicemail beep to complete before speaking
+  voicemail_response_delay: 2.0
+
 services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}

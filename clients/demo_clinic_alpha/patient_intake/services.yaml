@@ -1,27 +1,12 @@
 call_type: "dial-in"
 
-# Smart Turn v3 configuration - aggressive settings for fast response
-turn_detection:
-  vad:
-    type: silero
-    stop_secs: 0.1          # Very short - Smart Turn makes the real decision
-    start_secs: 0.1         # Quick speech detection
-    confidence: 0.5         # Lower threshold - catch more speech
-    min_volume: 0.4         # More sensitive to quiet speech
-  smart_turn:
-    type: local_v3
-    stop_secs: 1.5          # Shorter max silence before forcing turn end
-    max_duration_secs: 8.0  # Max audio chunk for analysis
-
 services:
   stt:
-    type: deepgram
     api_key: ${DEEPGRAM_API_KEY}
-    model: nova-3
-    language: en-US
-    interim_results: true
-    smart_format: true
-    punctuate: true
+    model: flux-general-en
+    eager_eot_threshold: 0.40  # Very aggressive eager detection
+    eot_threshold: 0.50        # Fast end-of-turn confirmation
+    eot_timeout_ms: 1200       # Short max wait (was 2500)
     keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]
 
   llm:
@@ -51,5 +36,29 @@ services:
     audio_in_sample_rate: 16000
     audio_out_sample_rate: 24000
 
-warm_transfer:
-  staff_number: "+15165667132"
+cold_transfer:
+  staff_number: "+15165668219"
+
+# # Smart Turn v3 configuration - aggressive settings for fast response
+# turn_detection:
+#   vad:
+#     type: silero
+#     stop_secs: 0.1          # Very short - Smart Turn makes the real decision
+#     start_secs: 0.1         # Quick speech detection
+#     confidence: 0.5         # Lower threshold - catch more speech
+#     min_volume: 0.4         # More sensitive to quiet speech
+#   smart_turn:
+#     type: local_v3
+#     stop_secs: 1.5          # Shorter max silence before forcing turn end
+#     max_duration_secs: 8.0  # Max audio chunk for analysis
+#
+# services:
+#   stt:
+#     type: deepgram
+#     api_key: ${DEEPGRAM_API_KEY}
+#     model: nova-3
+#     language: en-US
+#     interim_results: true
+#     smart_format: true
+#     punctuate: true
+#     keyterm: ["Monica", "appointment", "cleaning", "checkup", "toothache", "cavity", "filling", "whitening", "crown", "extraction"]

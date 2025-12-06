@@ -8,8 +8,8 @@ from pipeline.pipeline_factory import PipelineFactory
 from handlers import (
     setup_transport_handlers,
     setup_transcript_handler,
-    setup_ivr_handlers,
 )
+from handlers.triage import setup_triage_handlers
 from observers import LangfuseLatencyObserver
 from pipecat_whisker import WhiskerObserver
 
@@ -47,7 +47,8 @@ class ConversationPipeline:
         self.task = None
         self.flow_manager = None
         self.flow = None
-        self.ivr_navigator = None
+        self.triage_detector = None
+        self.ivr_processor = None
         self.context_aggregator = None
         self.transcript_processor = None
         self.runner = None
@@ -89,7 +90,9 @@ class ConversationPipeline:
         organization_name = self.patient_data.get("organization_name", "Demo Clinic Beta")
         from clients.demo_clinic_beta.patient_intake.flow_definition import warmup_openai
         warmup_task = asyncio.create_task(warmup_openai(organization_name))
-        self.ivr_navigator = components['ivr_navigator']
+        self.triage_detector = components.get('triage_detector')
+        self.ivr_processor = components.get('ivr_processor')
+        self.context = components['context']
         self.context_aggregator = components['context_aggregator']
         self.transcript_processor = components['transcript_processor']
 
@@ -152,9 +155,14 @@ class ConversationPipeline:
         setup_transport_handlers(self, self.call_type)
         setup_transcript_handler(self)
 
-        # Only setup IVR handlers for dial-out calls
-        if self.call_type == "dial-out":
-            setup_ivr_handlers(self, self.ivr_navigator)
+        if self.call_type == "dial-out" and self.triage_detector:
+            setup_triage_handlers(
+                self,
+                self.triage_detector,
+                self.ivr_processor,
+                self.flow,
+                self.flow_manager,
+            )
 
         logger.info("✅ Event handlers registered")
 

@@ -5,8 +5,6 @@ from pathlib import Path
 from typing import Dict, Any
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams
-from pipecat.pipeline.llm_switcher import LLMSwitcher
-from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -15,7 +13,8 @@ from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFil
 from pipecat_flows import FlowManager
 
 from services.service_factory import ServiceFactory
-from pipeline.fixed_ivr_navigator import FixedIVRNavigator
+from pipeline.triage_detector import TriageDetector
+from pipeline.ivr_navigation_processor import IVRNavigationProcessor
 from core.flow_loader import FlowLoader
 
 logger = logging.getLogger(__name__)
@@ -42,24 +41,17 @@ class PipelineFactory:
             services_config['services']['llm']
         )
 
-        # classifier_llm and LLM switching are optional
-        # If classifier_llm is not configured, use main_llm directly without switching
+        # classifier_llm is used only in TriageDetector parallel pipeline for classification
+        # The main pipeline always uses main_llm - no switching needed
         classifier_llm_config = services_config['services'].get('classifier_llm')
         if classifier_llm_config:
             classifier_llm = ServiceFactory.create_classifier_llm(classifier_llm_config)
-            # LLMSwitcher starts with classifier_llm as default (first in list)
-            # Flow pre_actions will switch to main_llm when function calling is needed
-            llm_switcher = LLMSwitcher(
-                llms=[classifier_llm, main_llm],
-                strategy_type=ServiceSwitcherStrategyManual
-            )
-            active_llm = llm_switcher
         else:
-            # Single LLM mode - no switching needed
             classifier_llm = None
-            llm_switcher = None
-            active_llm = main_llm
-            logger.info("Single LLM mode: classifier_llm not configured, using main_llm only")
+            logger.info("classifier_llm not configured - triage detection disabled")
+
+        # Main pipeline always uses main_llm (no LLM switching)
+        active_llm = main_llm
 
         # Extract turn_detection config if present (for Smart Turn + VAD)
         turn_detection_config = services_config.get('turn_detection')
@@ -77,7 +69,6 @@ class PipelineFactory:
             ),
             'main_llm': main_llm,
             'classifier_llm': classifier_llm,
-            'llm_switcher': llm_switcher,
             'active_llm': active_llm,
             'cold_transfer': services_config.get('cold_transfer')
         }
@@ -86,7 +77,8 @@ class PipelineFactory:
             client_name,
             session_data,
             services,
-            call_type
+            call_type,
+            services_config
         )
 
         pipeline, params = PipelineFactory._assemble_pipeline(services, components)
@@ -123,12 +115,16 @@ class PipelineFactory:
         client_name: str,
         session_data: Dict[str, Any],
         services: Dict[str, Any],
-        call_type: str
+        call_type: str,
+        services_config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Create FlowManager and conversation components."""
 
         context = LLMContext()
         context_aggregator = LLMContextAggregatorPair(context)
+
+        # Store context separately for direct access in handlers
+        # (LLMContextAggregatorPair doesn't expose _context in all pipecat versions)
 
         transcript_processor = TranscriptProcessor()
 
@@ -137,17 +133,6 @@ class PipelineFactory:
         flow_loader = FlowLoader(organization_slug, client_name)
         FlowClass = flow_loader.load_flow_class()
 
-        # IVRNavigator is only needed for dial-out calls (calling insurance companies)
-        # For dial-in calls (patients calling us), skip IVR navigation
-        ivr_navigator = None
-        if call_type == "dial-out":
-            ivr_navigator = FixedIVRNavigator(
-                llm=services['active_llm'],
-                ivr_prompt="Navigate to provider services for prior authorization verification",
-                ivr_vad_params=VADParams(stop_secs=2.0)
-            )
-
-        # Build flow class constructor kwargs dynamically based on available services
         flow_kwargs = {
             'patient_data': session_data['patient_data'],
             'flow_manager': None,
@@ -155,23 +140,42 @@ class PipelineFactory:
             'context_aggregator': context_aggregator,
             'organization_id': organization_id
         }
-        # Only pass classifier_llm if it exists (for flows that support dual-LLM)
         if services['classifier_llm']:
             flow_kwargs['classifier_llm'] = services['classifier_llm']
-        # Pass cold_transfer config if configured
         if services.get('cold_transfer'):
             flow_kwargs['cold_transfer_config'] = services['cold_transfer']
 
         flow = FlowClass(**flow_kwargs)
 
+        triage_detector = None
+        ivr_processor = None
+
+        if call_type == "dial-out":
+            triage_config = services_config.get('triage', {})
+
+            if triage_config.get('enabled', True) and services['classifier_llm']:
+                flow_triage_config = flow.get_triage_config()
+
+                triage_detector = TriageDetector(
+                    classifier_llm=services['classifier_llm'],
+                    classifier_prompt=flow_triage_config['classifier_prompt'],
+                    voicemail_response_delay=triage_config.get('voicemail_response_delay', 2.0),
+                )
+
+                # 2.0s longer pause for IVR menus which have longer prompts
+                ivr_processor = IVRNavigationProcessor(
+                    ivr_vad_params=VADParams(stop_secs=2.0)
+                )
+
         return {
+            'context': context,
             'context_aggregator': context_aggregator,
             'transcript_processor': transcript_processor,
-            'ivr_navigator': ivr_navigator,
+            'triage_detector': triage_detector,
+            'ivr_processor': ivr_processor,
             'flow': flow,
             'main_llm': services['main_llm'],
             'classifier_llm': services['classifier_llm'],
-            'llm_switcher': services['llm_switcher'],
             'active_llm': services['active_llm'],
             'call_type': call_type
         }
@@ -181,42 +185,41 @@ class PipelineFactory:
         services: Dict[str, Any],
         components: Dict[str, Any]
     ) -> tuple[Pipeline, PipelineParams]:
-        # Create STTMuteFilter to prevent interruptions during bot's first speech (greeting)
-        # Uses FIRST_SPEECH strategy: mutes user input during the initial greeting utterance,
-        # then automatically unmutes after greeting completes
+
         stt_mute_processor = STTMuteFilter(
-            config=STTMuteConfig(
-                strategies={STTMuteStrategy.FIRST_SPEECH}
-            )
+            config=STTMuteConfig(strategies={STTMuteStrategy.FIRST_SPEECH})
         )
 
-        # Build pipeline based on call type:
-        # - dial-out: IVRNavigator wraps LLM for IVR menu navigation
-        # - dial-in: LLM used directly (no IVR navigation needed)
-        if components['ivr_navigator']:
-            # IVRNavigator replaces the LLM in the pipeline (it contains the LLM internally)
-            # See: https://docs.pipecat.ai/guides/fundamentals/ivr-navigator
-            llm_component = components['ivr_navigator']
+        if components.get('triage_detector'):
+            pipeline = Pipeline([
+                services['transport'].input(),
+                services['stt'],
+                components['triage_detector'].detector(),
+                components['ivr_processor'],
+                stt_mute_processor,
+                components['transcript_processor'].user(),
+                components['context_aggregator'].user(),
+                components['active_llm'],
+                services['tts'],
+                components['triage_detector'].gate(),
+                components['transcript_processor'].assistant(),
+                components['context_aggregator'].assistant(),
+                services['transport'].output()
+            ])
         else:
-            # Direct LLM for dial-in calls
-            llm_component = components['active_llm']
+            pipeline = Pipeline([
+                services['transport'].input(),
+                services['stt'],
+                stt_mute_processor,
+                components['transcript_processor'].user(),
+                components['context_aggregator'].user(),
+                components['active_llm'],
+                services['tts'],
+                components['transcript_processor'].assistant(),
+                components['context_aggregator'].assistant(),
+                services['transport'].output()
+            ])
 
-        pipeline = Pipeline([
-            services['transport'].input(),
-            services['stt'],
-            stt_mute_processor,  # Mute user input during first speech (greeting)
-            components['transcript_processor'].user(),
-            components['context_aggregator'].user(),
-            llm_component,
-            services['tts'],
-            components['transcript_processor'].assistant(),
-            components['context_aggregator'].assistant(),
-            services['transport'].output()
-        ])
-
-        # Configure pipeline-wide audio sample rates
-        # Deepgram Flux STT expects 16kHz input (telephony standard)
-        # ElevenLabs TTS outputs 24kHz (high quality)
         params = PipelineParams(
             audio_in_sample_rate=16000,
             audio_out_sample_rate=24000,

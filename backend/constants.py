@@ -16,6 +16,7 @@ class CallStatus(str, Enum):
     COMPLETED = "Completed"
     FAILED = "Failed"
     SUPERVISOR_DIALED = "Supervisor Dialed"
+    VOICEMAIL = "Voicemail"
 
 
 class UserRole(str, Enum):

@@ -301,7 +301,9 @@ Once they pick one, call schedule_appointment with the date and time.""",
 4. Date of birth
 5. Email (ask to spell letter by letter)
 
-Acknowledge briefly: "Got it." When ALL 5 collected, call save_patient_info.
+Acknowledge briefly: "Got it." Ask for each piece of information ONE AT A TIME. Wait for their response before moving to the next item.
+
+CRITICAL: You MUST collect ALL 5 pieces of information before calling save_patient_info. DO NOT call the function until you have non-empty values for: first name, last name, phone number, date of birth, AND email. Empty strings are NOT acceptable.
 
 If unclear or incomplete, ask to repeat. Don't guess.""",
                 }
@@ -309,7 +311,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
             functions=[
                 FlowsFunctionSchema(
                     name="save_patient_info",
-                    description="Call ONLY after ALL 5 fields are collected. Don't call with missing info.",
+                    description="ONLY call after collecting ALL 5 fields with actual values. NEVER call with empty strings. You must have: first_name, last_name, phone_number, date_of_birth, and email - all non-empty.",
                     properties={
                         "first_name": {
                             "type": "string",
