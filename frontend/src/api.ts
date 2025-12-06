@@ -131,4 +131,16 @@ export const resetPassword = async (email: string, token: string, new_password: 
   await api.post('/auth/reset-password', { email, token, new_password });
 };
 
+// POST /auth/exchange-token - Exchange handoff token for JWT (marketing site callback)
+export const exchangeToken = async (
+  token: string,
+  organizationSlug: string
+): Promise<AuthResponse> => {
+  const response = await api.post<AuthResponse>('/auth/exchange-token', {
+    token,
+    organization_slug: organizationSlug
+  });
+  return response.data;
+};
+
 export default api;

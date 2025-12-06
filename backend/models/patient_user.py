@@ -452,6 +452,66 @@ class AsyncUserRecord:
             logger.error(f"Error deactivating account {user_id}: {e}")
             return False
 
+    async def set_handoff_token(self, user_id: str, token: str, expires_at: datetime) -> bool:
+        """Set a single-use handoff token for central login flow."""
+        try:
+            result = await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "handoff_token": token,
+                    "handoff_token_expires": expires_at.isoformat(),
+                    "handoff_token_used": False,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Error setting handoff token for {user_id}: {e}")
+            return False
+
+    async def validate_handoff_token(self, token: str) -> Optional[dict]:
+        """Validate and return user if handoff token is valid and unused."""
+        try:
+            user = await self.users.find_one({
+                "handoff_token": token,
+                "handoff_token_used": False
+            })
+
+            if not user:
+                return None
+
+            expires_str = user.get("handoff_token_expires", "")
+            if not expires_str:
+                return None
+
+            expires = datetime.fromisoformat(expires_str)
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+
+            if datetime.now(timezone.utc) > expires:
+                logger.warning(f"Expired handoff token used for user {user['_id']}")
+                return None
+
+            return user
+        except Exception as e:
+            logger.error(f"Error validating handoff token: {e}")
+            return None
+
+    async def clear_handoff_token(self, user_id: str) -> bool:
+        """Mark handoff token as used (single-use enforcement)."""
+        try:
+            result = await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "handoff_token_used": True,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Error clearing handoff token for {user_id}: {e}")
+            return False
+
 
 _patient_db_instance: Optional[AsyncPatientRecord] = None
 _user_db_instance: Optional[AsyncUserRecord] = None

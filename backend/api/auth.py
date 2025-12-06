@@ -1,5 +1,6 @@
 import os
 import logging
+import secrets
 import traceback
 from datetime import timedelta, datetime
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -52,6 +53,25 @@ class ResetTokenResponse(BaseModel):
     message: str
     token: str
     expires_in_minutes: int
+
+
+class OrganizationSummary(BaseModel):
+    id: str
+    name: str
+    slug: str
+
+
+class CentralLoginResponse(BaseModel):
+    user_id: str
+    email: str
+    organizations: list[OrganizationSummary]
+    handoff_token: str
+    handoff_expires_in: int
+
+
+class ExchangeTokenRequest(BaseModel):
+    token: str
+    organization_slug: str
 
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
@@ -348,4 +368,191 @@ async def reset_password(
         raise
     except Exception as e:
         logger.error(f"Error during password reset: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/login-central", response_model=CentralLoginResponse)
+@limiter.limit("5/minute")
+async def login_central(
+    request: Request,
+    login_data: LoginRequest,
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    org_db: AsyncOrganizationRecord = Depends(get_organization_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Central login for marketing site. Returns handoff token for redirect to tenant."""
+    try:
+        ip_address, user_agent = get_client_info(request)
+
+        is_valid, user = await user_db.verify_password(
+            email=login_data.email,
+            password=login_data.password
+        )
+
+        if not is_valid or not user:
+            await audit_logger.log_event(
+                event_type="login_central",
+                user_id=None,
+                email=login_data.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "Invalid credentials"}
+            )
+
+            failed_attempts = await audit_logger.get_failed_login_attempts(
+                email=login_data.email,
+                time_window_minutes=30
+            )
+
+            if failed_attempts >= 5:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Account locked due to too many failed login attempts. Please contact support."
+                )
+
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        if user.get("status") == "locked":
+            raise HTTPException(status_code=403, detail="Account is locked. Please contact support.")
+
+        if user.get("status") == "inactive":
+            raise HTTPException(status_code=403, detail="Account is inactive. Please contact support.")
+
+        org_id = str(user.get("organization_id", ""))
+        org = await org_db.get_by_id(org_id)
+
+        if not org:
+            raise HTTPException(status_code=403, detail="No organization found")
+
+        organizations = [OrganizationSummary(
+            id=org_id,
+            name=org.get("name", ""),
+            slug=org.get("slug", "")
+        )]
+
+        handoff_token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(minutes=5)
+
+        await user_db.set_handoff_token(
+            user_id=str(user["_id"]),
+            token=handoff_token,
+            expires_at=expires_at
+        )
+
+        await audit_logger.log_event(
+            event_type="login_central",
+            user_id=str(user["_id"]),
+            email=login_data.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={"org_count": len(organizations)},
+            organization_id=org_id
+        )
+
+        logger.info(f"Central login successful: {login_data.email} (ID: {user['_id']})")
+
+        return CentralLoginResponse(
+            user_id=str(user["_id"]),
+            email=login_data.email,
+            organizations=organizations,
+            handoff_token=handoff_token,
+            handoff_expires_in=300
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during central login: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/exchange-token", response_model=AuthResponse)
+@limiter.limit("10/minute")
+async def exchange_token(
+    request: Request,
+    data: ExchangeTokenRequest,
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    org_db: AsyncOrganizationRecord = Depends(get_organization_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Exchange handoff token for JWT. Called by tenant app after redirect from marketing site."""
+    try:
+        ip_address, user_agent = get_client_info(request)
+
+        user = await user_db.validate_handoff_token(data.token)
+
+        if not user:
+            await audit_logger.log_event(
+                event_type="token_exchange",
+                user_id=None,
+                email=None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "Invalid or expired token"}
+            )
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        org_id = str(user.get("organization_id", ""))
+        org = await org_db.get_by_id(org_id)
+
+        if not org or org.get("slug") != data.organization_slug:
+            await audit_logger.log_event(
+                event_type="token_exchange",
+                user_id=str(user["_id"]),
+                email=user.get("email"),
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "Not authorized for organization", "org_slug": data.organization_slug}
+            )
+            raise HTTPException(status_code=403, detail="Not authorized for this organization")
+
+        await user_db.clear_handoff_token(str(user["_id"]))
+
+        access_token = create_access_token(
+            data={
+                "sub": str(user["_id"]),
+                "email": user.get("email"),
+                "role": user.get("role", "user"),
+                "organization_id": org_id,
+                "organization_slug": org.get("slug", "")
+            }
+        )
+
+        await audit_logger.log_event(
+            event_type="token_exchange",
+            user_id=str(user["_id"]),
+            email=user.get("email"),
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={"org_slug": data.organization_slug},
+            organization_id=org_id
+        )
+
+        logger.info(f"Token exchange successful: {user.get('email')} → {data.organization_slug}")
+
+        return AuthResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user_id=str(user["_id"]),
+            email=user.get("email", ""),
+            organization=OrganizationResponse(
+                id=org_id,
+                name=org.get("name", ""),
+                slug=org.get("slug", ""),
+                branding=org.get("branding", {}),
+                workflows=org.get("workflows", {})
+            )
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during token exchange: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Internal server error")

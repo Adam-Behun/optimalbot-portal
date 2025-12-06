@@ -1,10 +1,10 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { LoginForm } from './components/LoginForm';
 import { ForgotPasswordForm } from './components/ForgotPasswordForm';
 import { ResetPasswordForm } from './components/ResetPasswordForm';
-import { LandingPage } from './components/LandingPage';
+import { AuthCallback } from './components/AuthCallback';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
@@ -34,8 +34,8 @@ const App = () => {
             <div className="min-h-screen bg-background">
               <main>
                 <Routes>
-              {/* Public routes */}
-              <Route path="/" element={<LandingPage />} />
+              {/* Public routes - redirect root to login */}
+              <Route path="/" element={<Navigate to="/login" replace />} />
               <Route path="/login" element={
                 <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
                   <div className="w-full max-w-sm">
@@ -57,6 +57,7 @@ const App = () => {
                   </div>
                 </div>
               } />
+              <Route path="/auth/callback" element={<AuthCallback />} />
 
               {/* Protected routes - require authentication */}
               <Route path="/home" element={
