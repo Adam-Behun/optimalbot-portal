@@ -39,6 +39,9 @@ Thumbs.db
 *.md
 *.csv
 *.bin
+*.png
+*.jpg
+*.jpeg
 
 # Excluded directories
 docs/
