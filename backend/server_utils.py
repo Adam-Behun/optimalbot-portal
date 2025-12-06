@@ -4,11 +4,19 @@ import time
 import logging
 import asyncio
 import aiohttp
-from pipecat.runner.daily import DailyRoomConfig, configure
 from fastapi import HTTPException
 from backend.schemas import BotBodyData
 
 logger = logging.getLogger(__name__)
+
+# Only import pipecat for local development (not needed in production)
+_pipecat_available = False
+try:
+    from pipecat.runner.daily import DailyRoomConfig, configure
+    _pipecat_available = True
+except ImportError:
+    DailyRoomConfig = None
+    configure = None
 
 BOT_START_TIMEOUT = int(os.getenv("BOT_START_TIMEOUT", "30"))
 DAILY_ROOM_TIMEOUT = int(os.getenv("DAILY_ROOM_TIMEOUT", "15"))
@@ -34,7 +42,13 @@ def validate_phone_number(phone: str) -> tuple[bool, str]:
     return True, normalized
 
 
-async def create_daily_room(phone_number: str, session: aiohttp.ClientSession) -> DailyRoomConfig:
+async def create_daily_room(phone_number: str, session: aiohttp.ClientSession):
+    """Create Daily room for local development. Not used in production (Pipecat Cloud creates rooms)."""
+    if not _pipecat_available:
+        raise HTTPException(
+            status_code=500,
+            detail="Local room creation requires pipecat-ai. Use ENV=production for Pipecat Cloud."
+        )
     try:
         return await asyncio.wait_for(
             configure(session, sip_caller_phone=phone_number),

@@ -1,5 +1,4 @@
-# Core pipecat with required providers
-pipecat-ai[daily,tracing]
+# Pipecat Cloud client (for starting bots in production)
 pipecatcloud
 
 # Database
@@ -15,6 +14,9 @@ httpx
 
 # Environment
 python-dotenv
+
+# Date utilities
+python-dateutil
 
 # Testing
 pytest
