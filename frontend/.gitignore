@@ -27,7 +27,8 @@ dist
 dist-ssr
 *.local
 
-# Environment - keep .development and .production, ignore .local
+# Environment - keep .development and .production, ignore .local and custom .env
+.env
 .env.local
 .env.*.local
 

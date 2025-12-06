@@ -37,6 +37,10 @@ Thumbs.db
 
 # Documentation and data files
 *.md
+!CLAUDE.md
+!**/CLAUDE.md
+!README.md
+!**/README.md
 *.csv
 *.bin
 *.png
