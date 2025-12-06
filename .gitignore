@@ -3,18 +3,6 @@
 .env.test
 **/.env.test
 
-debug_audio.wav
-real1.txt
-real2.txt
-real3.txt
-real4.txt
-real5.txt
-ThePerfectFineTuningTranscript.txt
-14FineTuningExamples.txt
-fine-tune/
-documentation/
-Notes.md
-
 # Python
 __pycache__/
 *.py[cod]
@@ -44,17 +32,33 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Jupyter notebooks (may contain secrets/development artifacts)
+# Jupyter notebooks
 *.ipynb
 
-# Evaluation results (generated output)
-evals/**/results/
-evals-course-voice/
-
-# Local example repos
-whisker/
+# Documentation and data files
+*.md
+*.csv
 *.bin
-warm_transfer_example.py
-examples/
+
+# Excluded directories
+docs/
 pipecat_src/
-Change.md
+evals-course-voice/
+openai-realtime-s2s-example/
+scripts/
+whisker/
+fine-tune/
+documentation/
+examples/
+evals/**/results/
+
+# Misc excluded files
+debug_audio.wav
+real1.txt
+real2.txt
+real3.txt
+real4.txt
+real5.txt
+ThePerfectFineTuningTranscript.txt
+14FineTuningExamples.txt
+warm_transfer_example.py
