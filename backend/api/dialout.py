@@ -17,9 +17,8 @@ from backend.dependencies import (
 )
 from backend.models import AsyncPatientRecord
 from backend.sessions import AsyncSessionRecord
-from backend.schemas import CallRequest
+from backend.schemas import CallRequest, DialoutTarget, BotBodyData, TransferConfig
 from backend.server_utils import (
-    BotRequest,
     create_daily_room,
     start_bot_local,
     start_bot_production,
@@ -101,28 +100,41 @@ async def start_call(
 
         http_session = request.app.state.http_session
         try:
-            daily_config = await create_daily_room(phone_number, http_session)
-            room_url = daily_config.room_url
-            token = daily_config.token
-            logger.info(f"Daily room created: {room_url}")
+            phone_number_id = org.get("phone_number_id") or os.getenv("DAILY_PHONE_NUMBER_ID")
 
-            bot_request = BotRequest(
-                room_url=room_url,
-                token=token,
+            transfer_config = None
+            staff_phone = org.get("staff_phone")
+            if staff_phone:
+                transfer_config = TransferConfig(
+                    staff_phone=staff_phone,
+                    caller_id=phone_number_id
+                )
+
+            body_data = BotBodyData(
                 session_id=session_id,
                 patient_id=call_request.patient_id,
                 patient_data=patient,
-                phone_number=phone_number,
                 client_name=call_request.client_name,
                 organization_id=str(org_id),
-                organization_slug=org.get("slug")
+                organization_slug=org.get("slug"),
+                dialout_targets=[
+                    DialoutTarget(
+                        phone_number=phone_number,
+                        caller_id=phone_number_id
+                    )
+                ],
+                transfer_config=transfer_config
             )
 
             if ENV == "production":
-                await start_bot_production(bot_request, http_session)
+                await start_bot_production(body_data, http_session)
             else:
-                await start_bot_local(bot_request, http_session)
+                daily_config = await create_daily_room(phone_number, http_session)
+                body_data.room_url = daily_config.room_url
+                body_data.token = daily_config.token
+                await start_bot_local(body_data, http_session)
 
+            room_url = body_data.room_url or "created-by-pipecat-cloud"
             logger.info(f"Bot started successfully in {ENV.upper()} mode")
 
             await patient_db.update_call_status(

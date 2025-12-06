@@ -29,6 +29,7 @@ class ConversationPipeline:
         organization_slug: str,
         call_type: str,
         dialin_settings: Dict[str, str] = None,
+        transfer_config: Dict[str, Any] = None,
         debug_mode: bool = False
     ):
         self.client_name = client_name
@@ -40,6 +41,7 @@ class ConversationPipeline:
         self.organization_slug = organization_slug
         self.call_type = call_type
         self.dialin_settings = dialin_settings
+        self.transfer_config = transfer_config
         self.debug_mode = debug_mode
 
         self.pipeline = None

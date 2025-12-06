@@ -1,12 +1,12 @@
 import os
 import re
+import time
 import logging
 import asyncio
-from typing import Union
 import aiohttp
-from pydantic import BaseModel
 from pipecat.runner.daily import DailyRoomConfig, configure
 from fastapi import HTTPException
+from backend.schemas import BotBodyData
 
 logger = logging.getLogger(__name__)
 
@@ -14,26 +14,6 @@ BOT_START_TIMEOUT = int(os.getenv("BOT_START_TIMEOUT", "30"))
 DAILY_ROOM_TIMEOUT = int(os.getenv("DAILY_ROOM_TIMEOUT", "15"))
 
 PHONE_PATTERN = re.compile(r'^\+?1?\d{10,15}$')
-
-
-class BotRequestBase(BaseModel):
-    room_url: str
-    token: str
-    session_id: str
-    patient_id: str
-    patient_data: dict
-    client_name: str
-    organization_id: str
-    organization_slug: str
-
-
-class BotRequest(BotRequestBase):
-    phone_number: str
-
-
-class DialinBotRequest(BotRequestBase):
-    call_id: str
-    call_domain: str
 
 
 def normalize_phone_number(phone: str) -> str:
@@ -68,18 +48,51 @@ async def create_daily_room(phone_number: str, session: aiohttp.ClientSession) -
         raise HTTPException(status_code=500, detail=f"Failed to create Daily room: {str(e)}")
 
 
-async def start_bot_production(
-    bot_request: Union[BotRequest, DialinBotRequest],
-    session: aiohttp.ClientSession
-):
+def build_dialin_room_properties(caller_phone: str, expiry_seconds: int = 300) -> dict:
+    return {
+        "sip": {
+            "sip_mode": "dial-in",
+            "num_endpoints": 2,
+            "display_name": caller_phone
+        },
+        "enable_dialout": True,
+        "exp": int(time.time()) + expiry_seconds
+    }
+
+
+def build_dialout_room_properties(expiry_seconds: int = 300) -> dict:
+    return {
+        "enable_dialout": True,
+        "exp": int(time.time()) + expiry_seconds
+    }
+
+
+async def start_bot_production(body_data: BotBodyData, session: aiohttp.ClientSession):
     pipecat_api_key = os.getenv("PIPECAT_API_KEY")
     agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
 
     if not pipecat_api_key:
         raise HTTPException(status_code=500, detail="PIPECAT_API_KEY required for production mode")
 
-    logger.debug(f"Starting bot via Pipecat Cloud for session {bot_request.session_id}")
-    body_data = bot_request.model_dump(exclude_none=True)
+    if body_data.dialin_settings:
+        daily_room_properties = build_dialin_room_properties(
+            caller_phone=body_data.dialin_settings.caller_phone
+        )
+    else:
+        daily_room_properties = build_dialout_room_properties()
+
+    payload = {
+        "createDailyRoom": True,
+        "dailyRoomProperties": daily_room_properties,
+        "body": body_data.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_none=True,
+            exclude={"room_url", "token"}
+        )
+    }
+
+    logger.debug(f"Starting bot via Pipecat Cloud for session {body_data.session_id}")
 
     try:
         async with asyncio.timeout(BOT_START_TIMEOUT):
@@ -89,7 +102,7 @@ async def start_bot_production(
                     "Authorization": f"Bearer {pipecat_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"createDailyRoom": False, "body": body_data},
+                json=payload,
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -100,20 +113,24 @@ async def start_bot_production(
         raise HTTPException(status_code=504, detail="Bot startup timed out")
 
 
-async def start_bot_local(
-    bot_request: Union[BotRequest, DialinBotRequest],
-    session: aiohttp.ClientSession
-):
+async def start_bot_local(body_data: BotBodyData, session: aiohttp.ClientSession):
+    if not body_data.room_url or not body_data.token:
+        raise ValueError("room_url and token required for local mode")
+
     local_bot_url = os.getenv("LOCAL_BOT_URL", "http://localhost:7860")
-    logger.debug(f"Starting bot via local /start endpoint for session {bot_request.session_id}")
-    body_data = bot_request.model_dump(exclude_none=True)
+    logger.debug(f"Starting bot via local /start endpoint for session {body_data.session_id}")
+
+    payload = {
+        "createDailyRoom": False,
+        "body": body_data.model_dump(mode="json", by_alias=True, exclude_none=True)
+    }
 
     try:
         async with asyncio.timeout(BOT_START_TIMEOUT):
             async with session.post(
                 f"{local_bot_url}/start",
                 headers={"Content-Type": "application/json"},
-                json={"createDailyRoom": False, "body": body_data},
+                json=payload,
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()

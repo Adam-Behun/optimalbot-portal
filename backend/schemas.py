@@ -54,3 +54,47 @@ class BulkUploadResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     request_id: str
+
+
+class DialinSettings(BaseModel):
+    call_id: str
+    call_domain: str
+    caller_phone: str = Field(alias="from")
+    called_phone: str = Field(alias="to")
+
+    model_config = {"populate_by_name": True}
+
+
+class DialoutTarget(BaseModel):
+    phone_number: str = Field(alias="phoneNumber")
+    caller_id: Optional[str] = Field(default=None, alias="callerId")
+
+    model_config = {"populate_by_name": True, "by_alias": True}
+
+
+class TransferConfig(BaseModel):
+    staff_phone: str
+    caller_id: Optional[str] = None
+    enabled: bool = True
+
+
+class BotBodyData(BaseModel):
+    session_id: str
+    patient_id: str
+    patient_data: dict
+    organization_id: str
+    organization_slug: str
+    client_name: str
+    dialin_settings: Optional[DialinSettings] = None
+    dialout_targets: Optional[List[DialoutTarget]] = None
+    transfer_config: Optional[TransferConfig] = None
+    room_url: Optional[str] = None  # local dev only
+    token: Optional[str] = None  # local dev only
+
+    def model_post_init(self, __context):
+        has_dialin = self.dialin_settings is not None
+        has_dialout = self.dialout_targets is not None
+        if not has_dialin and not has_dialout:
+            raise ValueError("Either dialin_settings or dialout_targets required")
+        if has_dialin and has_dialout:
+            raise ValueError("Cannot specify both dialin_settings and dialout_targets")

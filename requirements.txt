@@ -31,3 +31,6 @@ python-jose[cryptography]
 # Rate limiting and retry
 slowapi
 tenacity
+
+# Caching
+cachetools
