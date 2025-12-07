@@ -1,5 +1,12 @@
 # Bot ignore file (for Dockerfile.bot)
 # Used by: deploy-test.sh, deploy-prod.sh
+#
+# REQUIRED FILES (do NOT add these to ignore):
+#   - pyproject.bot.toml (dependency specification)
+#   - uv.lock (lockfile for reproducible builds)
+#   - bot.py, logging_config.py
+#   - backend/{__init__,database,constants,sessions,utils}.py
+#   - backend/models/, services/, clients/, handlers/, core/, pipeline/, observers/
 
 # ============================================
 # EXCLUDE: Backend API code (bot only needs models, functions, sessions)
@@ -13,8 +20,12 @@ backend/lifespan.py
 backend/exceptions.py
 backend/audit.py
 backend/schemas.py
+backend/server_utils.py
+backend/CLAUDE.md
 app.py
 requirements.txt
+pyproject.toml
+requirements.bot.txt
 
 # ============================================
 # EXCLUDE: Frontend (deployed separately to Vercel)
@@ -22,9 +33,20 @@ requirements.txt
 frontend/
 
 # ============================================
+# EXCLUDE: Examples and development directories
+# ============================================
+pipecat-examples/
+evals/
+scripts/
+utils/
+whisker/
+patients.csv
+
+# ============================================
 # Python artifacts
 # ============================================
-__pycache__
+__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -34,13 +56,14 @@ env/
 ENV/
 env.bak/
 venv.bak/
-*.pyc
+.pytest_cache/
 
 # ============================================
 # Environment and secrets
 # ============================================
 .env
 .env.*
+.env.example
 *.log
 
 # ============================================
@@ -48,6 +71,7 @@ venv.bak/
 # ============================================
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 .DS_Store
@@ -71,9 +95,11 @@ Thumbs.db
 # ============================================
 fly.toml
 vercel.json
+pcc-deploy*.toml
 deploy-*.sh
 Dockerfile.api
 Dockerfile.api.dockerignore
+.dockerignore
 
 # ============================================
 # Documentation

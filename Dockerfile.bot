@@ -1,6 +1,29 @@
 # =============================================================================
-# Build directly on pipecat-base to avoid overwriting its packages
+# Healthcare Voice AI - Pipecat Cloud Deployment
+# Multi-stage build optimized for fast startup and small image size
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Dependency installation
+# -----------------------------------------------------------------------------
+FROM dailyco/pipecat-base:latest AS builder
+
+# Enable bytecode compilation for faster startup
+ENV UV_COMPILE_BYTECODE=1
+
+# Copy from cache instead of linking (required for mounted volumes)
+ENV UV_LINK_MODE=copy
+
+# Install dependencies using lockfile for reproducible builds
+# Uses bind mounts to avoid copying files into intermediate layers
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.bot.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project --no-dev
+
+# -----------------------------------------------------------------------------
+# Stage 2: Runtime image
+# -----------------------------------------------------------------------------
 FROM dailyco/pipecat-base:latest
 
 ENV PYTHONUNBUFFERED=1 \
@@ -9,38 +32,39 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install additional runtime system dependencies not in pipecat-base
-# (pipecat-base already has libopenblas, libresample1, libgl1, libglib2.0-0)
+# Keep this minimal - only what's actually needed at runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         libsndfile1 \
         libopus0 \
         libsodium23 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Copy requirements first for layer caching
-COPY requirements.bot.txt .
+# Copy virtual environment from builder stage
+COPY --from=builder /app/.venv /app/.venv
 
-# Install additional Python dependencies using uv (much faster than pip)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --no-cache -r requirements.bot.txt
-
-# Copy application code
-COPY bot.py .
+# Copy application code (ordered by change frequency for layer caching)
+# Least frequently changed first
+COPY logging_config.py .
 COPY backend/__init__.py backend/
 COPY backend/database.py backend/
 COPY backend/constants.py backend/
 COPY backend/sessions.py backend/
 COPY backend/utils.py backend/
 COPY backend/models/ backend/models/
+COPY core/ ./core/
 COPY services/ ./services/
 COPY clients/ ./clients/
 COPY handlers/ ./handlers/
-COPY core/ ./core/
 COPY pipeline/ ./pipeline/
 COPY observers/ ./observers/
 
-# Smoke test to validate bot module
+# Most frequently changed last (best cache utilization)
+COPY bot.py .
+
+# Smoke test to validate bot module loads correctly
 RUN python -c "import bot; assert hasattr(bot, 'bot'), 'bot() function missing'"
 
-# No CMD needed - Pipecat Cloud invokes bot.py:bot() function directly
+# No CMD needed - Pipecat Cloud base image handles invocation of bot.py:bot()

@@ -5,6 +5,19 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 IMAGE_TAG="test-${TIMESTAMP}"
 
 echo "🧪 TEST DEPLOYMENT"
+
+# Verify required files exist
+if [ ! -f "uv.lock" ]; then
+    echo "❌ uv.lock not found. Generate it with:"
+    echo "   cp pyproject.bot.toml pyproject.toml && uv lock && rm pyproject.toml"
+    exit 1
+fi
+
+if [ ! -f "pyproject.bot.toml" ]; then
+    echo "❌ pyproject.bot.toml not found"
+    exit 1
+fi
+
 echo "📦 Building image: ${IMAGE_TAG}..."
 DOCKER_BUILDKIT=1 docker buildx build \
   --platform linux/arm64 \

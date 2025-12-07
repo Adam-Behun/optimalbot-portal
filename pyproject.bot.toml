@@ -1,0 +1,45 @@
+[project]
+name = "healthcare-voice-ai"
+version = "1.0.0"
+description = "Healthcare voice AI for automated prior authorization verification"
+requires-python = ">=3.10"
+dependencies = [
+    # Pipecat AI - track latest
+    "pipecat-ai[daily,cartesia,deepgram,groq,tracing]",
+    "pipecat-ai-flows",
+    "pipecat-ai-whisker",
+    "pipecatcloud",
+
+    # LLM providers
+    "anthropic",
+
+    # Database
+    "motor",
+
+    # Observability
+    "langfuse",
+
+    # Utilities
+    "pyyaml",
+    "pydantic",
+    "tenacity",
+    "phonenumbers",
+    "python-dateutil",
+    "python-dotenv",
+    "loguru",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+exclude = [".git", "__pycache__", "*.pyc"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]

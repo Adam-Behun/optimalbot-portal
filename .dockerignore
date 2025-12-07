@@ -9,8 +9,8 @@
 # ============================================
 # Python artifacts
 # ============================================
-__pycache__
-**/__pycache__
+__pycache__/
+**/__pycache__/
 *.py[cod]
 **/*.py[cod]
 *$py.class
@@ -21,13 +21,14 @@ env/
 ENV/
 env.bak/
 venv.bak/
-*.pyc
+.pytest_cache/
 
 # ============================================
 # Environment and secrets
 # ============================================
 .env
 .env.*
+.env.example
 **/.env
 *.log
 **/*.log
@@ -36,9 +37,10 @@ venv.bak/
 # IDE and OS
 # ============================================
 .vscode/
-**/.vscode
+**/.vscode/
 .idea/
-**/.idea
+**/.idea/
+.claude/
 *.swp
 *.swo
 **/*.swp
@@ -59,9 +61,17 @@ Thumbs.db
 # ============================================
 # Frontend
 # ============================================
-frontend/node_modules
-frontend/build
-node_modules
+frontend/
+
+# ============================================
+# Development directories
+# ============================================
+evals/
+scripts/
+utils/
+whisker/
+pipecat-examples/
+patients.csv
 
 # ============================================
 # Git
@@ -86,6 +96,7 @@ AUDIT_ISSUES.md
 tests/
 test_*.py
 *_test.py
+pytest.ini
 
 # ============================================
 # Obsolete files

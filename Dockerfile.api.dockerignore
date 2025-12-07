@@ -1,16 +1,25 @@
 # Backend API ignore file (for Dockerfile.api)
 # Used by: fly deploy
+#
+# REQUIRED FILES (do NOT add these to ignore):
+#   - requirements.txt
+#   - app.py
+#   - backend/
 
 # ============================================
 # EXCLUDE: Bot-specific code (not needed by backend API)
 # ============================================
+bot.py
+logging_config.py
 core/
 pipeline/
 handlers/
 services/
 clients/
-bot.py
+observers/
 requirements.bot.txt
+pyproject.bot.toml
+uv.lock
 
 # ============================================
 # EXCLUDE: Frontend (deployed separately to Vercel)
@@ -18,9 +27,20 @@ requirements.bot.txt
 frontend/
 
 # ============================================
+# EXCLUDE: Development/testing directories
+# ============================================
+evals/
+scripts/
+utils/
+whisker/
+pipecat-examples/
+patients.csv
+
+# ============================================
 # Python artifacts
 # ============================================
-__pycache__
+__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -30,13 +50,14 @@ env/
 ENV/
 env.bak/
 venv.bak/
-*.pyc
+.pytest_cache/
 
 # ============================================
 # Environment and secrets
 # ============================================
 .env
 .env.*
+.env.example
 *.log
 
 # ============================================
@@ -44,6 +65,7 @@ venv.bak/
 # ============================================
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 .DS_Store
@@ -69,6 +91,7 @@ pcc-deploy*.toml
 deploy-*.sh
 Dockerfile.bot
 Dockerfile.bot.dockerignore
+.dockerignore
 
 # ============================================
 # Documentation
