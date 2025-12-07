@@ -37,3 +37,14 @@ async def close_mongo_client():
         logger.info("Closing shared MongoDB client connection")
         _mongo_client.close()
         _mongo_client = None
+
+
+async def check_connection() -> tuple[bool, str]:
+    """Check MongoDB connectivity using ping command."""
+    try:
+        client = get_mongo_client()
+        await client.admin.command('ping')
+        return True, "connected"
+    except Exception as e:
+        logger.error(f"Database connection check failed: {e}")
+        return False, str(e)

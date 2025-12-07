@@ -1,18 +1,10 @@
-# Core pipecat with required providers (includes openai, daily-python, opentelemetry packages)
-# silero: VAD for voice activity detection
-# local-smart-turn-v3: Smart Turn v3 for semantic turn detection (CPU inference)
-pipecat-ai[daily,cartesia,deepgram,groq,tracing,silero,local-smart-turn-v3]
+pipecat-ai[daily,cartesia,deepgram,groq,tracing]
 pipecat-ai-flows
-
-# Required by pipecat even if not used (imported at module level)
 anthropic
-
-# Database
 motor
-
-# Additional dependencies
 langfuse
-pyyaml  # For services.yaml parsing
-pydantic  # For backend API schemas
+pyyaml
+pydantic
 tenacity
 phonenumbers
+python-dateutil

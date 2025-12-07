@@ -1,7 +1,6 @@
 import os
 import logging
 from typing import List, Tuple
-from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +21,9 @@ def validate_env_vars(required_vars: List[str]) -> Tuple[bool, List[str]]:
     return len(missing) == 0, missing
 
 
-async def health_check_mongodb(uri: str, timeout: float = 5.0) -> Tuple[bool, str]:
-    try:
-        client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=int(timeout * 1000))
-        await client.admin.command('ping')
-        client.close()
-        return True, ""
-    except Exception as e:
-        return False, f"MongoDB connection failed: {str(e)}"
-
-
 async def validate_backend_startup() -> None:
+    from backend.database import check_connection
+
     logger.info("Validating backend environment...")
 
     all_present, missing = validate_env_vars(REQUIRED_BACKEND_ENV_VARS)
@@ -40,8 +31,7 @@ async def validate_backend_startup() -> None:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
     logger.info("✓ Required environment variables present")
 
-    mongo_uri = os.getenv("MONGO_URI")
-    is_healthy, error = await health_check_mongodb(mongo_uri)
+    is_healthy, error = await check_connection()
     if not is_healthy:
         raise RuntimeError(f"MongoDB health check failed: {error}")
 

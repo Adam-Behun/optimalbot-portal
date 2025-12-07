@@ -1,7 +1,6 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from backend.dependencies import get_patient_db
-from backend.models import AsyncPatientRecord
+from backend.database import check_connection
 
 router = APIRouter()
 
@@ -28,15 +27,11 @@ async def root():
 
 
 @router.get("/health")
-async def health_check(patient_db: AsyncPatientRecord = Depends(get_patient_db)):
-    try:
-        await patient_db.patients.find_one({})
-        db_status = "connected"
-    except Exception as e:
-        db_status = f"error: {str(e)}"
+async def health():
+    is_connected, db_status = await check_connection()
 
     return {
-        "status": "healthy",
+        "status": "healthy" if is_connected else "degraded",
         "service": "healthcare-backend-api",
         "database": db_status
     }

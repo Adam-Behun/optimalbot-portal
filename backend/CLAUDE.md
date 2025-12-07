@@ -86,18 +86,34 @@ Organization-scoped access uses `Depends(require_organization_access)`.
 |------|---------|
 | `main.py` | FastAPI app, routers, CORS, rate limiting |
 | `dependencies.py` | Auth guards, DB injection, audit helpers |
-| `database.py` | MongoDB connection (Motor async) |
+| `database.py` | MongoDB connection (Motor async), `check_connection()` health check |
 | `schemas.py` | Pydantic request/response models |
 | `constants.py` | Status enums (SessionStatus, CallStatus, etc.) |
-| `models/patient_user.py` | AsyncPatientRecord, AsyncUserRecord classes |
+| `models/patient.py` | AsyncPatientRecord - patient data access (PHI) |
+| `models/user.py` | AsyncUserRecord - user auth/management |
 | `models/organization.py` | AsyncOrganizationRecord class |
 | `sessions.py` | AsyncSessionRecord for call sessions |
 | `audit.py` | AuditLogger for HIPAA compliance |
 | `server_utils.py` | Daily room creation, bot start (local/production) |
+| `api/health.py` | Root info and `/health` endpoint |
 | `api/auth.py` | Login, logout, password reset endpoints |
 | `api/patients.py` | Patient CRUD endpoints |
 | `api/dialout.py` | Outbound call management |
 | `api/dialin.py` | Inbound call webhook handler |
+
+## Architecture Layers
+
+```
+API Layer (api/*.py)          → HTTP endpoints, auth, validation, audit
+    ↓ calls
+Data Access Layer (models/*.py) → Database operations (CRUD)
+    ↓ uses
+Database Layer (database.py)    → MongoDB connection, health check
+```
+
+- `models/patient.py` handles PHI - kept separate for HIPAA audit compliance
+- `models/user.py` handles authentication - separate security domain
+- Bot and handlers use models directly (no HTTP layer)
 
 ## Common Tasks
 

@@ -1,7 +1,9 @@
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from motor.motor_asyncio import AsyncIOMotorClient
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from motor.motor_asyncio import AsyncIOMotorClient
 
 from backend.database import get_mongo_client, MONGO_DB_NAME
 

@@ -11,7 +11,12 @@ from handlers import (
 )
 from handlers.triage import setup_triage_handlers
 from observers import LangfuseLatencyObserver
-from pipecat_whisker import WhiskerObserver
+
+try:
+    from pipecat_whisker import WhiskerObserver
+    WHISKER_AVAILABLE = True
+except ImportError:
+    WHISKER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +113,7 @@ class ConversationPipeline:
 
         # Create Whisker observer for pipeline debugging (only in debug mode)
         observers = [self.latency_observer]
-        if self.debug_mode:
+        if self.debug_mode and WHISKER_AVAILABLE:
             self.whisker_observer = WhiskerObserver(
                 self.pipeline,
                 host="localhost",

@@ -28,14 +28,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy application code
 COPY bot.py .
 COPY backend/__init__.py backend/
-COPY backend/functions.py backend/
-COPY backend/models.py backend/
+COPY backend/database.py backend/
+COPY backend/constants.py backend/
 COPY backend/sessions.py backend/
+COPY backend/utils.py backend/
+COPY backend/models/ backend/models/
 COPY services/ ./services/
 COPY clients/ ./clients/
 COPY handlers/ ./handlers/
 COPY core/ ./core/
 COPY pipeline/ ./pipeline/
+COPY observers/ ./observers/
 
 # Smoke test to validate bot module
 RUN python -c "import bot; assert hasattr(bot, 'bot'), 'bot() function missing'"

@@ -57,6 +57,7 @@ whisker/
 fine-tune/
 documentation/
 examples/
+pipecat-examples/
 evals/**/results/
 
 # Misc excluded files
