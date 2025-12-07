@@ -1,16 +1,14 @@
 import os
 import asyncio
 import uvicorn
-import logging
 from dotenv import load_dotenv
+from loguru import logger
 
 # Load environment variables from .env file
 load_dotenv()
 
 from backend.config import validate_backend_startup
 from backend.main import app
-
-logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     logger.info("=" * 60)

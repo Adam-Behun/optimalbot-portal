@@ -1,11 +1,10 @@
 import os
-import logging
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
+from loguru import logger
 
 load_dotenv()
-logger = logging.getLogger(__name__)
 
 _mongo_client: Optional[AsyncIOMotorClient] = None
 

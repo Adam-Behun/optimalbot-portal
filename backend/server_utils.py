@@ -1,13 +1,11 @@
 import os
 import re
 import time
-import logging
 import asyncio
 import aiohttp
 from fastapi import HTTPException
+from loguru import logger
 from backend.schemas import BotBodyData
-
-logger = logging.getLogger(__name__)
 
 # Only import pipecat for local development (not needed in production)
 _pipecat_available = False

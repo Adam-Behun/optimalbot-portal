@@ -1,10 +1,9 @@
 import os
-import logging
-import traceback
 import uuid
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from slowapi import Limiter
+from loguru import logger
 
 from backend.dependencies import (
     get_current_user,
@@ -24,10 +23,9 @@ from backend.server_utils import (
     start_bot_production,
     validate_phone_number
 )
-from backend.utils import convert_objectid
+from backend.utils import convert_objectid, mask_id, mask_phone, mask_email
 from backend.constants import SessionStatus, CallStatus
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
@@ -55,10 +53,7 @@ async def start_call(
     org = org_context["organization"]
     org_id = org_context["organization_id"]
 
-    logger.info("=== INITIATING CALL ===")
-    logger.info(f"Patient ID: {call_request.patient_id}")
-    logger.info(f"User: {current_user['email']}")
-    logger.info(f"Organization: {org.get('name')} ({org_id})")
+    logger.info(f"Initiating call - patient={mask_id(call_request.patient_id)}, user={mask_email(current_user['email'])}, org={mask_id(org_id)}")
 
     try:
         workflows = org.get("workflows", {})
@@ -73,13 +68,11 @@ async def start_call(
                 detail=f"Workflow '{call_request.client_name}' is not enabled for this organization"
             )
 
-        logger.info("Fetching patient data from database...")
         patient = await patient_db.find_patient_by_id(call_request.patient_id, organization_id=org_id)
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
         patient = convert_objectid(patient)
-        logger.info(f"Patient found with ID: {call_request.patient_id}")
 
         await log_phi_access(
             request=request,
@@ -96,7 +89,7 @@ async def start_call(
         phone_number = phone_result
 
         session_id = str(uuid.uuid4())
-        logger.info(f"Session ID: {session_id}, Phone: {phone_number}")
+        logger.info(f"Call session={mask_id(session_id)}, phone={mask_phone(phone_number)}")
 
         http_session = request.app.state.http_session
         try:
@@ -154,8 +147,7 @@ async def start_call(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error starting bot: {e}")
-            logger.error(traceback.format_exc())
+            logger.exception("Error starting bot")
             raise HTTPException(status_code=500, detail=f"Failed to start call: {str(e)}")
 
         return CallResponse(
@@ -169,8 +161,7 @@ async def start_call(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error initiating call: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error initiating call")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -259,7 +250,7 @@ async def end_call(
         resource_id=session_id
     )
 
-    logger.info(f"User {current_user['email']} ending call session: {session_id}")
+    logger.info(f"User {mask_email(current_user['email'])} ending session {mask_id(session_id)}")
 
     await session_db.update_session(session_id, {"status": SessionStatus.TERMINATED.value}, organization_id=org_id)
 

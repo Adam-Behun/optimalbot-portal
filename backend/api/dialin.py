@@ -1,19 +1,19 @@
 import os
 import uuid
-import logging
 from datetime import datetime, timezone
 from cachetools import TTLCache
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from loguru import logger
 from backend.models import get_async_patient_db
 from backend.models.organization import get_async_organization_db
 from backend.sessions import get_async_session_db
 from backend.schemas import DialinSettings, BotBodyData, TransferConfig
 from backend.server_utils import create_daily_room, start_bot_production, start_bot_local
 from backend.constants import CallStatus
+from backend.utils import mask_id, mask_phone
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ENV = os.getenv("ENV", "local")
@@ -30,7 +30,7 @@ class DailyCallData(BaseModel):
 
 async def call_data_from_request(request: Request) -> DailyCallData:
     data = await request.json()
-    logger.info(f"Received Daily webhook data: {data}")
+    logger.debug("Received Daily webhook data")  # Don't log raw data with PHI
 
     if not all(key in data for key in ["From", "To", "callId", "callDomain"]):
         raise HTTPException(
@@ -48,8 +48,7 @@ async def call_data_from_request(request: Request) -> DailyCallData:
 
 @router.post("/dialin-webhook/{client_name}/{workflow_name}")
 async def handle_dialin_webhook(client_name: str, workflow_name: str, request: Request) -> JSONResponse:
-    logger.info(f"=== DIAL-IN WEBHOOK RECEIVED ===")
-    logger.info(f"Client: {client_name}, Workflow: {workflow_name}")
+    logger.info(f"Dial-in webhook - client={client_name}, workflow={workflow_name}")
 
     call_data = await call_data_from_request(request)
 
@@ -69,9 +68,7 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
         raise HTTPException(status_code=404, detail=f"Organization '{client_name}' not found")
 
     organization_id = str(organization["_id"])
-    logger.info(f"Organization found: {organization.get('name')} (ID: {organization_id})")
-    logger.info(f"From: {call_data.from_phone}, To: {call_data.to_phone}")
-    logger.info(f"Call ID: {call_data.call_id}, Domain: {call_data.call_domain}")
+    logger.info(f"Org found - id={mask_id(organization_id)}, caller={mask_phone(call_data.from_phone)}")
 
     session_id = str(uuid.uuid4())
     http_session = request.app.state.http_session
@@ -89,7 +86,7 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
     if not patient_id:
         raise HTTPException(status_code=500, detail="Failed to create patient record")
 
-    logger.info(f"Patient record created: {patient_id}")
+    logger.info(f"Patient created: {mask_id(patient_id)}")
 
     session_db = get_async_session_db()
     session_created = await session_db.create_session({
@@ -104,7 +101,7 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
     if not session_created:
         raise HTTPException(status_code=500, detail="Failed to create session record")
 
-    logger.info(f"Session record created: {session_id}")
+    logger.info(f"Session created: {mask_id(session_id)}")
 
     transfer_config = None
     staff_phone = organization.get("staff_phone")
@@ -152,7 +149,7 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
         logger.error(f"Error starting dial-in bot: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start bot: {str(e)}")
 
-    logger.info(f"Dial-in bot started for session {session_id}")
+    logger.info(f"Dial-in bot started - session={mask_id(session_id)}")
 
     return JSONResponse({
         "status": "success",

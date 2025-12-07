@@ -1,7 +1,6 @@
-import logging
-import traceback
 from fastapi import APIRouter, HTTPException, Request, Depends
 from slowapi import Limiter
+from loguru import logger
 
 from backend.dependencies import (
     get_current_user,
@@ -15,9 +14,8 @@ from backend.dependencies import (
 from backend.models import AsyncPatientRecord
 from backend.audit import AuditLogger
 from backend.schemas import PatientCreate, PatientResponse, BulkPatientRequest, BulkUploadResponse
-from backend.utils import convert_objectid
+from backend.utils import convert_objectid, mask_id, mask_email
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
@@ -32,7 +30,7 @@ async def list_patients(
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
     try:
-        logger.info(f"📋 User {current_user['email']} fetching patients for org {org_id}, workflow={workflow}")
+        logger.info(f"User {mask_email(current_user['email'])} fetching patients for org {mask_id(org_id)}, workflow={workflow}")
 
         all_patients = await patient_db.find_patients_by_organization(org_id, workflow=workflow)
 
@@ -61,8 +59,7 @@ async def list_patients(
         }
 
     except Exception as e:
-        logger.error(f"❌ Error fetching patients: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error fetching patients")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -96,8 +93,7 @@ async def get_patient_by_id(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching patient {patient_id}: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception(f"Error fetching patient")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -131,7 +127,7 @@ async def add_patient(
         resource_id=patient_id
     )
 
-    logger.info(f"User {current_user['email']} added new patient with ID: {patient_id} to org {org_id} workflow {patient_data.workflow}")
+    logger.info(f"User {mask_email(current_user['email'])} added patient {mask_id(patient_id)} to org {mask_id(org_id)} workflow={patient_data.workflow}")
 
     return PatientResponse(
         status="success",
@@ -164,7 +160,7 @@ async def add_patients_bulk(
         if patient_id:
             success_count += 1
             created_ids.append(patient_id)
-            logger.info(f"Added patient with ID: {patient_id} to org {org_id}")
+            logger.info(f"Bulk add: patient {mask_id(patient_id)} to org {mask_id(org_id)}")
         else:
             failed_count += 1
             errors.append({
@@ -221,8 +217,7 @@ async def update_patient(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating patient {patient_id}: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error updating patient")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -251,6 +246,5 @@ async def delete_patient(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting patient {patient_id}: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error deleting patient")
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,12 +1,10 @@
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 import aiohttp
 from fastapi import FastAPI
+from loguru import logger
 
 from backend.database import close_mongo_client
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

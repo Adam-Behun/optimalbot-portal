@@ -1,16 +1,14 @@
 import os
-import logging
 from typing import Tuple
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+from loguru import logger
 
 from backend.models import AsyncPatientRecord, AsyncUserRecord, get_async_patient_db, get_async_user_db
 from backend.models.organization import AsyncOrganizationRecord, get_async_organization_db
 from backend.sessions import AsyncSessionRecord, get_async_session_db
 from backend.audit import AuditLogger, get_audit_logger
-
-logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")

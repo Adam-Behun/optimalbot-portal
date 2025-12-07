@@ -1,11 +1,15 @@
 import os
-import logging
+import sys
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+from loguru import logger
 from pipecat.runner.types import DailyRunnerArguments
 from pipeline.runner import ConversationPipeline
 from backend.sessions import get_async_session_db
 from backend.models import get_async_patient_db
+from backend.utils import mask_id, mask_phone
+from logging_config import setup_logging
+
 try:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from pipecat.utils.tracing.setup import setup_tracing
@@ -13,14 +17,12 @@ try:
 except ImportError:
     TRACING_AVAILABLE = False
 
-# Load .env for local dev only - won't override Pipecat Cloud secrets
 load_dotenv(override=False)
 
-# Determine log level from DEBUG environment variable
 DEBUG_MODE = os.getenv("DEBUG", "false").lower() in ["true", "1", "yes"]
-LOG_LEVEL = logging.DEBUG if DEBUG_MODE else logging.INFO
+IS_TRACING_ENABLED = os.getenv("ENABLE_TRACING", "").lower() in ["true", "1", "yes"]
 
-IS_TRACING_ENABLED = bool(os.getenv("ENABLE_TRACING", "").lower() in ["true", "1", "yes"])
+setup_logging(debug=DEBUG_MODE)
 
 if IS_TRACING_ENABLED and TRACING_AVAILABLE:
     try:
@@ -31,24 +33,9 @@ if IS_TRACING_ENABLED and TRACING_AVAILABLE:
             console_export=os.getenv("OTEL_CONSOLE_EXPORT", "false").lower() in ["true", "1", "yes"],
         )
     except Exception as e:
-        logging.error(f"Failed to initialize tracing: {e}")
+        logger.error(f"Failed to initialize tracing: {e}")
 elif IS_TRACING_ENABLED and not TRACING_AVAILABLE:
-    logging.warning("Tracing enabled but OpenTelemetry packages not installed")
-
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# Suppress verbose libraries even in DEBUG mode
-logging.getLogger('pymongo').setLevel(logging.WARNING)
-logging.getLogger('websockets').setLevel(logging.WARNING)
-logging.getLogger('websockets.client').setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
-
-if DEBUG_MODE:
-    logger.info("🐛 DEBUG mode enabled - verbose logging active")
+    logger.warning("Tracing enabled but OpenTelemetry packages not installed")
 
 
 async def bot(args: DailyRunnerArguments):
@@ -71,11 +58,11 @@ async def bot(args: DailyRunnerArguments):
         if dialin_settings:
             call_type = "dial-in"
             phone_number = dialin_settings.get("from", "unknown")
-            logger.info(f"DIAL-IN call detected - Call ID: {dialin_settings.get('call_id')}, Caller: {phone_number}")
+            logger.info(f"DIAL-IN call - call_id={dialin_settings.get('call_id')}, caller={mask_phone(phone_number)}")
         elif dialout_targets and len(dialout_targets) > 0:
             call_type = "dial-out"
             phone_number = dialout_targets[0].get("phoneNumber")
-            logger.info(f"DIAL-OUT call detected - Dialing: {phone_number}")
+            logger.info(f"DIAL-OUT call - dialing={mask_phone(phone_number)}")
         else:
             raise ValueError("Either dialin_settings or dialout_targets required")
 
@@ -110,7 +97,7 @@ async def bot(args: DailyRunnerArguments):
         }, organization_id)
 
     except Exception as e:
-        logger.error(f"Bot error - Session: {session_id}, Error: {e}")
+        logger.exception(f"Bot error - session={mask_id(session_id)}")
 
         try:
             await session_db.update_session(session_id, {
@@ -119,13 +106,12 @@ async def bot(args: DailyRunnerArguments):
                 "error": str(e)
             }, organization_id if 'organization_id' in dir() else None)
 
-            # Update patient call_status to Failed so frontend stops polling
             if patient_id and organization_id:
                 patient_db = get_async_patient_db()
                 await patient_db.update_call_status(patient_id, "Failed", organization_id)
-                logger.info(f"Updated patient {patient_id} call_status to Failed")
+                logger.info(f"Updated patient {mask_id(patient_id)} call_status to Failed")
         except Exception as cleanup_error:
-            logger.error(f"Failed to update status on error: {cleanup_error}")
+            logger.exception("Failed to update status on error")
 
         raise
 
@@ -137,7 +123,6 @@ async def bot(args: DailyRunnerArguments):
 
 # Local development mode - runs FastAPI server with /start endpoint
 if __name__ == "__main__":
-    import sys
     import uvicorn
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel
@@ -162,7 +147,7 @@ if __name__ == "__main__":
             try:
                 patient_id = request.body.get('patient_id')
                 session_id = request.body.get('session_id')
-                logger.info(f"Received local bot start request for patient {patient_id}, session {session_id}")
+                logger.info(f"Local bot start - patient={mask_id(patient_id)}, session={mask_id(session_id)}")
 
                 # Create DailyRunnerArguments object
                 # We need to create it the same way Pipecat Cloud does
@@ -180,9 +165,7 @@ if __name__ == "__main__":
                 return {"status": "started", "session_id": session_id}
 
             except Exception as e:
-                logger.error(f"Error starting bot locally: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                logger.exception("Error starting bot locally")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @app.get("/health")

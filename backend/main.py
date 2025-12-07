@@ -1,22 +1,19 @@
 import os
-import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from loguru import logger
 
+from logging_config import setup_logging
 from backend.lifespan import lifespan
-from backend.middleware import SecurityHeadersMiddleware
+from backend.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from backend.exceptions import register_exception_handlers
 from backend.dependencies import get_user_id_from_request
 from backend.api import health, auth, patients, dialout, dialin
 from backend.config import validate_env_vars, REQUIRED_BACKEND_ENV_VARS
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+setup_logging()
 
 all_present, missing = validate_env_vars(REQUIRED_BACKEND_ENV_VARS)
 if not all_present:
@@ -51,6 +48,7 @@ app.add_middleware(
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestIDMiddleware)  # outermost - wraps all requests
 register_exception_handlers(app)
 
 app.include_router(health.router, tags=["Health"])

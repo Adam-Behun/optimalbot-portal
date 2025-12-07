@@ -1,5 +1,5 @@
-import logging
 import os
+from loguru import logger
 import yaml
 from pathlib import Path
 from typing import Dict, Any
@@ -16,8 +16,6 @@ from services.service_factory import ServiceFactory
 from pipeline.triage_detector import TriageDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
 from core.flow_loader import FlowLoader
-
-logger = logging.getLogger(__name__)
 
 
 class PipelineFactory:

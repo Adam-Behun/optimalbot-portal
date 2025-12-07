@@ -1,7 +1,7 @@
 """Triage event handlers - connect classification to flow and IVR navigation."""
 
-import logging
 from datetime import datetime
+from loguru import logger
 
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame, VADParamsUpdateFrame
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -9,8 +9,6 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from backend.models import get_async_patient_db
 from backend.constants import CallStatus
 from pipeline.ivr_navigation_processor import IVRStatus
-
-logger = logging.getLogger(__name__)
 
 
 def setup_triage_handlers(

@@ -1,6 +1,6 @@
 import asyncio
-import logging
 from typing import Dict, Any
+from loguru import logger
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat_flows import FlowManager
@@ -17,8 +17,6 @@ try:
     WHISKER_AVAILABLE = True
 except ImportError:
     WHISKER_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 
 class ConversationPipeline:
@@ -180,9 +178,7 @@ class ConversationPipeline:
             logger.info("✅ Call completed successfully")
 
         except Exception as e:
-            logger.error(f"❌ Pipeline error: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.exception("Pipeline error")
             raise
 
     def get_conversation_state(self) -> Dict[str, Any]:

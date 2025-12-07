@@ -1,4 +1,3 @@
-import logging
 import os
 from typing import Any, Dict
 
@@ -8,12 +7,11 @@ from pipecat_flows import (
     FlowsFunctionSchema,
     NodeConfig,
 )
+from loguru import logger
 
 from backend.models import get_async_patient_db
 from backend.utils import parse_natural_date, parse_natural_time
 from handlers.transcript import save_transcript_to_db
-
-logger = logging.getLogger(__name__)
 
 
 async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
@@ -649,9 +647,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
                 logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
 
         except Exception as e:
-            import traceback
-
-            logger.error(f"Error in end_call_handler: {traceback.format_exc()}")
+            logger.exception("Error in end_call_handler")
 
             if patient_id and db:
                 try:
@@ -691,8 +687,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
             return None, self.create_transfer_initiated_node()
 
         except Exception as e:
-            import traceback
-            logger.error(f"Cold transfer failed: {traceback.format_exc()}")
+            logger.exception("Cold transfer failed")
 
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False

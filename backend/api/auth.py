@@ -1,19 +1,16 @@
 import os
-import logging
 import secrets
-import traceback
 from datetime import timedelta, datetime
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from jose import JWTError, jwt
 from slowapi import Limiter
+from loguru import logger
 
 from backend.dependencies import get_user_db, get_audit_logger_dep, get_client_info, get_user_id_from_request, get_organization_db
 from backend.models import AsyncUserRecord
 from backend.models.organization import AsyncOrganizationRecord
 from backend.audit import AuditLogger
-
-logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
@@ -227,8 +224,7 @@ async def login(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error during login: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error during login")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -464,8 +460,7 @@ async def login_central(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error during central login: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error during central login")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -553,6 +548,5 @@ async def exchange_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error during token exchange: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.exception("Error during token exchange")
         raise HTTPException(status_code=500, detail="Internal server error")

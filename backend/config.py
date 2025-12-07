@@ -1,8 +1,6 @@
 import os
-import logging
 from typing import List, Tuple
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 ENV = os.getenv("ENV", "local")
 

@@ -1,8 +1,6 @@
-import logging
 from importlib import import_module
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class FlowLoader:

@@ -1,13 +1,11 @@
-import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from loguru import logger
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorClient
 
 from backend.database import get_mongo_client, MONGO_DB_NAME
-
-logger = logging.getLogger(__name__)
 
 
 class AuditLogger:

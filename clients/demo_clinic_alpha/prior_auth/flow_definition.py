@@ -1,10 +1,8 @@
-import logging
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
+from loguru import logger
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
-
-logger = logging.getLogger(__name__)
 
 
 class PriorAuthFlow:
@@ -447,8 +445,7 @@ If they ask to speak with a human or manager → call request_staff"""
             return None, self.create_transfer_initiated_node()
 
         except Exception as e:
-            import traceback
-            logger.error(f"Cold transfer failed: {traceback.format_exc()}")
+            logger.exception("Cold transfer failed")
 
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False

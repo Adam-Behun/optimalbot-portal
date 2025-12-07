@@ -1,12 +1,10 @@
-import logging
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat.frames.frames import ManuallySwitchServiceFrame, EndTaskFrame
 from pipecat.processors.frame_processor import FrameDirection
+from loguru import logger
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
-
-logger = logging.getLogger(__name__)
 
 
 class PatientQuestionsFlow:
@@ -180,7 +178,6 @@ Keep the conversation natural and friendly. If they want to end the call early, 
                 )
 
         except Exception as e:
-            import traceback
-            logger.error(f"Error in end_call_handler: {traceback.format_exc()}")
+            logger.exception("Error in end_call_handler")
 
         return None, None

@@ -1,14 +1,12 @@
-import logging
 from datetime import datetime, timezone
 from typing import Optional, List, TYPE_CHECKING
 from bson import ObjectId
+from loguru import logger
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorClient
 
 from backend.database import get_mongo_client, MONGO_DB_NAME
-
-logger = logging.getLogger(__name__)
 
 
 class AsyncUserRecord:

@@ -1,11 +1,9 @@
-import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
 from bson import ObjectId
 from dateutil import parser as dateutil_parser
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def convert_objectid(doc: Union[Dict, List, Any]) -> Union[Dict, List, Any]:
@@ -125,3 +123,24 @@ def normalize_appointment_datetime(
     normalized_date = parse_natural_date(date_str) if date_str else None
     normalized_time = parse_natural_time(time_str) if time_str else None
     return normalized_date, normalized_time
+
+
+# PHI redaction for safe logging
+def mask_id(id_str: str) -> str:
+    if not id_str:
+        return "***"
+    return f"{id_str[:8]}..." if len(id_str) > 8 else "***"
+
+
+def mask_phone(phone: str) -> str:
+    if not phone:
+        return "***"
+    digits = ''.join(c for c in phone if c.isdigit())
+    return f"***{digits[-4:]}" if len(digits) >= 4 else "***"
+
+
+def mask_email(email: str) -> str:
+    if not email or '@' not in email:
+        return "***"
+    local, domain = email.split('@', 1)
+    return f"{local[0]}***@{domain}" if local else f"***@{domain}"

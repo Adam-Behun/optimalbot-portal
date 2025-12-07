@@ -1,15 +1,13 @@
 # this is the first flow into which a patient's call is routed
 # from here the patient can be scheduled for an appointment or routed to a live agent or get any other questions answered
 
-import logging
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat.frames.frames import EndTaskFrame
 from pipecat.processors.frame_processor import FrameDirection
+from loguru import logger
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
-
-logger = logging.getLogger(__name__)
 
 
 class PatientQuestionsFlow:
@@ -443,8 +441,7 @@ Thank them and ask if there's anything else you can help with. Say something lik
                 )
 
         except Exception as e:
-            import traceback
-            logger.error(f"Error in end_call_handler: {traceback.format_exc()}")
+            logger.exception("Error in end_call_handler")
 
             # Update status to Failed on error
             if patient_id and db:

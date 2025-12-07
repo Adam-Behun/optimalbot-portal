@@ -1,24 +1,17 @@
 import uuid
-import logging
 import traceback
 from datetime import datetime
 from fastapi import Request, HTTPException, FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = str(uuid.uuid4())
     logger.error(
-        f"Request failed: {request.method} {request.url.path}",
-        extra={
-            "request_id": request_id,
-            "error": str(exc),
-            "error_type": type(exc).__name__,
-            "traceback": traceback.format_exc()
-        }
+        f"Request failed: {request.method} {request.url.path} | "
+        f"request_id={request_id} error_type={type(exc).__name__} error={exc}"
     )
     return JSONResponse(
         status_code=500,
@@ -33,8 +26,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
     request_id = str(uuid.uuid4())
     logger.warning(
-        f"Validation error: {request.method} {request.url.path}",
-        extra={"request_id": request_id, "errors": exc.errors()}
+        f"Validation error: {request.method} {request.url.path} | "
+        f"request_id={request_id} errors={exc.errors()}"
     )
     return JSONResponse(
         status_code=422,
@@ -51,8 +44,8 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
     if exc.status_code >= 500:
         logger.error(
-            f"HTTP {exc.status_code}: {request.method} {request.url.path}",
-            extra={"request_id": request_id, "detail": exc.detail}
+            f"HTTP {exc.status_code}: {request.method} {request.url.path} | "
+            f"request_id={request_id} detail={exc.detail}"
         )
         return JSONResponse(
             status_code=exc.status_code,
