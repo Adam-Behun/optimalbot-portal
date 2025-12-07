@@ -1,5 +1,5 @@
-agent_name = "healthcare-voice-ai"
-image = "adambehun/healthcare-bot:latest"
+agent_name = "prod"
+image = "adambehun/bot:latest"
 image_credentials = "dockerhub-creds"
 secret_set = "healthcare-secrets"
 agent_profile = "agent-1x"

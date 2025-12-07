@@ -7,8 +7,7 @@ read -p "Deploy to production? (yes/no): " confirm
 
 # Verify required files exist
 if [ ! -f "uv.lock" ]; then
-    echo "❌ uv.lock not found. Generate it with:"
-    echo "   cp pyproject.bot.toml pyproject.toml && uv lock && rm pyproject.toml"
+    echo "❌ uv.lock not found. Run: ./update-bot-deps.sh"
     exit 1
 fi
 
@@ -17,12 +16,16 @@ if [ ! -f "pyproject.bot.toml" ]; then
     exit 1
 fi
 
-echo "📦 Building image..."
+echo "📦 Building image: bot:latest..."
 DOCKER_BUILDKIT=1 docker buildx build \
   --platform linux/arm64 \
   -f Dockerfile.bot \
-  -t adambehun/healthcare-bot:latest \
-  --push . && echo "✅ Image built"
+  -t adambehun/bot:latest \
+  --push .
+
+echo "✅ Image built"
 
 echo "🚀 Deploying to Pipecat Cloud..."
-pipecat cloud deploy --force && echo "✅ Deployed: healthcare-voice-ai"
+pipecat cloud deploy --force
+
+echo "✅ Deployed: prod (bot:latest)"

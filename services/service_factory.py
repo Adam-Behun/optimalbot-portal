@@ -10,9 +10,8 @@ from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.transports.daily.transport import DailyDialinSettings, DailyParams, DailyTransport
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-# Smart Turn imports are lazy-loaded only when needed (requires pipecat-ai[local-smart-turn-v3])
+# Silero VAD and Smart Turn imports are lazy-loaded only when needed
 
 from utils.function_call_text_filter import FunctionCallTextFilter
 
@@ -51,8 +50,16 @@ class ServiceFactory:
             vad_config = turn_detection_config.get('vad', {})
             smart_turn_config = turn_detection_config.get('smart_turn', {})
 
-            # Configure Silero VAD
+            # Configure Silero VAD (lazy import - requires pipecat-ai[silero])
             if vad_config.get('type') == 'silero':
+                try:
+                    from pipecat.audio.vad.silero import SileroVADAnalyzer
+                except ImportError as e:
+                    raise ImportError(
+                        "Silero VAD requires additional dependencies. "
+                        "Install with: pip install pipecat-ai[silero]"
+                    ) from e
+
                 vad_params = VADParams(
                     stop_secs=vad_config.get('stop_secs', 0.2),
                     start_secs=vad_config.get('start_secs', 0.2),
