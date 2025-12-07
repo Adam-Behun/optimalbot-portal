@@ -20,7 +20,8 @@ export function AuthCallback() {
 
     const handleCallback = async () => {
       try {
-        const orgSlug = getOrgSlug();
+        // Get org slug from query param (for app.optimalbot.ai) or subdomain
+        const orgSlug = searchParams.get('org') || getOrgSlug();
         const response = await exchangeToken(token, orgSlug);
 
         setAuthToken(response.access_token);

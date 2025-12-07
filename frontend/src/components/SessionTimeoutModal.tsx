@@ -27,7 +27,7 @@ export function SessionTimeoutModal({ children }: SessionTimeoutModalProps) {
 
   const handleLogout = useCallback(() => {
     removeAuthToken();
-    window.location.href = '/';
+    window.location.href = 'https://optimalbot.ai';
   }, []);
 
   const resetTimer = useCallback(() => {

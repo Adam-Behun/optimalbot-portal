@@ -126,11 +126,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       await logout();
       removeAuthToken();
       toast.success("Signed out successfully");
-      window.location.href = "/";
+      window.location.href = "https://optimalbot.ai";
     } catch (error) {
       console.error("Error during logout:", error);
       removeAuthToken();
-      window.location.href = "/";
+      window.location.href = "https://optimalbot.ai";
     }
   };
 
