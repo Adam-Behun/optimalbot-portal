@@ -11,19 +11,11 @@ from backend.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from backend.exceptions import register_exception_handlers
 from backend.dependencies import get_user_id_from_request
 from backend.api import health, auth, patients, dialout, dialin
-from backend.config import validate_env_vars, REQUIRED_BACKEND_ENV_VARS
-
 setup_logging()
 
-all_present, missing = validate_env_vars(REQUIRED_BACKEND_ENV_VARS)
-if not all_present:
-    raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-
-SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-if len(SECRET_KEY) < 32:
-    raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters")
-
-ALLOWED_ORIGINS_STR = os.getenv("ALLOWED_ORIGINS")
+# Use defaults for import-time (allows syntax checking), validate at startup via lifespan
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+ALLOWED_ORIGINS_STR = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
 
 app = FastAPI(
     title="Healthcare AI Agent",

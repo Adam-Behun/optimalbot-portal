@@ -1,7 +1,6 @@
 # Environment variables
-.env
-.env.test
-**/.env.test
+.env*
+**/.env*
 
 # Python
 __pycache__/
@@ -60,6 +59,10 @@ documentation/
 examples/
 pipecat-examples/
 evals/**/results/
+
+# Temp files
+pyproject.toml.backup
+pcc-deploy.toml.backup
 
 # Misc excluded files
 debug_audio.wav

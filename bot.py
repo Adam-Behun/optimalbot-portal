@@ -124,14 +124,23 @@ async def bot(args: DailyRunnerArguments):
 # Local development mode - runs FastAPI server with /start endpoint
 if __name__ == "__main__":
     import uvicorn
+    import asyncio
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel
+    from bot_validation import validate_bot_startup
 
     # Check if running in Pipecat runner mode (e.g., uv run bot.py -t daily)
     if any(arg.startswith("-") for arg in sys.argv[1:]):
         from pipecat.runner.run import main
         main()
     else:
+        # Validate all configs, env vars, and API keys before starting
+        try:
+            asyncio.run(validate_bot_startup(check_api_keys=True))
+        except RuntimeError as e:
+            logger.error(f"Bot startup failed: {e}")
+            sys.exit(1)
+
         # Default: run local FastAPI server for development
         app = FastAPI()
 

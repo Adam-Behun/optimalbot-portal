@@ -8,6 +8,10 @@ fi
 
 [ -d ".venv" ] && rm -rf .venv
 
+uv lock
+mv uv.lock uv.local.lock
+cp uv.local.lock uv.lock
 uv sync
+rm uv.lock
 
 echo "Done. Run: source .venv/bin/activate"

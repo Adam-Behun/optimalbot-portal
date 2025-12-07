@@ -10,7 +10,8 @@ REQUIRED_BACKEND_ENV_VARS = [
     "ALLOWED_ORIGINS"
 ]
 
-if ENV == "production":
+# Require PIPECAT_API_KEY for any non-local environment
+if ENV in ("production", "test"):
     REQUIRED_BACKEND_ENV_VARS.append("PIPECAT_API_KEY")
 
 
@@ -28,6 +29,10 @@ async def validate_backend_startup() -> None:
     if not all_present:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
     logger.info("✓ Required environment variables present")
+
+    secret_key = os.getenv("JWT_SECRET_KEY", "")
+    if len(secret_key) < 32:
+        raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters")
 
     is_healthy, error = await check_connection()
     if not is_healthy:

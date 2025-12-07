@@ -4,13 +4,13 @@
 # REQUIRED FILES (do NOT add these to ignore):
 #   - requirements.txt
 #   - app.py
+#   - logging_config.py
 #   - backend/
 
 # ============================================
 # EXCLUDE: Bot-specific code (not needed by backend API)
 # ============================================
 bot.py
-logging_config.py
 core/
 pipeline/
 handlers/

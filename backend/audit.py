@@ -9,7 +9,7 @@ from backend.database import get_mongo_client, MONGO_DB_NAME
 
 
 class AuditLogger:
-    def __init__(self, db_client: AsyncIOMotorClient):
+    def __init__(self, db_client: "AsyncIOMotorClient"):
         self.client = db_client
         self.db = db_client[MONGO_DB_NAME]
         self.audit_logs = self.db.audit_logs
