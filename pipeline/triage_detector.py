@@ -9,7 +9,7 @@ from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.llm_service import LLMService
-from pipecat.sync.event_notifier import EventNotifier
+from pipecat.utils.sync.event_notifier import EventNotifier
 
 from pipeline.triage_processors import (
     MainBranchGate,

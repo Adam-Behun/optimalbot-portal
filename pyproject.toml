@@ -1,0 +1,72 @@
+[project]
+name = "healthcare-voice-ai"
+version = "1.0.0"
+description = "Healthcare voice AI - full local development (backend + bot)"
+requires-python = ">=3.10"
+dependencies = [
+    # ===========================================
+    # Bot dependencies (mirrors pyproject.bot.toml)
+    # ===========================================
+    # Pipecat AI
+    "pipecat-ai[daily,cartesia,deepgram,groq,tracing]",
+    "pipecat-ai-flows",
+    "pipecat-ai-whisker",
+    "pipecatcloud",
+
+    # LLM providers
+    "anthropic",
+
+    # Observability
+    "langfuse",
+
+    # ===========================================
+    # Backend dependencies
+    # ===========================================
+    # Web framework
+    "uvicorn",
+    "fastapi",
+
+    # HTTP clients
+    "aiohttp",
+    "httpx",
+
+    # Authentication
+    "passlib[bcrypt]",
+    "python-jose[cryptography]",
+
+    # Rate limiting
+    "slowapi",
+
+    # Caching
+    "cachetools",
+
+    # ===========================================
+    # Shared dependencies
+    # ===========================================
+    # Database
+    "motor",
+
+    # Utilities
+    "pyyaml",
+    "pydantic",
+    "tenacity",
+    "phonenumbers",
+    "python-dateutil",
+    "python-dotenv",
+    "loguru",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+exclude = [".git", "__pycache__", "*.pyc"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]

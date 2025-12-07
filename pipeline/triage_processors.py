@@ -19,7 +19,7 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
-from pipecat.sync.base_notifier import BaseNotifier
+from pipecat.utils.sync.base_notifier import BaseNotifier
 
 
 class MainBranchGate(FrameProcessor):

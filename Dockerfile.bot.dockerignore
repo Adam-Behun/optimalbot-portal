@@ -6,7 +6,7 @@
 #   - uv.lock (lockfile for reproducible builds)
 #   - bot.py, logging_config.py
 #   - backend/{__init__,database,constants,sessions,utils}.py
-#   - backend/models/, services/, clients/, handlers/, core/, pipeline/, observers/
+#   - backend/models/, services/, clients/, handlers/, core/, pipeline/, observers/, utils/
 
 # ============================================
 # EXCLUDE: Backend API code (bot only needs models, functions, sessions)
@@ -38,7 +38,6 @@ frontend/
 pipecat-examples/
 evals/
 scripts/
-utils/
 whisker/
 patients.csv
 

@@ -60,6 +60,7 @@ COPY clients/ ./clients/
 COPY handlers/ ./handlers/
 COPY pipeline/ ./pipeline/
 COPY observers/ ./observers/
+COPY utils/ ./utils/
 
 # Most frequently changed last (best cache utilization)
 COPY bot.py .
