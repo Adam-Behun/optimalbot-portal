@@ -1,9 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { LoginForm } from './components/LoginForm';
-import { ForgotPasswordForm } from './components/ForgotPasswordForm';
-import { ResetPasswordForm } from './components/ResetPasswordForm';
+import { LoginRedirect, ForgotPasswordRedirect, ResetPasswordRedirect } from './components/LoginRedirect';
 import { AuthCallback } from './components/AuthCallback';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
@@ -36,27 +34,9 @@ const App = () => {
                 <Routes>
               {/* Public routes - redirect root to login */}
               <Route path="/" element={<Navigate to="/login" replace />} />
-              <Route path="/login" element={
-                <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-                  <div className="w-full max-w-sm">
-                    <LoginForm />
-                  </div>
-                </div>
-              } />
-              <Route path="/forgot-password" element={
-                <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-                  <div className="w-full max-w-sm">
-                    <ForgotPasswordForm />
-                  </div>
-                </div>
-              } />
-              <Route path="/reset-password" element={
-                <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-                  <div className="w-full max-w-sm">
-                    <ResetPasswordForm />
-                  </div>
-                </div>
-              } />
+              <Route path="/login" element={<LoginRedirect />} />
+              <Route path="/forgot-password" element={<ForgotPasswordRedirect />} />
+              <Route path="/reset-password" element={<ResetPasswordRedirect />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
 
               {/* Protected routes - require authentication */}

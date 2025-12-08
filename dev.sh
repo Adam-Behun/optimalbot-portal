@@ -24,17 +24,23 @@ if [ "$SKIP_VALIDATE" = false ] && [ -f "validate-local.sh" ]; then
     echo ""
 fi
 
-[ ! -d ".venv" ] && echo ".venv not found. Run: ./setup-local.sh" && exit 1
-[ ! -d "frontend/node_modules" ] && echo "frontend/node_modules not found. Run: cd frontend && npm install" && exit 1
+# Store the portal directory for later use
+PORTAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-source .venv/bin/activate
+[ ! -d "$PORTAL_DIR/.venv" ] && echo ".venv not found. Run: ./setup-local.sh" && exit 1
+[ ! -d "$PORTAL_DIR/frontend/node_modules" ] && echo "frontend/node_modules not found. Run: cd frontend && npm install" && exit 1
+[ ! -d "$PORTAL_DIR/../marketing/node_modules" ] && echo "marketing/node_modules not found. Run: cd ../marketing && npm install" && exit 1
+
+source "$PORTAL_DIR/.venv/bin/activate"
 
 cleanup() {
     echo "Stopping..."
-    kill $BACKEND_PID $BOT_PID 2>/dev/null
+    kill $BACKEND_PID $BOT_PID $MARKETING_PID $FRONTEND_PID 2>/dev/null
     exit 0
 }
 trap cleanup SIGINT SIGTERM
+
+cd "$PORTAL_DIR"
 
 ENV=local python app.py &
 BACKEND_PID=$!
@@ -42,10 +48,23 @@ BACKEND_PID=$!
 ENV=local python bot.py &
 BOT_PID=$!
 
-sleep 2
-echo "Backend: http://localhost:8000"
-echo "Bot: http://localhost:7860"
-echo "Frontend: http://localhost:3000"
+# Start marketing site (login portal)
+(cd "$PORTAL_DIR/../marketing" && npm run dev) &
+MARKETING_PID=$!
+
+# Start frontend
+(cd "$PORTAL_DIR/frontend" && npm run dev) &
+FRONTEND_PID=$!
+
+sleep 3
+echo ""
+echo "=========================================="
+echo "Services running:"
+echo "  Login:    http://localhost:4321/login"
+echo "  Portal:   http://localhost:3000"
+echo "  Backend:  http://localhost:8000"
+echo "  Bot:      http://localhost:7860"
+echo "=========================================="
 echo ""
 
-cd frontend && npm run dev
+wait

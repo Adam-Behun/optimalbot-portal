@@ -105,30 +105,9 @@ export const endCall = async (sessionId: string): Promise<void> => {
   await api.post(`/end-call/${sessionId}`);
 };
 
-// POST /auth/login - Authenticate user
-export const login = async (email: string, password: string, organizationSlug?: string): Promise<AuthResponse> => {
-  const response = await api.post<AuthResponse>('/auth/login', {
-    email,
-    password,
-    organization_slug: organizationSlug
-  });
-  return response.data;
-};
-
 // POST /auth/logout - Logout user
 export const logout = async (): Promise<void> => {
   await api.post('/auth/logout');
-};
-
-// POST /auth/request-reset - Request password reset token
-export const requestPasswordReset = async (email: string): Promise<{ token: string; expires_in_minutes: number }> => {
-  const response = await api.post('/auth/request-reset', { email });
-  return response.data;
-};
-
-// POST /auth/reset-password - Reset password with token
-export const resetPassword = async (email: string, token: string, new_password: string): Promise<void> => {
-  await api.post('/auth/reset-password', { email, token, new_password });
 };
 
 // POST /auth/exchange-token - Exchange handoff token for JWT (marketing site callback)
