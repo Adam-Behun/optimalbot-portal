@@ -7,7 +7,7 @@ import {
   BulkAddResponse,
   AuthResponse
 } from './types';
-import { removeAuthToken } from './lib/auth';
+import { removeAuthToken, getAuthToken } from './lib/auth';
 
 // Use Vite environment variable (empty string uses proxy in dev, relative URLs in production)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -22,7 +22,7 @@ const api = axios.create({
 // Add request interceptor to include JWT token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getAuthToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }

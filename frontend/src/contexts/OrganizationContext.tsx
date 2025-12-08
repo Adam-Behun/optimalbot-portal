@@ -18,8 +18,8 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize from localStorage on mount
-  // Organization is set during login (from AuthResponse) and stored in localStorage
+  // Initialize from sessionStorage on mount
+  // Organization is set during login (from AuthResponse) and stored in sessionStorage
   useEffect(() => {
     try {
       const storedOrg = getOrganization();

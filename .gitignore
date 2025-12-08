@@ -23,6 +23,7 @@ venv.bak/
 
 # Logs
 *.log
+.dev-logs/
 
 # Database
 *.db
