@@ -165,30 +165,64 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     "content": """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
 - "new", "first time", "never been" → call set_new_patient
 - "returning", "been here before", "existing" → call set_returning_patient
-- Unclear → ask again before calling any function""",
+- Unclear → ask again before calling any function
+
+IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason for visit). Include all mentioned info in the function call.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="set_new_patient",
-                    description="Call when patient confirms they are NEW (first time visiting).",
+                    description="Call when patient confirms they are NEW. Include any other info they volunteered.",
                     properties={
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name if they mentioned it (e.g., 'Hi, this is John' → 'John'), or 'unknown' if not mentioned.",
-                        }
+                            "description": "Patient's first name, or 'unknown' if not mentioned.",
+                        },
+                        "last_name": {
+                            "type": "string",
+                            "description": "Patient's last name if mentioned, or empty string.",
+                        },
+                        "phone_number": {
+                            "type": "string",
+                            "description": "Phone number if mentioned (digits only), or empty string.",
+                        },
+                        "email": {
+                            "type": "string",
+                            "description": "Email if mentioned, or empty string.",
+                        },
+                        "visit_reason": {
+                            "type": "string",
+                            "description": "Reason for visit if mentioned (e.g., 'cleaning', 'tooth pain'), or empty string.",
+                        },
                     },
                     required=["first_name"],
                     handler=self._set_new_patient_handler,
                 ),
                 FlowsFunctionSchema(
                     name="set_returning_patient",
-                    description="Call when patient confirms they are RETURNING (been here before).",
+                    description="Call when patient confirms they are RETURNING. Include any other info they volunteered.",
                     properties={
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name if they mentioned it (e.g., 'Hi, this is John' → 'John'), or 'unknown' if not mentioned.",
-                        }
+                            "description": "Patient's first name, or 'unknown' if not mentioned.",
+                        },
+                        "last_name": {
+                            "type": "string",
+                            "description": "Patient's last name if mentioned, or empty string.",
+                        },
+                        "phone_number": {
+                            "type": "string",
+                            "description": "Phone number if mentioned (digits only), or empty string.",
+                        },
+                        "email": {
+                            "type": "string",
+                            "description": "Email if mentioned, or empty string.",
+                        },
+                        "visit_reason": {
+                            "type": "string",
+                            "description": "Reason for visit if mentioned (e.g., 'cleaning', 'tooth pain'), or empty string.",
+                        },
                     },
                     required=["first_name"],
                     handler=self._set_returning_patient_handler,
@@ -277,33 +311,43 @@ Once they pick one, call schedule_appointment with the date and time.""",
 
     def create_collect_info_node(self) -> NodeConfig:
         """Collect patient information: name, phone, DOB, email."""
-        appointment_date = self.flow_manager.state.get("appointment_date", "")
-        appointment_time = self.flow_manager.state.get("appointment_time", "")
-        existing_first_name = self.flow_manager.state.get("first_name", "")
+        state = self.flow_manager.state
+        appointment_date = state.get("appointment_date", "")
+        appointment_time = state.get("appointment_time", "")
 
-        # Build first name instruction based on whether we captured it from greeting
-        if existing_first_name:
-            first_name_instruction = f'Confirm first name "{existing_first_name}"'
-        else:
-            first_name_instruction = "Ask first name"
+        # Build status for each field
+        fields = {
+            "first_name": state.get("first_name"),
+            "last_name": state.get("last_name"),
+            "phone_number": state.get("phone_number"),
+            "date_of_birth": state.get("date_of_birth"),
+            "email": state.get("email"),
+        }
+
+        have = [f"{k}={v}" for k, v in fields.items() if v]
+        need = [k for k, v in fields.items() if not v]
+
+        have_str = ", ".join(have) if have else "none"
+        need_str = ", ".join(need) if need else "none"
 
         return NodeConfig(
             name="collect_info",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Collect for booking on {appointment_date} at {appointment_time}:
-1. {first_name_instruction}
-2. Last name (ask to spell letter by letter)
-3. Phone number (digits only)
-4. Date of birth
-5. Email (ask to spell letter by letter)
+                    "content": f"""Booking for {appointment_date} at {appointment_time}.
 
-Acknowledge briefly: "Got it." Ask for each piece of information ONE AT A TIME. Wait for their response before moving to the next item.
+ALREADY HAVE: {have_str}
+STILL NEED: {need_str}
 
-CRITICAL: You MUST collect ALL 5 pieces of information before calling save_patient_info. DO NOT call the function until you have non-empty values for: first name, last name, phone number, date of birth, AND email. Empty strings are NOT acceptable.
+For missing fields, ask ONE at a time:
+- Last name: ask to spell letter by letter
+- Phone: digits only
+- Email: ask to spell letter by letter
 
-If unclear or incomplete, ask to repeat. Don't guess.""",
+Acknowledge what we have: "I have your phone as X." Then ask for next missing item.
+
+When ALL 5 fields collected, call save_patient_info.""",
                 }
             ],
             functions=[
@@ -482,32 +526,48 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
 
     # ========== Function Handlers ==========
 
+    def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
+        """Store any volunteered info in state. Returns list of captured fields."""
+        captured = []
+
+        for field in ["first_name", "last_name", "phone_number", "email"]:
+            value = args.get(field, "").strip()
+            if value and value.lower() not in ["unknown", ""]:
+                flow_manager.state[field] = value
+                captured.append(field)
+
+        # Handle visit_reason separately (maps to appointment_reason)
+        visit_reason = args.get("visit_reason", "").strip()
+        if visit_reason:
+            flow_manager.state["appointment_reason"] = visit_reason
+            captured.append("visit_reason")
+
+        return captured
+
     async def _set_new_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Patient is new."""
-        appointment_type = "New Patient"
-        flow_manager.state["appointment_type"] = appointment_type
-        first_name = args.get("first_name", "").strip()
-        if first_name.lower() != "unknown":
-            flow_manager.state["first_name"] = first_name
-            logger.info(f"Flow: {appointment_type} - captured name: {first_name}")
-        else:
-            logger.info(f"Flow: {appointment_type}")
+        """Patient is new. Store any volunteered info."""
+        flow_manager.state["appointment_type"] = "New Patient"
+        captured = self._store_volunteered_info(args, flow_manager)
+        logger.info(f"Flow: New Patient - captured: {captured if captured else 'none'}")
+
+        # Skip visit_reason node if already provided
+        if flow_manager.state.get("appointment_reason"):
+            return None, self.create_scheduling_node()
         return None, self.create_visit_reason_node()
 
     async def _set_returning_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Patient is returning."""
-        appointment_type = "Returning Patient"
-        flow_manager.state["appointment_type"] = appointment_type
-        first_name = args.get("first_name", "").strip()
-        if first_name.lower() != "unknown":
-            flow_manager.state["first_name"] = first_name
-            logger.info(f"Flow: {appointment_type} - captured name: {first_name}")
-        else:
-            logger.info(f"Flow: {appointment_type}")
+        """Patient is returning. Store any volunteered info."""
+        flow_manager.state["appointment_type"] = "Returning Patient"
+        captured = self._store_volunteered_info(args, flow_manager)
+        logger.info(f"Flow: Returning Patient - captured: {captured if captured else 'none'}")
+
+        # Skip visit_reason node if already provided
+        if flow_manager.state.get("appointment_reason"):
+            return None, self.create_scheduling_node()
         return None, self.create_visit_reason_node()
 
     async def _save_visit_reason_handler(
