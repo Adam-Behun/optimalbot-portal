@@ -1,0 +1,20 @@
+# Eval-specific
+litellm
+langfuse
+
+# LLM providers (litellm backends)
+openai
+
+# Flow definitions require these
+pipecat-ai-flows
+loguru
+
+# Loading services.yaml
+pyyaml
+
+# Backend imports (models, utils)
+motor
+python-dateutil
+
+# Async support
+asyncio-atexit

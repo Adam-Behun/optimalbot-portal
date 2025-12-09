@@ -1,0 +1,268 @@
+# Adversarial patient scenarios for patient intake flow evaluation
+# Each scenario targets specific weaknesses in flow_definition.py
+#
+# Usage:
+#   python run.py --scenario ambiguous_patient_type
+#   python run.py --all
+#   python run.py --sync-dataset  # Push scenarios to Langfuse dataset
+
+dataset_name: "demo_clinic_alpha/patient_intake"
+dataset_description: "Adversarial scenarios for patient intake flow testing"
+
+scenarios:
+  # =============================================================================
+  # GREETING NODE - Tests new/returning patient classification
+  # =============================================================================
+
+  - id: ambiguous_patient_type
+    target_node: greeting
+    expected_problem: "Bot loops or misclassifies when patient status is unclear"
+    patient:
+      first_name: "Mike"
+      last_name: "Chen"
+      phone: "5559876543"
+      dob: "June 2, 1990"
+      email: "mike.chen@email.com"
+    persona: |
+      When asked if you're new or returning, be genuinely uncertain:
+      "I came here years ago as a kid, maybe once? I honestly don't remember."
+      If pressed further, say "I guess treat me as new? Not sure if that matters."
+      You're scheduling a routine cleaning.
+
+  - id: skips_new_returning
+    target_node: greeting
+    expected_problem: "Patient never directly answers new/returning question"
+    patient:
+      first_name: "Lisa"
+      last_name: "Park"
+      phone: "5551112222"
+      dob: "December 10, 1978"
+      email: "lisa.park@email.com"
+    persona: |
+      Immediately launch into your request without waiting for questions:
+      "Hi, I need to schedule a teeth cleaning for sometime next week."
+      If asked about new/returning, deflect: "Does it matter? I just need an appointment."
+      Only answer the new/returning question after being asked 3+ times, then say "new".
+
+  - id: returning_but_no_records
+    target_node: greeting
+    expected_problem: "Bot may not handle 'returning but not in system' gracefully"
+    patient:
+      first_name: "James"
+      last_name: "Wilson"
+      phone: "5552223333"
+      dob: "May 18, 1975"
+      email: "jwilson@email.com"
+    persona: |
+      Confidently say you're a returning patient: "I've been coming here for years."
+      When the bot can't find you: "That's weird, maybe under my old number?"
+      "I definitely came here before, maybe 2019? Try my wife's name, Sarah Wilson?"
+      Eventually accept being treated as new but sound confused.
+
+  # =============================================================================
+  # VISIT REASON NODE - Tests reason extraction
+  # =============================================================================
+
+  - id: vague_visit_reason
+    target_node: visit_reason
+    expected_problem: "Bot accepts 'appointment' without getting actual reason"
+    patient:
+      first_name: "Tom"
+      last_name: "Garcia"
+      phone: "5553334444"
+      dob: "April 5, 1982"
+      email: "tom.garcia@email.com"
+    persona: |
+      New patient. When asked why you're visiting, be vague:
+      "Just a regular appointment" or "Just a checkup thing"
+      Don't specify cleaning/exam/pain unless explicitly asked "what type of appointment?"
+      Eventually say "cleaning" if pressed.
+
+  - id: multiple_visit_reasons
+    target_node: visit_reason
+    expected_problem: "Bot may only capture one reason when patient has multiple"
+    patient:
+      first_name: "Nancy"
+      last_name: "Brown"
+      phone: "5554445555"
+      dob: "September 3, 1988"
+      email: "nancy.b@email.com"
+    persona: |
+      New patient with multiple concerns:
+      "I need a cleaning but also my tooth has been hurting, and I want to ask about whitening."
+      If bot only acknowledges one, say "Did you get all that? The cleaning AND the tooth pain?"
+
+  - id: emergency_vs_routine
+    target_node: visit_reason
+    expected_problem: "Bot may not escalate emergency appropriately"
+    patient:
+      first_name: "Robert"
+      last_name: "Lee"
+      phone: "5556667777"
+      dob: "July 12, 1970"
+      email: "robert.lee@email.com"
+    persona: |
+      Start casual but reveal urgency:
+      "I need an appointment... actually my tooth has been killing me for 3 days."
+      "I can barely eat, it's swollen."
+      If bot offers routine scheduling, say "I don't think I can wait that long, it's really bad."
+
+  # =============================================================================
+  # SCHEDULING NODE - Tests time slot handling
+  # =============================================================================
+
+  - id: unavailable_time_request
+    target_node: scheduling
+    expected_problem: "Bot doesn't handle unavailable slots gracefully"
+    patient:
+      first_name: "Rachel"
+      last_name: "Kim"
+      phone: "5557778888"
+      dob: "August 20, 1995"
+      email: "rachel.kim@email.com"
+    persona: |
+      New patient, routine cleaning. When offered time slots:
+      "I can only do Saturdays at 7am, I work every other day."
+      Reject the first 2 alternatives: "No, that doesn't work for me."
+      On third offer, reluctantly accept: "I guess that could work..."
+
+  - id: specific_provider_request
+    target_node: scheduling
+    expected_problem: "Bot may not handle provider preferences"
+    patient:
+      first_name: "Kevin"
+      last_name: "Patel"
+      phone: "5558889999"
+      dob: "March 30, 1985"
+      email: "kevin.patel@email.com"
+    persona: |
+      New patient: "I'd like to see Dr. Smith specifically, my friend recommended her."
+      If bot says that's not possible: "Can you check if she has any availability at all?"
+      Eventually accept whoever is available but sound disappointed.
+
+  # =============================================================================
+  # COLLECT INFO NODE - Tests information gathering
+  # =============================================================================
+
+  - id: info_out_of_order
+    target_node: collect_info
+    expected_problem: "Bot re-asks for info already volunteered"
+    patient:
+      first_name: "David"
+      last_name: "Martinez"
+      phone: "5551231234"
+      dob: "January 30, 1988"
+      email: "david.martinez@email.com"
+    persona: |
+      New patient, cleaning. When first greeted, volunteer info immediately:
+      "Hi, I'm David Martinez, phone is 555-123-1234, email david.martinez@email.com"
+      If bot asks for name or phone again, sound annoyed: "I already told you that."
+      "Did you not hear me? David Martinez, 555-123-1234."
+
+  - id: partial_then_corrects
+    target_node: collect_info
+    expected_problem: "Bot doesn't handle mid-utterance corrections"
+    patient:
+      first_name: "Jennifer"
+      last_name: "Taylor"
+      phone: "5559990000"
+      dob: "March 12, 1992"
+      email: "jen.taylor@email.com"
+    persona: |
+      New patient. When giving info, start wrong then correct yourself:
+      Phone: "It's 555-123... wait no, sorry, it's 555-999-0000"
+      Email: "jen dot... actually, it's jen.taylor@email.com"
+      Check that bot captured the corrected version, not the wrong one.
+
+  - id: refuses_to_spell
+    target_node: collect_info
+    expected_problem: "Bot insists on spelling but patient won't comply"
+    patient:
+      first_name: "Siobhan"
+      last_name: "O'Reilly"
+      phone: "5550001111"
+      dob: "November 8, 1985"
+      email: "siobhan.oreilly@email.com"
+    persona: |
+      New patient with hard-to-spell name. When asked to spell it:
+      "It's pronounced shi-VAWN, the Irish spelling."
+      If asked to spell again: "S-I-O... look, can't you just look it up?"
+      Be slightly impatient. Eventually spell it if asked a third time.
+
+  - id: gives_wrong_info_then_fixes
+    target_node: collect_info
+    expected_problem: "Bot may not allow corrections after confirming"
+    patient:
+      first_name: "Chris"
+      last_name: "Anderson"
+      phone: "5552224444"
+      dob: "October 15, 1980"
+      email: "chris.anderson@email.com"
+    persona: |
+      New patient. Give wrong email first: "chris.a@gmail.com"
+      After bot confirms it, say: "Oh wait, I gave you the wrong email."
+      "It should be chris.anderson@email.com, sorry about that."
+
+  # =============================================================================
+  # CROSS-NODE - Tests flow transitions and edge cases
+  # =============================================================================
+
+  - id: immediate_staff_request
+    target_node: any
+    expected_problem: "Transfer request mid-flow loses context"
+    patient:
+      first_name: "Carlos"
+      last_name: "Rivera"
+      phone: "5553335555"
+      dob: "July 22, 1980"
+      email: "carlos.r@email.com"
+    persona: |
+      After the initial greeting, immediately request transfer:
+      "Can I speak to a real person please?"
+      If bot tries to help: "No, I have a billing question, I need a human."
+      Be polite but insistent.
+
+  - id: off_topic_mid_flow
+    target_node: collect_info
+    expected_problem: "Bot doesn't redirect gracefully to task"
+    patient:
+      first_name: "Amanda"
+      last_name: "Foster"
+      phone: "5556667777"
+      dob: "February 14, 1990"
+      email: "amanda.f@email.com"
+    persona: |
+      New patient, cleaning. While giving your info, ask off-topic:
+      "Oh wait, do you guys do teeth whitening? How much is that?"
+      After bot responds (or redirects), continue with your info.
+      Ask one more off-topic: "And do you accept Delta Dental insurance?"
+
+  - id: hangs_up_threat
+    target_node: any
+    expected_problem: "Bot may not de-escalate frustrated patient"
+    patient:
+      first_name: "Mark"
+      last_name: "Thompson"
+      phone: "5558880000"
+      dob: "June 5, 1972"
+      email: "mark.t@email.com"
+    persona: |
+      New patient, but impatient. After 2-3 exchanges, express frustration:
+      "This is taking forever, I'm just going to call somewhere else."
+      If bot responds well, calm down: "Okay fine, let's just finish this."
+      If bot ignores the threat, sound more frustrated.
+
+  - id: background_noise_simulation
+    target_node: collect_info
+    expected_problem: "Bot may not handle partial/unclear responses"
+    patient:
+      first_name: "Emily"
+      last_name: "White"
+      phone: "5551114444"
+      dob: "April 25, 1993"
+      email: "emily.white@email.com"
+    persona: |
+      New patient in a noisy environment. Occasionally:
+      Give incomplete answers: "My name is Emily..." (pause) "...White"
+      Ask bot to repeat: "Sorry, what was that? I couldn't hear you."
+      Mumble your email: "emily dot white at... email dot com"
