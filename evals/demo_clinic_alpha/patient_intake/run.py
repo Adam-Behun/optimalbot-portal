@@ -32,24 +32,29 @@ from clients.demo_clinic_alpha.patient_intake.flow_definition import PatientInta
 langfuse = Langfuse()
 
 
-# === LLM GRADER ===
-def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict]) -> dict:
-    """
-    Grade whether the expected problem occurred. Strict - flags potential issues.
-    Returns: {"pass": bool, "reason": str}
-    """
-    # Format conversation for grader
-    conv_text = "\n".join([
+# === LLM GRADERS ===
+def _call_grader(prompt: str) -> str:
+    """Call the grader LLM with a prompt."""
+    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=50,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.content[0].text.strip()
+
+
+def _format_conversation(conversation: list[dict]) -> str:
+    """Format conversation for graders."""
+    return "\n".join([
         f"{'BOT' if c['role'] == 'assistant' else 'PATIENT'}: {c['content']}"
         for c in conversation if c.get('content')
     ])
 
-    calls_text = "\n".join([
-        f"Turn {fc['turn']}: {fc['function']}({json.dumps(fc['args'])})"
-        for fc in function_calls
-    ])
 
-    prompt = f"""Grade this patient intake conversation. Be STRICT - if there's ANY sign of the problem, mark as FAIL.
+def grade_goal(conv_text: str, expected_problem: str, calls_text: str) -> dict:
+    """Grade whether the scenario's expected problem occurred."""
+    prompt = f"""Grade this patient intake conversation. Be STRICT.
 
 EXPECTED PROBLEM TO CHECK FOR:
 {expected_problem}
@@ -64,26 +69,106 @@ Did the expected problem occur? Look for:
 - Bot confusion, loops, or wrong assumptions
 - Missing information, wrong data captured
 - Poor handling of the patient's behavior
-- Any sign the bot struggled with this scenario
 
 Reply with exactly one line:
 PASS: <5 words why ok>
 or
 FAIL: <5 words what went wrong>"""
 
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-opus-4-5-20251101",
-        max_tokens=50,
-        messages=[{"role": "user", "content": prompt}]
-    )
+    result = _call_grader(prompt)
+    return {"pass": result.upper().startswith("PASS"), "reason": result}
 
-    result = response.content[0].text.strip()
-    passed = result.upper().startswith("PASS")
+
+def grade_conversation_quality(conv_text: str) -> dict:
+    """Grade conversational quality - no repetition, natural flow."""
+    prompt = f"""Grade this conversation's QUALITY. Be STRICT about these issues:
+
+CONVERSATION:
+{conv_text}
+
+Check for these problems:
+1. REPETITION: Bot says same thing multiple times (e.g., multiple "Goodbye", repeated confirmations)
+2. OVER-TALKING: Bot keeps talking after patient says goodbye
+3. ROBOTIC: Unnatural phrasing, lists, or overly formal language
+4. RAMBLING: Unnecessarily long responses when brief would work
+
+If ANY of these issues exist, mark as FAIL.
+
+Reply with exactly one line:
+PASS: <5 words why ok>
+or
+FAIL: <5 words what went wrong>"""
+
+    result = _call_grader(prompt)
+    return {"pass": result.upper().startswith("PASS"), "reason": result}
+
+
+def grade_function_calls(calls_text: str, final_state: dict) -> dict:
+    """Grade function call correctness - right functions, right data."""
+    prompt = f"""Grade whether the bot called functions correctly.
+
+FUNCTION CALLS:
+{calls_text}
+
+FINAL STATE:
+{json.dumps(final_state, indent=2)}
+
+Check for:
+1. Called functions at appropriate times (not prematurely)
+2. Captured data correctly (no typos, wrong values)
+3. Didn't skip required functions
+4. Didn't call unnecessary functions
+
+Reply with exactly one line:
+PASS: <5 words why ok>
+or
+FAIL: <5 words what went wrong>"""
+
+    result = _call_grader(prompt)
+    return {"pass": result.upper().startswith("PASS"), "reason": result}
+
+
+def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict = None) -> dict:
+    """
+    Run all graders and combine results. ALL must pass for overall pass.
+    Returns: {"pass": bool, "reason": str, "details": {...}}
+    """
+    conv_text = _format_conversation(conversation)
+    calls_text = "\n".join([
+        f"Turn {fc['turn']}: {fc['function']}({json.dumps(fc['args'])})"
+        for fc in function_calls
+    ]) or "No function calls"
+
+    # Run all graders
+    goal = grade_goal(conv_text, expected_problem, calls_text)
+    quality = grade_conversation_quality(conv_text)
+    functions = grade_function_calls(calls_text, final_state or {})
+
+    # All must pass
+    all_passed = goal["pass"] and quality["pass"] and functions["pass"]
+
+    # Build combined reason
+    failures = []
+    if not goal["pass"]:
+        failures.append(f"goal: {goal['reason']}")
+    if not quality["pass"]:
+        failures.append(f"quality: {quality['reason']}")
+    if not functions["pass"]:
+        failures.append(f"functions: {functions['reason']}")
+
+    if all_passed:
+        reason = "PASS: All checks passed"
+    else:
+        reason = "FAIL: " + "; ".join(failures)
 
     return {
-        "pass": passed,
-        "reason": result,
+        "pass": all_passed,
+        "reason": reason,
+        "details": {
+            "goal": goal,
+            "quality": quality,
+            "functions": functions,
+        }
     }
 
 
@@ -217,7 +302,20 @@ class FlowRunner:
             if msg.tool_calls:
                 tool_call = msg.tool_calls[0]
                 func_name = tool_call.function.name
-                func_args = json.loads(tool_call.function.arguments)
+
+                try:
+                    func_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError as e:
+                    print(f"    ⚠ Malformed JSON from LLM: {tool_call.function.arguments[:100]}...")
+                    print(f"    Error: {e}")
+                    # Record the failure and continue without executing the function
+                    self.function_calls.append({
+                        "turn": turn_number,
+                        "node": node_name,
+                        "function": func_name,
+                        "args": {"_error": f"Malformed JSON: {str(e)}"},
+                    })
+                    break
 
                 # Track function call
                 self.function_calls.append({
@@ -373,12 +471,24 @@ async def run_simulation(
 
 
 def save_result(result: dict, trace_id: str, grade: dict) -> Path:
-    """Save result to local JSON file following Langfuse data model."""
+    """Save result to local files: JSON for data, TXT for human reading."""
     results_dir = Path(__file__).parent / "results" / result["scenario_id"]
     results_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     result_file = results_dir / f"{timestamp}.json"
+
+    # Save human-readable transcript
+    txt_file = results_dir / f"{timestamp}.txt"
+    with open(txt_file, "w") as f:
+        f.write(f"SCENARIO: {result['scenario_id']}\n")
+        f.write(f"EXPECTED: {result['expected_problem']}\n")
+        f.write(f"{'='*60}\n\n")
+        for msg in result["conversation"]:
+            role = "MONICA" if msg["role"] == "assistant" else "PATIENT"
+            f.write(f"{role}: {msg['content']}\n\n")
+        f.write(f"{'='*60}\n")
+        f.write(f"GRADE: {'PASS' if grade['pass'] else 'FAIL'} - {grade['reason']}\n")
 
     # Structure follows Langfuse DatasetRunItem concept
     output = {
@@ -470,16 +580,18 @@ async def run_scenario(scenario_id: str) -> dict:
     # Run simulation (trace is created by @observe decorator)
     result = await run_simulation(scenario, llm_config, cold_transfer_config)
 
-    # Grade the result
+    # Grade the result (3 graders: goal, quality, functions)
     grade = grade_scenario(
         result["conversation"],
         result["expected_problem"],
-        result["function_calls"]
+        result["function_calls"],
+        result["final_state"]
     )
 
-    # Print grade (minimal output)
-    status = "PASS" if grade["pass"] else "FAIL"
-    print(f"\n[{status}] {scenario_id}: {grade['reason']}")
+    # Print grade
+    status = "✓ PASS" if grade["pass"] else "✗ FAIL"
+    print(f"\n{status} | {scenario_id}")
+    print(f"  {grade['reason']}")
 
     # Get trace ID from the current context
     trace_id = langfuse.get_current_trace_id() or langfuse.create_trace_id()

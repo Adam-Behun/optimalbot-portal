@@ -6,10 +6,10 @@ Healthcare voice AI for automated prior authorization verification. Uses Pipecat
 
 ```bash
 # Backend (Terminal 1) - requires venv
-source venv/bin/activate && python app.py     # localhost:8000
+source .venv/bin/activate && python app.py     # localhost:8000
 
 # Bot (Terminal 2) - requires venv
-source venv/bin/activate && python bot.py     # localhost:7860
+source .venv/bin/activate && python bot.py     # localhost:7860
 
 # Frontend
 cd frontend && npm start                       # localhost:3000
