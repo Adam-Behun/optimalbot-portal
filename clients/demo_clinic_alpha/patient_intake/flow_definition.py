@@ -1,4 +1,5 @@
 import os
+from datetime import date, timedelta
 from typing import Any, Dict
 
 from openai import AsyncOpenAI
@@ -27,6 +28,24 @@ async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
         # This needs to be 1024+ tokens for OpenAI to cache it
         global_instructions = f"""You are Monica, a friendly scheduling assistant for {organization_name}.
 
+# What You Handle
+You ONLY help patients SCHEDULE NEW APPOINTMENTS. This includes:
+- New patients booking their first visit
+- Returning patients booking a new appointment
+
+# What You Do NOT Handle - Transfer These
+If the caller wants ANY of these, call request_staff to transfer them:
+- Check-in for an existing appointment ("I'm here for my appointment", "checking in")
+- Cancel or reschedule an existing appointment
+- Billing, payments, or account questions
+- Insurance or coverage questions
+- Medical advice or questions about procedures
+- Prescription refills
+- Test results or medical records
+- Complaints or urgent issues
+
+When transferring, briefly explain: "Let me connect you with someone who can help with that."
+
 # Voice Conversation Style
 You are having a real-time phone conversation. Your responses will be converted to speech, so:
 - Speak naturally like a human would on the phone—use contractions, brief acknowledgments, and conversational flow
@@ -43,9 +62,8 @@ The input you receive is transcribed from speech in real-time and may contain er
 - "at gmail dot com" means "@gmail.com"
 - If truly unclear, ask them to repeat—but phrase it naturally: "Sorry, I didn't catch that last part"
 
-# Guardrails
-- Scheduling only. Redirect pricing, insurance, or medical questions to office staff.
-- If the caller is frustrated or asks for a human: call the request_staff function to transfer them.
+# Other Guardrails
+- If the caller is frustrated or asks for a human: call request_staff to transfer them.
 - Never guess at information—always confirm with the patient.
 
 # Data Formats
@@ -53,7 +71,12 @@ When collecting emails: "at" → @, "dot" → .
 Phone numbers: write as digits only (e.g., "5551234567")."""
 
         # Simulate the task messages structure to build up token count
-        task_context = """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
+        task_context = """FIRST: Determine if the caller wants to SCHEDULE a new appointment.
+
+If they want something OTHER than scheduling (check-in, cancel, reschedule, billing, insurance, medical question, etc.):
+→ Say "Let me connect you with someone who can help with that." and call request_staff
+
+If they want to SCHEDULE an appointment, ask: "Are you a new patient, or have you been here before?"
 - NEW patient → call set_new_patient
 - RETURNING patient → call set_returning_patient"""
 
@@ -117,9 +140,50 @@ class PatientIntakeFlow:
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
         self.cold_transfer_config = cold_transfer_config or {}
 
+        # Set current date and available slots in state for reference across flow
+        self.today = date.today()
+        self.flow_manager.state["today"] = self.today.strftime("%B %d, %Y")
+
+        # Generate available slots (will come from EHR integration later)
+        self.available_slots = self._generate_available_slots()
+        self.flow_manager.state["available_slots"] = self.available_slots
+
+    def _generate_available_slots(self) -> list[str]:
+        """Generate available appointment slots. Will be replaced by EHR integration."""
+        tomorrow = self.today + timedelta(days=1)
+
+        # Find next Friday that's at least 2 days away (0=Monday, 4=Friday)
+        days_until_friday = (4 - self.today.weekday()) % 7
+        if days_until_friday <= 1:  # If Friday is tomorrow or today, get next week's Friday
+            days_until_friday += 7
+        next_friday = self.today + timedelta(days=days_until_friday)
+
+        return [
+            f"{tomorrow.strftime('%A, %B %d')} at 9:00 AM",
+            f"{next_friday.strftime('%A, %B %d')} at 2:00 PM",
+        ]
+
     def _get_global_instructions(self) -> str:
         """Global behavioral rules for patient interactions."""
         return f"""You are Monica, a friendly scheduling assistant for {self.organization_name}.
+
+# What You Handle
+You ONLY help patients SCHEDULE NEW APPOINTMENTS. This includes:
+- New patients booking their first visit
+- Returning patients booking a new appointment
+
+# What You Do NOT Handle - Transfer These
+If the caller wants ANY of these, call request_staff to transfer them:
+- Check-in for an existing appointment ("I'm here for my appointment", "checking in")
+- Cancel or reschedule an existing appointment
+- Billing, payments, or account questions
+- Insurance or coverage questions
+- Medical advice or questions about procedures
+- Prescription refills
+- Test results or medical records
+- Complaints or urgent issues
+
+When transferring, briefly explain: "Let me connect you with someone who can help with that."
 
 # Voice Conversation Style
 You are having a real-time phone conversation. Your responses will be converted to speech, so:
@@ -137,9 +201,8 @@ The input you receive is transcribed from speech in real-time and may contain er
 - "at gmail dot com" means "@gmail.com"
 - If truly unclear, ask them to repeat—but phrase it naturally: "Sorry, I didn't catch that last part"
 
-# Guardrails
-- Scheduling only. Redirect pricing, insurance, or medical questions to office staff.
-- If the caller is frustrated or asks for a human: call the request_staff function to transfer them.
+# Other Guardrails
+- If the caller is frustrated or asks for a human: call request_staff to transfer them.
 - Never guess at information—always confirm with the patient.
 
 # Data Formats
@@ -162,7 +225,12 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
             task_messages=[
                 {
                     "role": "system",
-                    "content": """Respond warmly, then ask: "Are you a new patient, or have you been here before?"
+                    "content": """FIRST: Determine if the caller wants to SCHEDULE a new appointment.
+
+If they want something OTHER than scheduling (check-in, cancel, reschedule, billing, insurance, medical question, etc.):
+→ Say "Let me connect you with someone who can help with that." and call request_staff
+
+If they want to SCHEDULE an appointment, ask: "Are you a new patient, or have you been here before?"
 - "new", "first time", "never been" → call set_new_patient
 - "returning", "been here before", "existing" → call set_returning_patient
 - Unclear → ask again before calling any function
@@ -173,7 +241,7 @@ IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason f
             functions=[
                 FlowsFunctionSchema(
                     name="set_new_patient",
-                    description="Call when patient confirms they are NEW. Include any other info they volunteered.",
+                    description="Call when patient wants to SCHEDULE and confirms they are NEW. Include any other info they volunteered.",
                     properties={
                         "first_name": {
                             "type": "string",
@@ -201,7 +269,7 @@ IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason f
                 ),
                 FlowsFunctionSchema(
                     name="set_returning_patient",
-                    description="Call when patient confirms they are RETURNING. Include any other info they volunteered.",
+                    description="Call when patient wants to SCHEDULE and confirms they are RETURNING. Include any other info they volunteered.",
                     properties={
                         "first_name": {
                             "type": "string",
@@ -267,24 +335,21 @@ Once they explain, call save_visit_reason with brief summary.""",
 
     def create_scheduling_node(self) -> NodeConfig:
         """Collect appointment date and time."""
-        appointment_type = self.flow_manager.state.get("appointment_type", "appointment")
-
-        # Demo: hardcoded slots for next week (Dec 2-6, 2025)
-        available_slots = [
-            "Monday December 2nd at 9:00 AM",
-            "Tuesday December 3rd at 10:30 AM",
-            "Wednesday December 4th at 1:00 PM",
-            "Thursday December 5th at 3:30 PM",
-            "Friday December 6th at 9:00 AM",
-        ]
+        today = self.flow_manager.state.get("today", "")
+        year = self.today.year
+        slots = self.flow_manager.state.get("available_slots", [])
+        slots_text = " or ".join(slots) if slots else "No slots available"
 
         return NodeConfig(
             name="scheduling",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Offer these available slots: {', '.join(available_slots)}.
-Once they pick one, call schedule_appointment with the date and time.""",
+                    "content": f"""TODAY: {today}
+
+Available slots: {slots_text}.
+- If they pick one → call schedule_appointment (use year {year})
+- If they want a different day → suggest they speak with staff for more options""",
                 }
             ],
             functions=[
@@ -340,12 +405,10 @@ Once they pick one, call schedule_appointment with the date and time.""",
 ALREADY HAVE: {have_str}
 STILL NEED: {need_str}
 
-For missing fields, ask ONE at a time:
+Ask ONLY for missing fields, one at a time. Don't repeat back info you already have.
 - Last name: ask to spell letter by letter
 - Phone: digits only
 - Email: ask to spell letter by letter
-
-Acknowledge what we have: "I have your phone as X." Then ask for next missing item.
 
 When ALL 5 fields collected, call save_patient_info.""",
                 }
@@ -386,22 +449,27 @@ When ALL 5 fields collected, call save_patient_info.""",
 
     def create_confirmation_node(self) -> NodeConfig:
         state = self.flow_manager.state
+        today = state.get("today", "")
 
         return NodeConfig(
             name="confirmation",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Confirm: "{state.get('first_name', '')}, your appointment is {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. Confirmation email to {state.get('email', '')}. Anything else?"
+                    "content": f"""TODAY: {today}
+
+Confirm BRIEFLY in ONE sentence: "{state.get('first_name', '')}, you're booked for {state.get('appointment_date', '')} at {state.get('appointment_time', '')}. Confirmation email to {state.get('email', '')}. Anything else?"
+
+DO NOT list or summarize other details. Just the one sentence above.
 - If no/goodbye → call end_call
-- If they want to correct something → call correct_info
-- If question → answer, then ask again""",
+- If correction → call correct_info
+- If question → answer briefly, ask "Anything else?" """,
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="correct_info",
-                    description="Patient wants to correct information. Call when they say something is wrong.",
+                    description="Patient wants to correct information. For appointment_date, ONLY accept dates after TODAY shown above. If they suggest a past date, politely clarify the correct year.",
                     properties={
                         "field": {
                             "type": "string",
@@ -409,7 +477,7 @@ When ALL 5 fields collected, call save_patient_info.""",
                         },
                         "new_value": {
                             "type": "string",
-                            "description": "The corrected value",
+                            "description": "The corrected value (appointment_date must be after TODAY)",
                         },
                     },
                     required=["field", "new_value"],
@@ -441,7 +509,7 @@ When ALL 5 fields collected, call save_patient_info.""",
         )
 
     def create_staff_confirmation_node(self) -> NodeConfig:
-        """Ask patient to confirm they want to speak with a manager."""
+        """Ask patient to confirm they want to speak with a staff member."""
         return NodeConfig(
             name="staff_confirmation",
             role_messages=[
@@ -453,8 +521,11 @@ When ALL 5 fields collected, call save_patient_info.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": """You just asked if they'd like to speak with a manager.
+                    "content": """Offer to connect them with a colleague who can help better.
 
+Explain briefly why a colleague would be more helpful (e.g., they have better access to patient records, can look up billing, etc.) and ask if they'd like to be connected.
+
+After they respond:
 - If yes/sure/please/okay → call dial_staff
 - If no/nevermind/continue → call return_to_conversation""",
                 }
@@ -462,7 +533,7 @@ When ALL 5 fields collected, call save_patient_info.""",
             functions=[
                 FlowsFunctionSchema(
                     name="dial_staff",
-                    description="Transfer to manager when they confirm.",
+                    description="Transfer to staff when they confirm.",
                     properties={},
                     required=[],
                     handler=self._dial_staff_handler,
@@ -475,10 +546,7 @@ When ALL 5 fields collected, call save_patient_info.""",
                     handler=self._return_to_conversation_handler,
                 ),
             ],
-            respond_immediately=False,
-            pre_actions=[
-                {"type": "tts_say", "text": "Would you like to speak with my manager?"}
-            ],
+            respond_immediately=True,
         )
 
     def create_transfer_initiated_node(self) -> NodeConfig:
@@ -524,6 +592,80 @@ When ALL 5 fields collected, call save_patient_info.""",
             ],
         )
 
+    # ========== Returning Patient Lookup Nodes ==========
+
+    def create_returning_patient_lookup_node(self) -> NodeConfig:
+        """Ask returning patient for phone number to look up their record."""
+        return NodeConfig(
+            name="returning_patient_lookup",
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": """Ask for their phone number to pull up their record: "Let me pull up your file. What's the phone number on your account?"
+
+Once they provide a phone number, call lookup_by_phone with the digits.""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="lookup_by_phone",
+                    description="Look up patient record by phone number.",
+                    properties={
+                        "phone_number": {
+                            "type": "string",
+                            "description": "Patient's phone number (digits only, e.g., '5551234567')",
+                        },
+                    },
+                    required=["phone_number"],
+                    handler=self._lookup_by_phone_handler,
+                ),
+                self._get_request_staff_function(),
+            ],
+            respond_immediately=True,
+        )
+
+    def create_returning_patient_verify_dob_node(self) -> NodeConfig:
+        """Ask returning patient to verify DOB before confirming identity."""
+        return NodeConfig(
+            name="returning_patient_verify_dob",
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": """Found a record. Ask for date of birth to verify: "I found a record. Can you confirm your date of birth?"
+
+Once they provide DOB, call verify_dob.""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="verify_dob",
+                    description="Verify patient identity by date of birth.",
+                    properties={
+                        "date_of_birth": {
+                            "type": "string",
+                            "description": "Patient's date of birth in natural format (e.g., 'May 18, 1975', 'January 5th 1990')",
+                        },
+                    },
+                    required=["date_of_birth"],
+                    handler=self._verify_dob_handler,
+                ),
+                self._get_request_staff_function(),
+            ],
+            respond_immediately=True,
+        )
+
+    def create_returning_patient_not_found_node(self) -> NodeConfig:
+        """Patient record not found - transfer to staff."""
+        return NodeConfig(
+            name="returning_patient_not_found",
+            task_messages=[],
+            functions=[],
+            pre_actions=[
+                {"type": "tts_say", "text": "I couldn't find your record in our system. Let me connect you with a colleague who can help. One moment."}
+            ],
+            post_actions=[{"type": "end_conversation"}],
+        )
+
     # ========== Function Handlers ==========
 
     def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
@@ -560,15 +702,13 @@ When ALL 5 fields collected, call save_patient_info.""",
     async def _set_returning_patient_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Patient is returning. Store any volunteered info."""
+        """Patient is returning. Go to lookup flow to verify identity."""
         flow_manager.state["appointment_type"] = "Returning Patient"
         captured = self._store_volunteered_info(args, flow_manager)
         logger.info(f"Flow: Returning Patient - captured: {captured if captured else 'none'}")
 
-        # Skip visit_reason node if already provided
-        if flow_manager.state.get("appointment_reason"):
-            return None, self.create_scheduling_node()
-        return None, self.create_visit_reason_node()
+        # Go to lookup flow to verify patient identity
+        return None, self.create_returning_patient_lookup_node()
 
     async def _save_visit_reason_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -579,16 +719,123 @@ When ALL 5 fields collected, call save_patient_info.""",
         logger.info(f"Flow: Visit reason - {appointment_reason}")
         return "Let's get you scheduled.", self.create_scheduling_node()
 
+    # ========== Returning Patient Lookup Handlers ==========
+
+    async def _lookup_by_phone_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Look up patient by phone number."""
+        phone_number = args.get("phone_number", "").strip()
+        # Normalize to digits only
+        phone_digits = ''.join(c for c in phone_number if c.isdigit())
+        logger.info(f"Flow: Looking up patient by phone: {phone_digits[-4:] if len(phone_digits) >= 4 else '***'}")
+
+        db = get_async_patient_db()
+        patient_record = await db.find_patient_by_phone(phone_digits, self.organization_id)
+
+        if patient_record:
+            # Store the found record temporarily for DOB verification
+            # Use underscore prefix to indicate these are internal lookup fields
+            flow_manager.state["_lookup_record"] = {
+                "first_name": patient_record.get("first_name", ""),
+                "last_name": patient_record.get("last_name", ""),
+                "phone_number": patient_record.get("phone_number", ""),
+                "date_of_birth": patient_record.get("date_of_birth", ""),
+                "email": patient_record.get("email", ""),
+            }
+            logger.info(f"Flow: Found patient record, requesting DOB verification")
+            return None, self.create_returning_patient_verify_dob_node()
+        else:
+            logger.info(f"Flow: No patient found for phone {phone_digits[-4:] if len(phone_digits) >= 4 else '***'}")
+            # Initiate transfer to staff
+            await self._initiate_staff_transfer(flow_manager)
+            return None, self.create_returning_patient_not_found_node()
+
+    async def _verify_dob_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Verify patient identity by comparing DOB."""
+        provided_dob = args.get("date_of_birth", "").strip()
+        # Normalize to ISO format for comparison
+        provided_dob_normalized = parse_natural_date(provided_dob)
+
+        lookup_record = flow_manager.state.get("_lookup_record", {})
+        stored_dob = lookup_record.get("date_of_birth", "")
+
+        logger.info(f"Flow: Verifying DOB - provided: {provided_dob_normalized}, stored: {stored_dob}")
+
+        if provided_dob_normalized and provided_dob_normalized == stored_dob:
+            # DOB matches - copy verified info to state
+            first_name = lookup_record.get("first_name", "")
+            flow_manager.state["first_name"] = first_name
+            flow_manager.state["last_name"] = lookup_record.get("last_name", "")
+            flow_manager.state["phone_number"] = lookup_record.get("phone_number", "")
+            flow_manager.state["date_of_birth"] = stored_dob
+            flow_manager.state["email"] = lookup_record.get("email", "")
+
+            # Clean up temporary lookup state
+            del flow_manager.state["_lookup_record"]
+
+            logger.info(f"Flow: DOB verified for {first_name}")
+
+            # Skip visit_reason if already provided, otherwise ask
+            if flow_manager.state.get("appointment_reason"):
+                return f"Welcome back, {first_name}!", self.create_scheduling_node()
+            return f"Welcome back, {first_name}! What brings you in today?", self.create_visit_reason_node()
+        else:
+            # DOB doesn't match - transfer to staff
+            logger.warning(f"Flow: DOB mismatch - transferring to staff")
+            # Clean up temporary lookup state
+            if "_lookup_record" in flow_manager.state:
+                del flow_manager.state["_lookup_record"]
+            await self._initiate_staff_transfer(flow_manager)
+            return "That doesn't match what I have on file. Let me connect you with a colleague who can help.", self.create_returning_patient_not_found_node()
+
+    async def _initiate_staff_transfer(self, flow_manager: FlowManager) -> None:
+        """Initiate cold transfer to staff (helper for returning patient not found)."""
+        staff_number = self.cold_transfer_config.get("staff_number")
+        if staff_number and self.transport:
+            try:
+                if self.pipeline:
+                    self.pipeline.transfer_in_progress = True
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                logger.info(f"Flow: Staff transfer initiated to {staff_number}")
+            except Exception as e:
+                logger.error(f"Flow: Staff transfer failed: {e}")
+
     async def _schedule_appointment_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
-        """Save appointment date and time."""
+        """Save appointment date and time with validation against available slots."""
         raw_date = args.get("appointment_date", "").strip()
         raw_time = args.get("appointment_time", "").strip()
 
         # Normalize to ISO format for storage
         appointment_date = parse_natural_date(raw_date) or raw_date
         appointment_time = parse_natural_time(raw_time) or raw_time
+
+        # Validate against available slots
+        available_slots = flow_manager.state.get("available_slots", [])
+        slot_valid = False
+        for slot in available_slots:
+            # Check if the date and time match any available slot
+            slot_lower = slot.lower()
+            # Parse the slot date for comparison
+            if appointment_date:
+                try:
+                    scheduled = date.fromisoformat(appointment_date)
+                    slot_date_str = scheduled.strftime("%B %d").lower()  # "december 12"
+                    time_lower = raw_time.lower()
+                    if slot_date_str in slot_lower and time_lower in slot_lower:
+                        slot_valid = True
+                        break
+                except ValueError:
+                    pass
+
+        if not slot_valid:
+            slots_text = " or ".join(available_slots)
+            logger.warning(f"Flow: Rejected invalid slot: {raw_date} at {raw_time}")
+            return f"That slot isn't available. Please choose from: {slots_text}.", self.create_scheduling_node()
 
         flow_manager.state["appointment_date"] = appointment_date
         flow_manager.state["appointment_time"] = appointment_time
@@ -643,9 +890,23 @@ When ALL 5 fields collected, call save_patient_info.""",
     async def _correct_info_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
-        """Correct a piece of information."""
+        """Correct a piece of information with validation."""
         field = args.get("field", "").strip()
         new_value = args.get("new_value", "").strip()
+
+        # Validate appointment_date is in the future
+        if field == "appointment_date":
+            parsed = parse_natural_date(new_value)
+            if parsed:
+                try:
+                    corrected_date = date.fromisoformat(parsed)
+                    if corrected_date <= self.today:
+                        logger.warning(f"Flow: Rejected past date correction: {new_value}")
+                        slots = flow_manager.state.get("available_slots", [])
+                        slots_text = " or ".join(slots)
+                        return f"That date is in the past. Available slots are {slots_text}.", self.create_confirmation_node()
+                except ValueError:
+                    pass
 
         if field in flow_manager.state:
             flow_manager.state[field] = new_value
@@ -653,7 +914,7 @@ When ALL 5 fields collected, call save_patient_info.""",
         else:
             logger.warning(f"Flow: Attempted to correct unknown field {field}")
 
-        return f"{new_value}, got it. Let me confirm the details again.", self.create_confirmation_node()
+        return f"{new_value}, got it.", self.create_confirmation_node()
 
     async def _confirm_booking_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager

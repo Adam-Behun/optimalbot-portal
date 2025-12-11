@@ -129,6 +129,23 @@ class AsyncPatientRecord:
             logger.error(f"Error deleting patient {patient_id}: {e}")
             return False
 
+    async def find_patient_by_phone(self, phone_number: str, organization_id: str = None) -> Optional[dict]:
+        """Find a patient by phone number. Returns first match or None."""
+        try:
+            # Normalize phone to digits only for matching
+            digits_only = ''.join(c for c in phone_number if c.isdigit())
+            if not digits_only:
+                return None
+
+            query = {"phone_number": digits_only}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+
+            return await self.patients.find_one(query)
+        except Exception as e:
+            logger.error(f"Error finding patient by phone {phone_number}: {e}")
+            return None
+
 
 _patient_db_instance: Optional[AsyncPatientRecord] = None
 
