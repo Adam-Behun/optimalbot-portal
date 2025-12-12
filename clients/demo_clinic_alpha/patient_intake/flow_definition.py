@@ -227,25 +227,34 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     "role": "system",
                     "content": """FIRST: Determine if the caller wants to SCHEDULE a new appointment.
 
-If they want something OTHER than scheduling (check-in, cancel, reschedule, billing, insurance, medical question, etc.):
+SCHEDULING includes: cleaning, check-up, exam, consultation, any type of appointment.
+NOT scheduling (transfer these): check-IN for existing appointment ("I'm here for my appointment"), cancel, reschedule, billing, insurance, medical questions.
+
+If they want something OTHER than scheduling:
 → Say "Let me connect you with someone who can help with that." and call request_staff
 
 If they want to SCHEDULE an appointment, ask: "Are you a new patient, or have you been here before?"
-- "new", "first time", "never been" → call set_new_patient
-- "returning", "been here before", "existing" → call set_returning_patient
-- Unclear → ask again before calling any function
+Then IMMEDIATELY call the appropriate function—don't ask for more info first:
+- "never been here" / "first time" / "I'm new" → call set_new_patient
+- EVER been here (even years ago, even once, even uncertain) → call set_returning_patient (we'll look them up by phone in the next step)
 
-IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason for visit). Include all mentioned info in the function call.""",
+If they DEFLECT the question (e.g., "does it matter?", "can we just schedule?"):
+→ Gently explain why and re-ask: "I just need to know so I can pull up your file or set you up as new. Have you been here before?"
+→ Do NOT transfer unless they explicitly ask for a human.
+
+Call the function IMMEDIATELY after they answer. Do NOT ask for name, phone, or other info first—the next step handles that.
+
+Capture any info they ALREADY volunteered in the function call, but don't ask for more.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="set_new_patient",
-                    description="Call when patient wants to SCHEDULE and confirms they are NEW. Include any other info they volunteered.",
+                    description="Call IMMEDIATELY when patient explicitly says they've NEVER been here before (e.g., 'I'm new', 'first time'). Include any volunteered info.",
                     properties={
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name, or 'unknown' if not mentioned.",
+                            "description": "Patient's first name if mentioned. Omit or leave empty if not mentioned.",
                         },
                         "last_name": {
                             "type": "string",
@@ -264,16 +273,16 @@ IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason f
                             "description": "Reason for visit if mentioned (e.g., 'cleaning', 'tooth pain'), or empty string.",
                         },
                     },
-                    required=["first_name"],
+                    required=[],
                     handler=self._set_new_patient_handler,
                 ),
                 FlowsFunctionSchema(
                     name="set_returning_patient",
-                    description="Call when patient wants to SCHEDULE and confirms they are RETURNING. Include any other info they volunteered.",
+                    description="Call IMMEDIATELY when patient indicates they've EVER been here before (even years ago, even once, even if uncertain). We'll verify in database. Include any volunteered info.",
                     properties={
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name, or 'unknown' if not mentioned.",
+                            "description": "Patient's first name if mentioned. Omit or leave empty if not mentioned.",
                         },
                         "last_name": {
                             "type": "string",
@@ -292,7 +301,7 @@ IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason f
                             "description": "Reason for visit if mentioned (e.g., 'cleaning', 'tooth pain'), or empty string.",
                         },
                     },
-                    required=["first_name"],
+                    required=[],
                     handler=self._set_returning_patient_handler,
                 ),
                 self._get_request_staff_function(),
@@ -312,17 +321,23 @@ IMPORTANT: Capture ANY info the patient volunteers (name, phone, email, reason f
                 {
                     "role": "system",
                     "content": f"""Patient is {appointment_type}. Ask: "What brings you in today?"
-Once they explain, call save_visit_reason with brief summary.""",
+
+If they describe URGENT symptoms (severe pain, swelling, bleeding, can't eat/sleep, pain for days, emergency):
+→ Say "That sounds urgent. Let me transfer you to someone who can help right away."
+→ Call request_staff with urgent=true (this transfers immediately)
+
+For routine visits (cleaning, checkup, consultation):
+→ Call save_visit_reason with brief summary""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="save_visit_reason",
-                    description="Call after patient explains their visit reason. Don't call if they only said 'appointment' without details.",
+                    description="Call for ROUTINE visits only (cleaning, checkup, consultation). Do NOT use for urgent/painful issues.",
                     properties={
                         "reason": {
                             "type": "string",
-                            "description": "Brief summary of the visit reason (e.g., 'routine checkup', 'tooth pain', 'teeth whitening')",
+                            "description": "Brief summary: 'routine checkup', 'cleaning', 'consultation', etc.",
                         }
                     },
                     required=["reason"],
@@ -348,26 +363,78 @@ Once they explain, call save_visit_reason with brief summary.""",
                     "content": f"""TODAY: {today}
 
 Available slots: {slots_text}.
-- If they pick one → call schedule_appointment (use year {year})
-- If they want a different day → suggest they speak with staff for more options""",
+
+- If they pick a slot → call schedule_appointment (use year {year}). Include any volunteered info.
+- If they want a different day → suggest staff may have more options, offer to transfer
+- If they volunteer info (name, phone, email) WITHOUT picking a slot → call capture_info to save it, then guide back to picking a slot
+
+Only call request_staff if they EXPLICITLY want to speak with staff.""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
                     name="schedule_appointment",
-                    description="Call ONLY after patient confirms BOTH date AND time. Don't call with partial info.",
+                    description="Call after patient confirms date AND time. Include any info they volunteered.",
                     properties={
                         "appointment_date": {
                             "type": "string",
-                            "description": "The selected date in 'Month Day, Year' format (e.g., 'December 15, 2025', 'January 3, 2025'). Always include the full year.",
+                            "description": "The selected date in 'Month Day, Year' format (e.g., 'December 15, 2025'). Always include the full year.",
                         },
                         "appointment_time": {
                             "type": "string",
                             "description": "The selected time in 12-hour format with AM/PM (e.g., '9:00 AM', '3:30 PM')",
                         },
+                        "first_name": {
+                            "type": "string",
+                            "description": "Patient's first name if volunteered.",
+                        },
+                        "last_name": {
+                            "type": "string",
+                            "description": "Patient's last name if volunteered.",
+                        },
+                        "phone_number": {
+                            "type": "string",
+                            "description": "Phone number if volunteered (digits only).",
+                        },
+                        "date_of_birth": {
+                            "type": "string",
+                            "description": "Date of birth if volunteered (Month Day, Year format).",
+                        },
+                        "email": {
+                            "type": "string",
+                            "description": "Email if volunteered.",
+                        },
                     },
                     required=["appointment_date", "appointment_time"],
                     handler=self._schedule_appointment_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="capture_info",
+                    description="Save volunteered patient info when they provide it before picking a slot.",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "Patient's first name if mentioned.",
+                        },
+                        "last_name": {
+                            "type": "string",
+                            "description": "Patient's last name if mentioned.",
+                        },
+                        "phone_number": {
+                            "type": "string",
+                            "description": "Phone number if mentioned (digits only).",
+                        },
+                        "date_of_birth": {
+                            "type": "string",
+                            "description": "Date of birth if mentioned (Month Day, Year format).",
+                        },
+                        "email": {
+                            "type": "string",
+                            "description": "Email if mentioned.",
+                        },
+                    },
+                    required=[],
+                    handler=self._capture_info_handler,
                 ),
                 self._get_request_staff_function(),
             ],
@@ -402,15 +469,21 @@ Available slots: {slots_text}.
                     "role": "system",
                     "content": f"""Booking for {appointment_date} at {appointment_time}.
 
-ALREADY HAVE: {have_str}
+ALREADY COLLECTED (use these values): {have_str}
 STILL NEED: {need_str}
 
-Ask ONLY for missing fields, one at a time. Don't repeat back info you already have.
-- Last name: ask to spell letter by letter
-- Phone: digits only
-- Email: ask to spell letter by letter
+CRITICAL: Only ask for fields in STILL NEED. NEVER re-ask for fields in ALREADY COLLECTED.
 
-When ALL 5 fields collected, call save_patient_info.""",
+After patient provides the LAST missing field, IMMEDIATELY call save_patient_info with:
+- Values from ALREADY COLLECTED above (copy exactly)
+- New value(s) just collected
+
+Format tips when asking:
+- Last name: ASK to spell, but accept if they give it clearly. Don't insist on spelling if they refuse.
+- Phone: digits only
+- Email: ASK to spell, but accept clear answers like "john.doe@email.com"
+
+If patient gives info clearly and refuses to spell, accept it and move on.""",
                 }
             ],
             functions=[
@@ -521,13 +594,16 @@ DO NOT list or summarize other details. Just the one sentence above.
             task_messages=[
                 {
                     "role": "system",
-                    "content": """Offer to connect them with a colleague who can help better.
+                    "content": """Transfer the patient to staff.
 
-Explain briefly why a colleague would be more helpful (e.g., they have better access to patient records, can look up billing, etc.) and ask if they'd like to be connected.
+CRITICAL: If patient has ALREADY confirmed transfer (said yes, please, transfer me, etc.), call dial_staff IMMEDIATELY. Do NOT ask again.
 
-After they respond:
-- If yes/sure/please/okay → call dial_staff
-- If no/nevermind/continue → call return_to_conversation""",
+If they haven't confirmed yet, ask once: "Would you like me to transfer you?"
+- Positive response → call dial_staff NOW
+- Negative response → call set_new_patient or set_returning_patient
+
+NEVER say "transferring" or "connecting" without calling dial_staff in the same turn.
+ONE response max, then call the function.""",
                 }
             ],
             functions=[
@@ -539,11 +615,36 @@ After they respond:
                     handler=self._dial_staff_handler,
                 ),
                 FlowsFunctionSchema(
-                    name="return_to_conversation",
-                    description="Return to conversation if they decline transfer.",
-                    properties={},
+                    name="set_new_patient",
+                    description="Call when patient says they're new and wants to continue scheduling.",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "Patient's first name if mentioned. Omit or leave empty if not mentioned.",
+                        },
+                        "visit_reason": {
+                            "type": "string",
+                            "description": "Reason for visit if mentioned, or empty string.",
+                        },
+                    },
                     required=[],
-                    handler=self._return_to_conversation_handler,
+                    handler=self._set_new_patient_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="set_returning_patient",
+                    description="Call when patient says they've been here before and wants to continue scheduling.",
+                    properties={
+                        "first_name": {
+                            "type": "string",
+                            "description": "Patient's first name if mentioned. Omit or leave empty if not mentioned.",
+                        },
+                        "visit_reason": {
+                            "type": "string",
+                            "description": "Reason for visit if mentioned, or empty string.",
+                        },
+                    },
+                    required=[],
+                    handler=self._set_returning_patient_handler,
                 ),
             ],
             respond_immediately=True,
@@ -678,6 +779,13 @@ Once they provide DOB, call verify_dob.""",
                 flow_manager.state[field] = value
                 captured.append(field)
 
+        # Handle date_of_birth with parsing
+        dob = args.get("date_of_birth", "").strip()
+        if dob:
+            parsed_dob = parse_natural_date(dob) or dob
+            flow_manager.state["date_of_birth"] = parsed_dob
+            captured.append("date_of_birth")
+
         # Handle visit_reason separately (maps to appointment_reason)
         visit_reason = args.get("visit_reason", "").strip()
         if visit_reason:
@@ -803,12 +911,24 @@ Once they provide DOB, call verify_dob.""",
             except Exception as e:
                 logger.error(f"Flow: Staff transfer failed: {e}")
 
+    async def _capture_info_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Capture volunteered patient info and stay in scheduling node."""
+        captured = self._store_volunteered_info(args, flow_manager)
+        logger.info(f"Flow: Captured volunteered info: {captured if captured else 'none'}")
+        # Return minimal response - if called with schedule_appointment, avoid duplication
+        return "Got it.", self.create_scheduling_node()
+
     async def _schedule_appointment_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
         """Save appointment date and time with validation against available slots."""
         raw_date = args.get("appointment_date", "").strip()
         raw_time = args.get("appointment_time", "").strip()
+
+        # Capture any volunteered patient info
+        self._store_volunteered_info(args, flow_manager)
 
         # Normalize to ISO format for storage
         appointment_date = parse_natural_date(raw_date) or raw_date
@@ -840,6 +960,16 @@ Once they provide DOB, call verify_dob.""",
         flow_manager.state["appointment_date"] = appointment_date
         flow_manager.state["appointment_time"] = appointment_time
         logger.info(f"Flow: Scheduled {raw_date} → {appointment_date} at {raw_time} → {appointment_time}")
+
+        # Check if we already have all required patient info (e.g., verified returning patient)
+        required_fields = ["first_name", "last_name", "phone_number", "date_of_birth", "email"]
+        has_all_info = all(flow_manager.state.get(field) for field in required_fields)
+
+        if has_all_info:
+            # Skip collect_info for verified returning patients
+            logger.info("Flow: All patient info already present, skipping to confirmation")
+            return "Perfect! Let me confirm your appointment.", self.create_confirmation_node()
+
         return "Perfect! Now I just need a few details to complete your booking.", self.create_collect_info_node()
 
     async def _save_patient_info_handler(
@@ -981,7 +1111,34 @@ Once they provide DOB, call verify_dob.""",
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Transition to staff confirmation node to ask if they want a manager."""
+        """Transfer to staff. If urgent=true or patient_confirmed=true, transfer immediately."""
+        urgent = args.get("urgent", False)
+        patient_confirmed = args.get("patient_confirmed", False)
+
+        if urgent or patient_confirmed:
+            # Immediate transfer - no confirmation needed
+            reason = "URGENT" if urgent else "CONFIRMED"
+            logger.info(f"Flow: {reason} - initiating immediate staff transfer")
+            staff_number = self.cold_transfer_config.get("staff_number")
+
+            if not staff_number:
+                logger.warning("Cold transfer requested but no staff_number configured")
+                return None, self.create_transfer_failed_node()
+
+            try:
+                if self.pipeline:
+                    self.pipeline.transfer_in_progress = True
+                if self.transport:
+                    await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                    logger.info(f"SIP call transfer initiated: {staff_number}")
+                return None, self.create_transfer_initiated_node()
+            except Exception as e:
+                logger.exception("Cold transfer failed")
+                if self.pipeline:
+                    self.pipeline.transfer_in_progress = False
+                return None, self.create_transfer_failed_node()
+
+        # Non-urgent and not confirmed: ask for confirmation
         logger.info("Flow: transitioning to staff_confirmation")
         return None, self.create_staff_confirmation_node()
 
@@ -1026,8 +1183,17 @@ Once they provide DOB, call verify_dob.""",
         """Return the request_staff function schema for use in multiple nodes."""
         return FlowsFunctionSchema(
             name="request_staff",
-            description="Call when the patient asks to speak with a human, staff member, or receptionist. Also use if they seem frustrated or confused.",
-            properties={},
-            required=[],
+            description="Transfer to staff. Use urgent=true for medical emergencies - transfers immediately. Use patient_confirmed=true if patient already said yes/please/transfer me.",
+            properties={
+                "urgent": {
+                    "type": "boolean",
+                    "description": "Set true for medical emergencies (pain, swelling, can't eat). Set false for general requests.",
+                },
+                "patient_confirmed": {
+                    "type": "boolean",
+                    "description": "Set true if patient already confirmed they want transfer (said yes, please, transfer me, etc.). Set false if we still need to ask.",
+                },
+            },
+            required=["urgent"],
             handler=self._request_staff_handler,
         )
