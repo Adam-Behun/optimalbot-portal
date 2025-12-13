@@ -351,17 +351,7 @@ class FlowRunner:
                 if result:
                     all_content.append(result)
 
-                result_node_name = next_node.get("name") if next_node else None
-                # Check if this node ends the conversation
-                post_actions = next_node.get("post_actions") or [] if next_node else []
-                ends_conversation = (
-                    result_node_name == "end" or
-                    any(a.get("type") == "end_conversation" for a in post_actions)
-                )
-                if ends_conversation:
-                    self.done = True
-                    break
-                elif next_node:
+                if next_node:
                     self.current_node = next_node
                     # Process pre_actions on the new node (e.g., tts_say)
                     pre_actions = self.current_node.get("pre_actions") or []
@@ -374,6 +364,17 @@ class FlowRunner:
                                     "role": "assistant",
                                     "content": pre_action_text
                                 })
+
+                    # Check if this node ends the conversation
+                    result_node_name = next_node.get("name")
+                    post_actions = next_node.get("post_actions") or []
+                    ends_conversation = (
+                        result_node_name == "end" or
+                        any(a.get("type") == "end_conversation" for a in post_actions)
+                    )
+                    if ends_conversation:
+                        self.done = True
+                        break
                     if self.current_node.get("respond_immediately"):
                         continue
 

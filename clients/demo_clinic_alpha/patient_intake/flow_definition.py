@@ -50,9 +50,10 @@ When transferring, briefly explain: "Let me connect you with someone who can hel
 You are having a real-time phone conversation. Your responses will be converted to speech, so:
 - Speak naturally like a human would on the phone—use contractions, brief acknowledgments, and conversational flow
 - Keep responses short and direct. One or two sentences is usually enough.
-- Never use bullet points, numbered lists, special formatting, or markdown
+- NEVER use bullet points, numbered lists, asterisks, bold, or any markdown formatting
 - Avoid robotic phrases. Say "Got it" or "Perfect" instead of "I have recorded your information"
 - Use natural filler when appropriate: "Let me see..." or "Okay, so..."
+- If they ask you to repeat, SHORTEN your response each time. Don't repeat verbatim. Example: First time you might say the full slots, second time just "Saturday 9 AM or Friday 2 PM—which works?"
 
 # Handling Speech Recognition
 The input you receive is transcribed from speech in real-time and may contain errors. When you notice something that looks wrong:
@@ -189,9 +190,10 @@ When transferring, briefly explain: "Let me connect you with someone who can hel
 You are having a real-time phone conversation. Your responses will be converted to speech, so:
 - Speak naturally like a human would on the phone—use contractions, brief acknowledgments, and conversational flow
 - Keep responses short and direct. One or two sentences is usually enough.
-- Never use bullet points, numbered lists, special formatting, or markdown
+- NEVER use bullet points, numbered lists, asterisks, bold, or any markdown formatting
 - Avoid robotic phrases. Say "Got it" or "Perfect" instead of "I have recorded your information"
 - Use natural filler when appropriate: "Let me see..." or "Okay, so..."
+- If they ask you to repeat, SHORTEN your response each time. Don't repeat verbatim. Example: First time you might say the full slots, second time just "Saturday 9 AM or Friday 2 PM—which works?"
 
 # Handling Speech Recognition
 The input you receive is transcribed from speech in real-time and may contain errors. When you notice something that looks wrong:
@@ -227,8 +229,9 @@ Phone numbers: write as digits only (e.g., "5551234567")."""
                     "role": "system",
                     "content": """FIRST: Determine if the caller wants to SCHEDULE a new appointment.
 
-SCHEDULING includes: cleaning, check-up, exam, consultation, any type of appointment.
-NOT scheduling (transfer these): check-IN for existing appointment ("I'm here for my appointment"), cancel, reschedule, billing, insurance, medical questions.
+SCHEDULING includes: cleaning, check-up, exam, consultation, follow-up, any type of NEW appointment.
+NOT scheduling (transfer these): check-IN for existing appointment ("I'm here for my appointment"), cancel, reschedule an EXISTING appointment, billing, insurance, medical questions.
+Note: "follow-up appointment" = scheduling a NEW appointment, not rescheduling.
 
 If they want something OTHER than scheduling:
 → Say "Let me connect you with someone who can help with that." and call request_staff
@@ -320,13 +323,14 @@ Capture any info they ALREADY volunteered in the function call, but don't ask fo
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""Patient is {appointment_type}. Ask: "What brings you in today?"
+                    "content": f"""Patient is {appointment_type}. Just ask: "What brings you in today?"
+Do NOT add greetings, "thank you", or repeat their name—just ask the question directly.
 
 If they describe URGENT symptoms (severe pain, swelling, bleeding, can't eat/sleep, pain for days, emergency):
 → Say "That sounds urgent. Let me transfer you to someone who can help right away."
 → Call request_staff with urgent=true (this transfers immediately)
 
-For routine visits (cleaning, checkup, consultation):
+For routine visits (cleaning, checkup, consultation, follow-up):
 → Call save_visit_reason with brief summary""",
                 }
             ],
@@ -354,6 +358,7 @@ For routine visits (cleaning, checkup, consultation):
         year = self.today.year
         slots = self.flow_manager.state.get("available_slots", [])
         slots_text = " or ".join(slots) if slots else "No slots available"
+        email_on_file = self.flow_manager.state.get("email", "")
 
         return NodeConfig(
             name="scheduling",
@@ -363,10 +368,16 @@ For routine visits (cleaning, checkup, consultation):
                     "content": f"""TODAY: {today}
 
 Available slots: {slots_text}.
+Email on file: {email_on_file or "not yet collected"}
 
-- If they pick a slot → call schedule_appointment (use year {year}). Include any volunteered info.
+Say the slots conversationally in ONE sentence, like: "I have {slots_text}. Which works for you?"
+DO NOT use bullet points, numbered lists, or any formatting.
+If they ask you to repeat OR if returning after a brief interruption (like updating email), shorten it: "So, Saturday 9 AM or Friday 2 PM?"
+
+AFTER patient picks a slot, call schedule_appointment with their chosen date/time (use year {year}). Include any volunteered info.
+- If they haven't picked a slot yet but volunteer info → call capture_info, then ask which slot they want
 - If they want a different day → suggest staff may have more options, offer to transfer
-- If they volunteer info (name, phone, email) WITHOUT picking a slot → call capture_info to save it, then guide back to picking a slot
+- If they ask about their email on file or want to update it → tell them the email above, and if they give a new one, call capture_info with the new email
 
 Only call request_staff if they EXPLICITLY want to speak with staff.""",
                 }
@@ -473,12 +484,14 @@ ALREADY COLLECTED (use these values): {have_str}
 STILL NEED: {need_str}
 
 CRITICAL: Only ask for fields in STILL NEED. NEVER re-ask for fields in ALREADY COLLECTED.
+Ask for missing info conversationally, ONE field at a time. DO NOT list multiple fields with numbers or bullets.
+Example: "Can I get your phone number?" then after they answer, "And your date of birth?"
 
 After patient provides the LAST missing field, IMMEDIATELY call save_patient_info with:
 - Values from ALREADY COLLECTED above (copy exactly)
 - New value(s) just collected
 
-Format tips when asking:
+Format tips:
 - Last name: ASK to spell, but accept if they give it clearly. Don't insist on spelling if they refuse.
 - Phone: digits only
 - Email: ASK to spell, but accept clear answers like "john.doe@email.com"
@@ -889,7 +902,7 @@ Once they provide DOB, call verify_dob.""",
             # Skip visit_reason if already provided, otherwise ask
             if flow_manager.state.get("appointment_reason"):
                 return f"Welcome back, {first_name}!", self.create_scheduling_node()
-            return f"Welcome back, {first_name}! What brings you in today?", self.create_visit_reason_node()
+            return f"Welcome back, {first_name}!", self.create_visit_reason_node()
         else:
             # DOB doesn't match - transfer to staff
             logger.warning(f"Flow: DOB mismatch - transferring to staff")
