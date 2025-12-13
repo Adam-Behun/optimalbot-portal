@@ -1,0 +1,12 @@
+# Adversarial scenarios for prior auth flow evaluation
+# Each scenario targets specific weaknesses in flow_definition.py
+#
+# Usage:
+#   python run.py --scenario <id>
+#   python run.py --all
+#   python run.py --sync-dataset  # Push scenarios to Langfuse dataset
+
+dataset_name: "demo_clinic_alpha/prior_auth"
+dataset_description: "Adversarial scenarios for prior auth flow testing"
+
+scenarios: []
