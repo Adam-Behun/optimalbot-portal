@@ -86,9 +86,9 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
-export function PatientIntakeCallList() {
+export function PatientSchedulingCallList() {
   const { getWorkflowSchema } = useOrganization();
-  const schema = getWorkflowSchema('patient_intake');
+  const schema = getWorkflowSchema('patient_scheduling');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +104,7 @@ export function PatientIntakeCallList() {
     try {
       setLoading(true);
       setError(null);
-      const data = await getPatients('patient_intake');
+      const data = await getPatients('patient_scheduling');
       setPatients(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load calls');
@@ -210,7 +210,7 @@ export function PatientIntakeCallList() {
 
   if (!schema) {
     return (
-      <WorkflowLayout workflowName="patient_intake" title="Inbound Calls">
+      <WorkflowLayout workflowName="patient_scheduling" title="Inbound Calls">
         <p className="text-muted-foreground">Loading schema...</p>
       </WorkflowLayout>
     );
@@ -218,7 +218,7 @@ export function PatientIntakeCallList() {
 
   if (error) {
     return (
-      <WorkflowLayout workflowName="patient_intake" title="Inbound Calls">
+      <WorkflowLayout workflowName="patient_scheduling" title="Inbound Calls">
         <div className="flex flex-col items-center justify-center py-8 gap-4">
           <p className="text-destructive">{error}</p>
           <Button onClick={loadPatients} variant="outline">
@@ -234,7 +234,7 @@ export function PatientIntakeCallList() {
 
   return (
     <WorkflowLayout
-      workflowName="patient_intake"
+      workflowName="patient_scheduling"
       title="Inbound Calls"
       actions={
         <Button onClick={loadPatients} variant="outline" size="sm">

@@ -19,9 +19,13 @@ import {
   PatientQuestionsCallList,
 } from './components/workflows/patient_questions';
 import {
-  PatientIntakeDashboard,
-  PatientIntakeCallList,
-} from './components/workflows/patient_intake';
+  PatientSchedulingDashboard,
+  PatientSchedulingCallList,
+} from './components/workflows/patient_scheduling';
+import {
+  MainlineDashboard,
+  MainlineCallList,
+} from './components/workflows/mainline';
 
 const App = () => {
   return (
@@ -94,18 +98,34 @@ const App = () => {
                 </ProtectedRoute>
               } />
 
-              {/* Patient Intake Workflow Routes */}
-              <Route path="/workflows/patient_intake/dashboard" element={
+              {/* Patient Scheduling Workflow Routes */}
+              <Route path="/workflows/patient_scheduling/dashboard" element={
                 <ProtectedRoute>
                   <SidebarLayout>
-                    <PatientIntakeDashboard />
+                    <PatientSchedulingDashboard />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />
-              <Route path="/workflows/patient_intake/calls" element={
+              <Route path="/workflows/patient_scheduling/calls" element={
                 <ProtectedRoute>
                   <SidebarLayout>
-                    <PatientIntakeCallList />
+                    <PatientSchedulingCallList />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+
+              {/* Main Line Workflow Routes */}
+              <Route path="/workflows/mainline/dashboard" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <MainlineDashboard />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/mainline/calls" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <MainlineCallList />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />

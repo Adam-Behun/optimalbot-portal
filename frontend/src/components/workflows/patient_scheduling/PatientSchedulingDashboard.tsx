@@ -7,13 +7,13 @@ import { getPatients } from '@/api';
 import { Phone, CheckCircle, XCircle, Clock, PhoneIncoming } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 
-export function PatientIntakeDashboard() {
+export function PatientSchedulingDashboard() {
   const navigate = useNavigate();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getPatients('patient_intake')
+    getPatients('patient_scheduling')
       .then(setPatients)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -31,7 +31,7 @@ export function PatientIntakeDashboard() {
 
   if (loading) {
     return (
-      <WorkflowLayout workflowName="patient_intake" title="Dashboard">
+      <WorkflowLayout workflowName="patient_scheduling" title="Dashboard">
         <p className="text-muted-foreground">Loading...</p>
       </WorkflowLayout>
     );
@@ -39,10 +39,10 @@ export function PatientIntakeDashboard() {
 
   return (
     <WorkflowLayout
-      workflowName="patient_intake"
+      workflowName="patient_scheduling"
       title="Dashboard"
       actions={
-        <Button onClick={() => navigate('/workflows/patient_intake/calls')}>
+        <Button onClick={() => navigate('/workflows/patient_scheduling/calls')}>
           View All Calls
         </Button>
       }

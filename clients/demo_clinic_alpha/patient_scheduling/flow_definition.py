@@ -119,7 +119,7 @@ Confirm appointment details. Confirmation email will be sent. Anything else?
     except Exception as e:
         logger.warning(f"OpenAI warmup failed (non-critical): {e}")
 
-class PatientIntakeFlow:
+class PatientSchedulingFlow:
     def __init__(
         self,
         patient_data: Dict[str, Any],

@@ -1,5 +1,5 @@
 """
-Patient Intake Flow Evaluation Runner
+Patient Scheduling Flow Evaluation Runner
 
 Usage:
     python run.py                           # Run default scenario (first in list)
@@ -25,7 +25,7 @@ from anthropic import Anthropic
 from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
 
-from clients.demo_clinic_alpha.patient_intake.flow_definition import PatientIntakeFlow
+from clients.demo_clinic_alpha.patient_scheduling.flow_definition import PatientSchedulingFlow
 
 
 # === LANGFUSE CLIENT ===
@@ -222,7 +222,7 @@ class FlowRunner:
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
 
-        self.flow = PatientIntakeFlow(
+        self.flow = PatientSchedulingFlow(
             patient_data={"organization_name": "Demo Clinic Alpha"},
             flow_manager=self.mock_flow_manager,
             main_llm=None,
@@ -424,13 +424,13 @@ Stay in character. Be natural and conversational."""
     return response.choices[0].message.content
 
 
-@observe(name="patient_intake_eval")
+@observe(name="patient_scheduling_eval")
 async def run_simulation(
     scenario: dict,
     llm_config: dict,
     cold_transfer_config: dict,
 ) -> dict:
-    """Run a single patient intake simulation for a scenario."""
+    """Run a single patient scheduling simulation for a scenario."""
     patient = scenario["patient"]
     persona = scenario["persona"]
 
@@ -588,7 +588,7 @@ async def run_scenario(scenario_id: str) -> dict:
     scenario = get_scenario(scenario_id)
 
     # Load config
-    services_path = Path(__file__).parent.parent.parent.parent / "clients/demo_clinic_alpha/patient_intake/services.yaml"
+    services_path = Path(__file__).parent.parent.parent.parent / "clients/demo_clinic_alpha/patient_scheduling/services.yaml"
     with open(services_path) as f:
         services = yaml.safe_load(f)
 

@@ -1,4 +1,4 @@
-# Adversarial patient scenarios for patient intake flow evaluation
+# Adversarial patient scenarios for patient scheduling flow evaluation
 # Each scenario targets specific weaknesses in flow_definition.py
 #
 # Usage:
@@ -6,8 +6,8 @@
 #   python run.py --all
 #   python run.py --sync-dataset  # Push scenarios to Langfuse dataset
 
-dataset_name: "demo_clinic_alpha/patient_intake"
-dataset_description: "Adversarial scenarios for patient intake flow testing"
+dataset_name: "demo_clinic_alpha/patient_scheduling"
+dataset_description: "Adversarial scenarios for patient scheduling flow testing"
 
 scenarios:
   # =============================================================================

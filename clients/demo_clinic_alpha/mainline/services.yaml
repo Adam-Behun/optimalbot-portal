@@ -1,0 +1,43 @@
+call_type: "dial-in"
+
+services:
+  stt:
+    api_key: ${DEEPGRAM_API_KEY}
+    model: flux-general-en
+    eager_eot_threshold: 0.45  # Slightly more patient than scheduling
+    eot_threshold: 0.55        # Allow for more natural pauses
+    eot_timeout_ms: 1500       # Slightly longer for complex questions
+    keyterm: ["Monica", "appointment", "schedule", "billing", "payment", "insurance", "prescription", "nurse", "doctor", "hours", "location"]
+
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.4
+    api_key: ${OPENAI_API_KEY}
+    max_tokens: 150  # Slightly more for answering questions
+    service_tier: priority
+
+  tts:
+    provider: cartesia
+    model: sonic-3-2025-10-27
+    voice_id: f786b574-daa5-4673-aa0c-cbe3e8534c02
+    api_key: ${CARTESIA_API_KEY}
+    generation_config:
+      speed: 1.0
+      volume: 1.0
+      emotion: neutral
+    aggregate_sentences: true
+
+  transport:
+    provider: daily
+    api_key: ${DAILY_API_KEY}
+    phone_number_id: ${DAILY_PHONE_NUMBER_ID}
+    enable_echo_cancellation: true
+    audio_in_sample_rate: 16000
+    audio_out_sample_rate: 24000
+
+cold_transfer:
+  staff_number: "+15165668219"
+  scheduling_number: "+15165668219"
+  billing_number: "+15165668219"
+  medical_number: "+15165668219"

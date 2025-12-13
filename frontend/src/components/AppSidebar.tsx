@@ -14,6 +14,7 @@ import {
   Calendar,
   HelpCircle,
   UserPlus,
+  Phone,
   LucideIcon,
 } from "lucide-react";
 
@@ -54,9 +55,9 @@ import { useOrganization } from "../contexts/OrganizationContext";
 const workflowIcons: Record<string, LucideIcon> = {
   prior_auth: FileCheck,
   patient_questions: MessageSquare,
-  patient_intake: UserPlus,
+  patient_scheduling: Calendar,
+  mainline: Phone,
   eligibility: ClipboardCheck,
-  scheduling: Calendar,
   general_questions: HelpCircle,
 };
 
@@ -70,7 +71,11 @@ const workflowSubItems: Record<string, Array<{ title: string; urlSuffix: string 
     { title: "Dashboard", urlSuffix: "dashboard" },
     { title: "Calls", urlSuffix: "calls" },
   ],
-  patient_intake: [
+  patient_scheduling: [
+    { title: "Dashboard", urlSuffix: "dashboard" },
+    { title: "Calls", urlSuffix: "calls" },
+  ],
+  mainline: [
     { title: "Dashboard", urlSuffix: "dashboard" },
     { title: "Calls", urlSuffix: "calls" },
   ],
