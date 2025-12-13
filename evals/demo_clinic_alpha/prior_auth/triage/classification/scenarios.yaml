@@ -1,0 +1,181 @@
+# Triage Classification Scenarios
+# Tests 3-way call classification: CONVERSATION, IVR, VOICEMAIL
+#
+# PRINCIPLE: Only include scenarios that challenge the system.
+# If it's obvious, don't test it. Find the breaking points.
+#
+# Usage:
+#   python run.py --scenario <id>
+#   python run.py --all
+#   python run.py --sync-dataset
+
+dataset_name: "demo_clinic_alpha/prior_auth/triage/classification"
+dataset_description: "Edge case scenarios for prior auth call classification (insurance companies)"
+
+classifier_llm:
+  model: llama-3.3-70b-versatile
+
+scenarios:
+  # =============================================================================
+  # HUMAN THAT SOUNDS AUTOMATED
+  # =============================================================================
+
+  - id: "1"
+    expected_classification: CONVERSATION
+    utterance: "Thank you for calling. This is Jennifer from member services."
+    reasoning: "Starts like IVR ('Thank you for calling') but includes human name"
+
+  - id: "2"
+    expected_classification: CONVERSATION
+    utterance: "Thank you for calling Blue Cross Blue Shield member services. My name is David, representative ID 54321. How may I assist you today?"
+    reasoning: "Heavily scripted but human - includes personal name and rep ID"
+
+  - id: "3"
+    expected_classification: CONVERSATION
+    utterance: "Good afternoon, Cigna provider relations, this is automated... I mean Amanda, how can I help?"
+    reasoning: "Human corrects themselves after almost saying 'automated'"
+
+  - id: "4"
+    expected_classification: CONVERSATION
+    utterance: "Benefits verification department. Please hold... actually, how can I help you?"
+    reasoning: "Starts like IVR hold message but human redirects"
+
+  # =============================================================================
+  # IVR THAT SOUNDS CONVERSATIONAL
+  # =============================================================================
+
+  - id: "5"
+    expected_classification: IVR
+    utterance: "Hi there! I'm your virtual assistant. What can I help you with today?"
+    reasoning: "Conversational AI/virtual assistant - not a human"
+
+  - id: "6"
+    expected_classification: IVR
+    utterance: "Hello, and thank you for your patience. A representative will be with you shortly."
+    reasoning: "No 'Press X' but automated queue message"
+
+  - id: "7"
+    expected_classification: IVR
+    utterance: "Welcome! To better assist you, please tell me why you're calling."
+    reasoning: "Conversational IVR asking for speech input"
+
+  - id: "8"
+    expected_classification: IVR
+    utterance: "I can help with that. Did you say eligibility verification? Say yes or no."
+    reasoning: "Voice-based IVR confirmation, sounds conversational"
+
+  # =============================================================================
+  # VOICEMAIL THAT SOUNDS LIKE HUMAN IS THERE
+  # =============================================================================
+
+  - id: "9"
+    expected_classification: VOICEMAIL
+    utterance: "Hey, it's Mike. Sorry I missed you. Leave me a message and I'll call you back."
+    reasoning: "Casual personal voicemail - sounds like human but 'leave me a message' is key"
+
+  - id: "10"
+    expected_classification: VOICEMAIL
+    utterance: "Hi! You've reached Sarah. I'm either on another call or away from my desk. Leave a message!"
+    reasoning: "Upbeat personal VM that sounds like human greeting"
+
+  - id: "11"
+    expected_classification: VOICEMAIL
+    utterance: "Hello? Hello? ...If you can hear me, please leave a message after the tone."
+    reasoning: "Sounds like human at first, then reveals it's voicemail"
+
+  - id: "12"
+    expected_classification: VOICEMAIL
+    utterance: "I'm out of the office until Monday. For urgent matters, please contact the main line at 555-1234."
+    reasoning: "Out of office could sound like human speaking"
+
+  # =============================================================================
+  # AMBIGUOUS / PARTIAL / CORRUPTED
+  # =============================================================================
+
+  - id: "13"
+    expected_classification: CONVERSATION
+    utterance: "...ello? Can you hear me?"
+    reasoning: "Partial transcription - human checking connection"
+
+  - id: "14"
+    expected_classification: CONVERSATION
+    utterance: "Yes"
+    reasoning: "Single word - could be IVR confirmation, but human acknowledgment"
+
+  - id: "15"
+    expected_classification: CONVERSATION
+    utterance: "Speaking."
+    reasoning: "One-word confirmation - could be automated but typically human"
+
+  - id: "16"
+    expected_classification: IVR
+    utterance: "[Music playing]"
+    reasoning: "Non-verbal - hold music indicates IVR system"
+
+  - id: "17"
+    expected_classification: CONVERSATION
+    utterance: "..."
+    reasoning: "Silence - ambiguous, lean toward human waiting"
+
+  - id: "18"
+    expected_classification: CONVERSATION
+    utterance: "Hmm?"
+    reasoning: "Non-word vocalization - human sound"
+
+  # =============================================================================
+  # MIXED SIGNALS IN ONE UTTERANCE
+  # =============================================================================
+
+  - id: "19"
+    expected_classification: IVR
+    utterance: "For your convenience, you may also use our automated system. Press 1 for account balance. Press 2 for payment."
+    reasoning: "IVR offering automated options - even though phrased conversationally"
+
+  - id: "20"
+    expected_classification: CONVERSATION
+    utterance: "Hi, before we begin, this call may be recorded for quality purposes. How can I help you?"
+    reasoning: "Human with compliance disclaimer sounds like IVR opening"
+
+  - id: "21"
+    expected_classification: VOICEMAIL
+    utterance: "You've reached us outside of business hours. If this is urgent, press 1 to page the on-call representative, otherwise leave a message."
+    reasoning: "Mix of VM and IVR - but fundamentally voicemail system"
+
+  - id: "22"
+    expected_classification: IVR
+    utterance: "One moment please while I look that up for you... I found your account. Press 1 to confirm."
+    reasoning: "Conversational AI mid-flow - still IVR despite conversational tone"
+
+  # =============================================================================
+  # UNUSUAL FORMATS
+  # =============================================================================
+
+  - id: "23"
+    expected_classification: CONVERSATION
+    utterance: "Eligibility, go ahead."
+    reasoning: "Terse professional greeting - human being brief"
+
+  - id: "24"
+    expected_classification: IVR
+    utterance: "Your call will be answered in the order it was received. Current wait time: approximately 10 minutes."
+    reasoning: "Queue announcement - automated even with specific wait time"
+
+  - id: "25"
+    expected_classification: CONVERSATION
+    utterance: "[Background noise] Hello? [cough] Sorry, provider services."
+    reasoning: "Background noise and human sounds indicate real human"
+
+  - id: "26"
+    expected_classification: VOICEMAIL
+    utterance: "Leave a message."
+    reasoning: "Extremely terse voicemail - no greeting, just instruction"
+
+  - id: "27"
+    expected_classification: IVR
+    utterance: "Gracias por llamar. Para continuar en español, oprima uno. For English, press two."
+    reasoning: "Bilingual IVR - Spanish-first language selection"
+
+  - id: "28"
+    expected_classification: CONVERSATION
+    utterance: "Yeah, hold on. [muffled] It's that automated thing again... [clear] Hi, sorry about that, how can I help?"
+    reasoning: "Human talking to colleague before addressing caller"
