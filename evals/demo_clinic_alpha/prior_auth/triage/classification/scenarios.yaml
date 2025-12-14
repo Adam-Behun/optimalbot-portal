@@ -179,3 +179,230 @@ scenarios:
     expected_classification: CONVERSATION
     utterance: "Yeah, hold on. [muffled] It's that automated thing again... [clear] Hi, sorry about that, how can I help?"
     reasoning: "Human talking to colleague before addressing caller"
+
+  # =============================================================================
+  # CONVERSATIONAL AI / VIRTUAL ASSISTANTS
+  # These are increasingly common - NOT human, but also NOT traditional IVR
+  # =============================================================================
+
+  - id: "29"
+    expected_classification: IVR
+    utterance: "Hello! I'm Eva, your virtual assistant for United Healthcare. I can help you check eligibility, prior authorization status, and more. What would you like to do today?"
+    reasoning: "Named virtual assistant - conversational but still automated system"
+
+  - id: "30"
+    expected_classification: IVR
+    utterance: "Hi there, I'm the Cigna digital assistant. I noticed you're calling from a provider's office. Are you calling about a patient's benefits?"
+    reasoning: "AI detected caller context - sophisticated but still IVR"
+
+  - id: "31"
+    expected_classification: IVR
+    utterance: "Thanks for calling Aetna! Before I connect you to a representative, can you tell me what you're calling about today? You can say things like 'check eligibility' or 'prior auth status.'"
+    reasoning: "Conversational IVR pre-screening - mentions connecting to rep but is still automated"
+
+  - id: "32"
+    expected_classification: CONVERSATION
+    utterance: "Hi, this is Jessica, I'm a virtual assistant... just kidding, real person here! How can I help you?"
+    reasoning: "Human joking about being a bot - the correction is key"
+
+  # =============================================================================
+  # HYBRID HUMAN + SYSTEM PROMPTS
+  # Human speaking but includes system-like elements
+  # =============================================================================
+
+  - id: "33"
+    expected_classification: CONVERSATION
+    utterance: "Provider services, this is Marcus. Before we begin, I need to let you know this call may be recorded for quality assurance. What patient are you calling about?"
+    reasoning: "Human with mandatory compliance script"
+
+  - id: "34"
+    expected_classification: CONVERSATION
+    utterance: "Thank you for calling Blue Cross Blue Shield. This is the provider eligibility department, Lisa speaking, representative ID 84521. For quality purposes, may I have your provider NPI?"
+    reasoning: "Very scripted human - sounds robotic but includes personal name and ID"
+
+  - id: "35"
+    expected_classification: IVR
+    utterance: "Thank you for calling provider services. This call may be recorded. Please hold while we connect you to the next available representative."
+    reasoning: "No human name mentioned - automated queue message"
+
+  - id: "36"
+    expected_classification: CONVERSATION
+    utterance: "Hold please... [hold music 5 sec]... Thank you for holding, this is the eligibility department, how may I direct your call?"
+    reasoning: "Human returning from brief hold - includes human phrasing 'how may I direct'"
+
+  # =============================================================================
+  # CALLBACK / QUEUE SYSTEMS
+  # =============================================================================
+
+  - id: "37"
+    expected_classification: IVR
+    utterance: "Your estimated wait time is 15 minutes. To continue holding, stay on the line. To receive a callback when it's your turn, press 1. To leave a voicemail, press 2."
+    reasoning: "Queue system with callback option - still IVR"
+
+  - id: "38"
+    expected_classification: IVR
+    utterance: "Great news! Your callback request has been saved. We'll call you back at this number within the next 20 minutes. You may hang up now."
+    reasoning: "Callback confirmation - automated even though conversational"
+
+  - id: "39"
+    expected_classification: VOICEMAIL
+    utterance: "The representative you were waiting for is no longer available. Please leave a message or call back during business hours."
+    reasoning: "Queue timeout to voicemail"
+
+  # =============================================================================
+  # AFTER-HOURS / DEPARTMENT CLOSURE
+  # =============================================================================
+
+  - id: "40"
+    expected_classification: VOICEMAIL
+    utterance: "Hello, you've reached Anthem's prior authorization department. We're currently experiencing high call volume and cannot take your call. Please leave a message."
+    reasoning: "Live department redirecting to voicemail due to volume"
+
+  - id: "41"
+    expected_classification: IVR
+    utterance: "Thank you for calling. Our office hours are Monday through Friday, 8 AM to 6 PM Eastern. If you know your party's extension, you may dial it now. Otherwise, please call back during business hours."
+    reasoning: "After-hours but with extension option - still IVR system"
+
+  - id: "42"
+    expected_classification: VOICEMAIL
+    utterance: "The prior authorization team has closed for the day. For urgent prior auth requests, please fax to 555-0199. Otherwise, leave a message and we'll return your call tomorrow."
+    reasoning: "Closed department - voicemail with fax alternative"
+
+  # =============================================================================
+  # AUTHENTICATION / VERIFICATION PROMPTS
+  # =============================================================================
+
+  - id: "43"
+    expected_classification: IVR
+    utterance: "To better assist you, please enter or say your 10-digit provider NPI number."
+    reasoning: "Authentication request - automated data collection"
+
+  - id: "44"
+    expected_classification: IVR
+    utterance: "I found your provider record. Your Tax ID ends in 4521, is that correct? Say yes or press 1 to confirm."
+    reasoning: "Automated verification - conversational but system-driven"
+
+  - id: "45"
+    expected_classification: CONVERSATION
+    utterance: "I'll need to verify your identity. Can you confirm your provider's Tax ID number?"
+    reasoning: "Human asking for verification - natural phrasing vs automated template"
+
+  # =============================================================================
+  # TRANSFER / HANDOFF AMBIGUITY
+  # =============================================================================
+
+  - id: "46"
+    expected_classification: IVR
+    utterance: "One moment while I look up that information... I see you're calling about eligibility. Let me transfer you to the right department."
+    reasoning: "Conversational AI mid-lookup - still automated despite human-like flow"
+
+  - id: "47"
+    expected_classification: CONVERSATION
+    utterance: "Let me check on that... [keyboard sounds]... okay, I've got the patient pulled up. Go ahead."
+    reasoning: "Human with audible typing - environmental sounds indicate real person"
+
+  - id: "48"
+    expected_classification: IVR
+    utterance: "Please hold, I'm transferring you now. [brief silence] ...Thank you for holding. You've reached provider eligibility. Press 1 to verify benefits. Press 2 for prior auth."
+    reasoning: "Transfer landed in another IVR menu, not a human"
+
+  # =============================================================================
+  # NOISE / TRANSCRIPTION ARTIFACTS
+  # =============================================================================
+
+  - id: "49"
+    expected_classification: CONVERSATION
+    utterance: "[static] ...can't hear you very well... [static] ...hello? Is someone there?"
+    reasoning: "Human with connection issues - would an IVR acknowledge static?"
+
+  - id: "50"
+    expected_classification: IVR
+    utterance: "[beep] Thank you for calling. [beep] For claims, press 1. [beep] For eligibility, press 2."
+    reasoning: "IVR with audio artifacts - beeps don't make it human"
+
+  - id: "51"
+    expected_classification: CONVERSATION
+    utterance: "...orry, I was on mute. This is provider services, how can I help?"
+    reasoning: "Human recovering from mute - partial word and natural recovery"
+
+  # =============================================================================
+  # EXTREMELY SHORT / AMBIGUOUS
+  # =============================================================================
+
+  - id: "52"
+    expected_classification: CONVERSATION
+    utterance: "Provider services."
+    reasoning: "Two-word answer - human terseness when busy"
+
+  - id: "53"
+    expected_classification: IVR
+    utterance: "Provider services. Please hold."
+    reasoning: "Same department name but with 'please hold' = automated"
+
+  - id: "54"
+    expected_classification: CONVERSATION
+    utterance: "Uh-huh"
+    reasoning: "Nonverbal acknowledgment - too informal for IVR"
+
+  - id: "55"
+    expected_classification: IVR
+    utterance: "Mmhmm. And what is the member's date of birth?"
+    reasoning: "Conversational AI mimicking human acknowledgment"
+    is_edge_case: true
+
+  # =============================================================================
+  # BILINGUAL / MULTILINGUAL
+  # =============================================================================
+
+  - id: "56"
+    expected_classification: CONVERSATION
+    utterance: "Gracias por llamar, aquí habla Maria del departamento de verificación. ¿En qué puedo ayudarle?"
+    reasoning: "Spanish-speaking human representative"
+
+  - id: "57"
+    expected_classification: IVR
+    utterance: "Para español, oprima uno. For English, press two. Pour le français, appuyez sur trois."
+    reasoning: "Trilingual IVR menu"
+
+  - id: "58"
+    expected_classification: CONVERSATION
+    utterance: "Provider services, this is Kim. Do you need an interpreter? I speak Korean if that helps."
+    reasoning: "Human offering language assistance"
+
+  # =============================================================================
+  # MISLEADING DEPARTMENT MENTIONS
+  # =============================================================================
+
+  - id: "59"
+    expected_classification: IVR
+    utterance: "You've reached the provider services department. All of our representatives are currently busy. Please continue to hold."
+    reasoning: "Reached department but still in queue system"
+
+  - id: "60"
+    expected_classification: VOICEMAIL
+    utterance: "You've reached the provider services department. We are unable to take your call at this time. Please leave your name, callback number, and the patient's member ID."
+    reasoning: "Department voicemail - same opening but 'unable to take call' is key"
+
+  - id: "61"
+    expected_classification: CONVERSATION
+    utterance: "You've reached provider services. This is Sandra. What's the member ID?"
+    reasoning: "Same opening pattern but human name and direct question"
+
+  # =============================================================================
+  # TIMING / PACING CUES
+  # =============================================================================
+
+  - id: "62"
+    expected_classification: CONVERSATION
+    utterance: "Hello? [long pause] ...hello, is anyone there? [pause] I can hear background noise, are you there?"
+    reasoning: "Human checking if connection is live - impatient pacing"
+
+  - id: "63"
+    expected_classification: IVR
+    utterance: "Hello. [2 second pause] Welcome to Blue Cross. [2 second pause] For member services, press 1. [2 second pause] For provider services, press 2."
+    reasoning: "Robotic pacing between phrases indicates IVR"
+
+  - id: "64"
+    expected_classification: CONVERSATION
+    utterance: "Hi— oh wait, let me grab this other call real quick. Actually, go ahead, what do you need?"
+    reasoning: "Human managing multiple calls - stream of consciousness"
