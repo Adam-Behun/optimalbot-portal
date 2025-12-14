@@ -1,7 +1,7 @@
 """
-Prior Auth IVR Navigation Evaluation Runner
+Eligibility Verification IVR Navigation Evaluation Runner
 
-Tests DTMF menu navigation using IVRNavigationProcessor logic with PriorAuthFlow's
+Tests DTMF menu navigation using IVRNavigationProcessor logic with EligibilityVerificationFlow's
 navigation goal. Scenarios test insurance company IVR menus (BCBS, Aetna, Cigna, etc.).
 
 Usage:
@@ -33,7 +33,7 @@ from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
 
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
-from clients.demo_clinic_alpha.prior_auth.flow_definition import PriorAuthFlow
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
 
 
 # === LANGFUSE CLIENT ===
@@ -41,7 +41,7 @@ langfuse = Langfuse()
 
 
 # === NAVIGATION GOAL FROM FLOW ===
-NAVIGATION_GOAL = PriorAuthFlow.IVR_NAVIGATION_GOAL
+NAVIGATION_GOAL = EligibilityVerificationFlow.IVR_NAVIGATION_GOAL
 
 
 # === LLM GRADERS ===
@@ -374,7 +374,7 @@ async def run_scenario(scenario_id: str) -> dict:
     config = load_scenarios()
     scenario = get_scenario(scenario_id)
 
-    # Use goal from PriorAuthFlow, allow override in scenarios.yaml
+    # Use goal from EligibilityVerificationFlow, allow override in scenarios.yaml
     navigation_goal = config.get("navigation_goal", NAVIGATION_GOAL)
     llm_config = config.get("navigation_llm", {"model": "gpt-4o"})
 

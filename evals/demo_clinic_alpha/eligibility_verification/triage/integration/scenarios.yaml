@@ -8,7 +8,7 @@
 #   python run.py --all
 #   python run.py --list
 
-dataset_name: "demo_clinic_alpha/prior_auth/triage/integration"
+dataset_name: "demo_clinic_alpha/eligibility_verification/triage/integration"
 dataset_description: "Integration tests for triage transition flows"
 
 scenarios:
@@ -172,7 +172,7 @@ scenarios:
   # =============================================================================
 
   - id: "18"
-    description: "PriorAuthFlow provides valid triage config"
+    description: "EligibilityVerificationFlow provides valid triage config"
     test_type: flow_config
     expected_keys:
       - "classifier_prompt"

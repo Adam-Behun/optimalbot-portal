@@ -42,15 +42,18 @@ class AsyncPatientRecord:
             logger.error(f"Error finding patients for org {organization_id}: {e}")
             return []
 
-    async def find_patients_by_status(self, status: str, organization_id: str = None) -> List[dict]:
+    async def find_patients_by_field(
+        self, field_key: str, field_value: Any, organization_id: str = None
+    ) -> List[dict]:
+        """Find patients by any field value. Generic replacement for status-specific queries."""
         try:
-            query = {"prior_auth_status": status}
+            query = {field_key: field_value}
             if organization_id:
                 query["organization_id"] = ObjectId(organization_id)
             cursor = self.patients.find(query)
             return await cursor.to_list(length=None)
         except Exception as e:
-            logger.error(f"Error finding patients with status {status}: {e}")
+            logger.error(f"Error finding patients with {field_key}={field_value}: {e}")
             return []
 
     async def add_patient(self, patient_data: dict) -> Optional[str]:

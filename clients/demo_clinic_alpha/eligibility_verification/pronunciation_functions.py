@@ -4,7 +4,7 @@ DEAD CODE - Cartesia SSML pronunciation formatting functions.
 These functions generate Cartesia-specific <spell> and <break> tags for TTS pronunciation.
 Kept for reference in case we need to reintroduce explicit pronunciation control.
 
-Originally used in PriorAuthFlow to format phone numbers, reference numbers, and patient fields
+Originally used in EligibilityVerificationFlow to format phone numbers, reference numbers, and patient fields
 for clearer speech output. Removed in favor of simpler LLM-driven pronunciation guidance.
 
 To reuse: Import these functions and call _format_speech_fields() in flow __init__,

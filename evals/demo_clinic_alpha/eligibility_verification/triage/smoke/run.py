@@ -1,5 +1,5 @@
 """
-Prior Auth Triage Smoke Tests
+Eligibility Verification Triage Smoke Tests
 
 Pre-deploy validation using REAL services (Groq, OpenAI).
 Runs a few key scenarios through the actual pipeline to catch wiring issues.
@@ -35,7 +35,7 @@ from pipecat.services.openai.llm import OpenAILLMService
 
 from pipeline.triage_detector import TriageDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor, IVRStatus
-from clients.demo_clinic_alpha.prior_auth.flow_definition import PriorAuthFlow
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
 
 
 # =============================================================================
@@ -129,7 +129,7 @@ async def run_classification_smoke(scenario: dict) -> dict:
     )
 
     # Get flow config
-    flow = PriorAuthFlow(patient_data={"patient_name": "Test", "facility_name": "Test Clinic"})
+    flow = EligibilityVerificationFlow(patient_data={"patient_name": "Test", "facility_name": "Test Clinic"})
     flow_config = flow.get_triage_config()
 
     # Build context with classifier prompt and transcription
@@ -171,7 +171,7 @@ async def run_ivr_navigation_smoke(scenario: dict) -> dict:
     )
 
     # Get IVR navigation goal
-    flow = PriorAuthFlow(patient_data={"patient_name": "Test", "facility_name": "Test Clinic"})
+    flow = EligibilityVerificationFlow(patient_data={"patient_name": "Test", "facility_name": "Test Clinic"})
     flow_config = flow.get_triage_config()
     ivr_goal = flow_config["ivr_navigation_goal"]
 

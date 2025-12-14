@@ -53,7 +53,7 @@ import { useOrganization } from "../contexts/OrganizationContext";
 
 // Icons for different workflow types
 const workflowIcons: Record<string, LucideIcon> = {
-  prior_auth: FileCheck,
+  eligibility_verification: FileCheck,
   patient_questions: MessageSquare,
   patient_scheduling: Calendar,
   mainline: Phone,
@@ -63,7 +63,7 @@ const workflowIcons: Record<string, LucideIcon> = {
 
 // Workflow-specific sub-items configuration
 const workflowSubItems: Record<string, Array<{ title: string; urlSuffix: string }>> = {
-  prior_auth: [
+  eligibility_verification: [
     { title: "Dashboard", urlSuffix: "dashboard" },
     { title: "Patients", urlSuffix: "patients" },
   ],

@@ -9,8 +9,8 @@
 #   python run.py --all
 #   python run.py --sync-dataset
 
-dataset_name: "demo_clinic_alpha/prior_auth/triage/classification"
-dataset_description: "Edge case scenarios for prior auth call classification (insurance companies)"
+dataset_name: "demo_clinic_alpha/eligibility_verification/triage/classification"
+dataset_description: "Edge case scenarios for eligibility verification call classification (insurance companies)"
 
 classifier_llm:
   model: llama-3.3-70b-versatile

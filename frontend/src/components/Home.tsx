@@ -8,7 +8,7 @@ import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
 
 // Icons for different workflow types
 const workflowIcons: Record<string, React.ReactNode> = {
-  'prior_auth': <Shield className="h-5 w-5" />,
+  'eligibility_verification': <Shield className="h-5 w-5" />,
   'patient_questions': <Phone className="h-5 w-5" />,
   'eligibility': <ClipboardCheck className="h-5 w-5" />,
   'scheduling': <CalendarIcon2 className="h-5 w-5" />,
@@ -17,7 +17,7 @@ const workflowIcons: Record<string, React.ReactNode> = {
 
 // Descriptions for workflow types
 const workflowDescriptions: Record<string, string> = {
-  'prior_auth': 'Secures specific approval for a particular treatment or service',
+  'eligibility_verification': 'Verifies patient eligibility and benefits with insurance companies',
   'patient_questions': 'Outbound calls to patients for check-ins and questions',
   'eligibility': 'Confirms active coverage and general benefits',
   'scheduling': 'Schedules visit for a patient',

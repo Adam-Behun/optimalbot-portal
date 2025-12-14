@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Healthcare voice AI for automated prior authorization verification. Uses Pipecat AI with Pipecat Flows to orchestrate real-time voice conversations with insurance companies.
+Healthcare voice AI for automated eligibility verification. Uses Pipecat AI with Pipecat Flows to orchestrate real-time voice conversations with insurance companies.
 
 ## Quick Reference
 
@@ -99,14 +99,18 @@ FlowLoader auto-discovers by naming convention.
 
 ## MongoDB Schema (patients collection)
 
+Patient schema is dynamic per workflow. See `scripts/eligibility_verification.py` for the eligibility_verification schema.
+
+**Common fields across workflows:**
 ```
-patient_name, date_of_birth, insurance_member_id
-cpt_code, provider_npi, facility
-prior_auth_status: "Pending" | "Approved" | "Denied"
-call_status: "Not Started" | "In Progress" | "Completed"
-reference_number, call_transcript
-last_call_session_id, last_call_timestamp
+call_status: "Not Started" | "Dialing" | "In Progress" | "Completed" | "Failed" | "Voicemail"
+call_transcript, last_call_session_id, last_call_timestamp
+created_at, updated_at
 ```
+
+**Eligibility Verification workflow (32 fields):**
+- Inputs: patient_name, date_of_birth, insurance_member_id, cpt_code, caller_name, facility_name, tax_id, provider_npi, place_of_service, etc.
+- Outputs: network_status, plan_type, cpt_covered, copay_amount, coinsurance_percent, prior_auth_required, deductible_*, oop_max_*, reference_number, etc.
 
 ## Environment Variables
 

@@ -38,7 +38,7 @@ class FlowLoader:
         """Convert client_name to flow class name.
 
         Examples:
-            prior_auth -> PriorAuthFlow
-            insurance_verification -> InsuranceVerificationFlow
+            eligibility_verification -> EligibilityVerificationFlow
+            patient_questions -> PatientQuestionsFlow
         """
         return ''.join(word.capitalize() for word in self.client_name.split('_')) + 'Flow'

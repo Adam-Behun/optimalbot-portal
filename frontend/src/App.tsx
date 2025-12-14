@@ -10,10 +10,10 @@ import { Home } from './components/Home';
 import { OrganizationProvider } from './contexts/OrganizationContext';
 import { SidebarLayout } from './components/SidebarLayout';
 import {
-  PriorAuthDashboard,
-  PriorAuthPatientList,
-  PriorAuthAddPatient,
-} from './components/workflows/prior_auth';
+  EligibilityVerificationDashboard,
+  EligibilityVerificationPatientList,
+  EligibilityVerificationAddPatient,
+} from './components/workflows/eligibility_verification';
 import {
   PatientQuestionsDashboard,
   PatientQuestionsCallList,
@@ -59,25 +59,25 @@ const App = () => {
                 </ProtectedRoute>
               } />
 
-              {/* Prior Auth Workflow Routes */}
-              <Route path="/workflows/prior_auth/dashboard" element={
+              {/* Eligibility Verification Workflow Routes */}
+              <Route path="/workflows/eligibility_verification/dashboard" element={
                 <ProtectedRoute>
                   <SidebarLayout>
-                    <PriorAuthDashboard />
+                    <EligibilityVerificationDashboard />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />
-              <Route path="/workflows/prior_auth/patients" element={
+              <Route path="/workflows/eligibility_verification/patients" element={
                 <ProtectedRoute>
                   <SidebarLayout>
-                    <PriorAuthPatientList />
+                    <EligibilityVerificationPatientList />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />
-              <Route path="/workflows/prior_auth/patients/add" element={
+              <Route path="/workflows/eligibility_verification/patients/add" element={
                 <ProtectedRoute>
                   <SidebarLayout>
-                    <PriorAuthAddPatient />
+                    <EligibilityVerificationAddPatient />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />

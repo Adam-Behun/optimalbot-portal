@@ -5,8 +5,8 @@ from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
 
 
-class PriorAuthFlow:
-    """Prior authorization verification flow with triage support."""
+class EligibilityVerificationFlow:
+    """Eligibility verification flow with triage support."""
 
     # ═══════════════════════════════════════════════════════════════════
     # TRIAGE CONFIGURATION

@@ -16,7 +16,7 @@ interface SidebarLayoutProps {
 const pathNames: Record<string, string> = {
   home: "Home",
   workflows: "Workflows",
-  prior_auth: "Prior Authorization",
+  eligibility_verification: "Eligibility Verification",
   patient_questions: "Patient Questions",
   dashboard: "Dashboard",
   patients: "Patients",

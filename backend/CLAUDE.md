@@ -35,6 +35,26 @@ FastAPI backend for healthcare portal. Handles authentication, patient CRUD, and
 
 *Dial-in webhook is unauthenticated but validates org slug exists.
 
+## MongoDB Access
+
+Connect to the database from terminal:
+```bash
+mongo-alfons
+```
+
+This opens an interactive mongosh session. Useful commands:
+```javascript
+show collections                          // List all collections
+db.organizations.find({}, {slug: 1})      // List org slugs
+db.patients.find({workflow: "eligibility_verification"}).limit(5)  // Sample patients
+db.patients.countDocuments({workflow: "eligibility_verification"}) // Count by workflow
+```
+
+One-liner queries:
+```bash
+mongosh "mongodb+srv://alfons_user:REDACTED@analytics.dsaxr6b.mongodb.net/alfons" --eval "db.patients.countDocuments()"
+```
+
 ## MongoDB Collections
 
 ### `patients`

@@ -47,7 +47,7 @@ async def bot(args: DailyRunnerArguments):
         session_id = body.get("session_id")
         patient_id = body.get("patient_id")
         patient_data = body.get("patient_data")
-        client_name = body.get("client_name", "prior_auth")
+        client_name = body.get("client_name", "eligibility_verification")
         organization_id = body.get("organization_id")
         organization_slug = body.get("organization_slug")
 

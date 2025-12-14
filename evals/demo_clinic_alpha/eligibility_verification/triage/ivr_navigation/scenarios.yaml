@@ -10,7 +10,7 @@
 #   python run.py --all
 #   python run.py --sync-dataset
 
-dataset_name: "demo_clinic_alpha/prior_auth/triage/ivr_navigation"
+dataset_name: "demo_clinic_alpha/eligibility_verification/triage/ivr_navigation"
 dataset_description: "Edge case scenarios for insurance IVR navigation (BCBS, Aetna, Cigna, etc.)"
 
 navigation_llm:

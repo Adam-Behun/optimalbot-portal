@@ -1,5 +1,5 @@
 """
-Prior Auth Flow Evaluation Runner
+Eligibility Verification Flow Evaluation Runner
 
 Usage:
     python run.py                           # Run default scenario (first in list)
@@ -25,7 +25,7 @@ from anthropic import Anthropic
 from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
 
-from clients.demo_clinic_alpha.prior_auth.flow_definition import PriorAuthFlow
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
 
 
 # === LANGFUSE CLIENT ===
@@ -222,7 +222,7 @@ class FlowRunner:
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
 
-        self.flow = PriorAuthFlow(
+        self.flow = EligibilityVerificationFlow(
             patient_data={"organization_name": "Demo Clinic Alpha"},
             flow_manager=self.mock_flow_manager,
             main_llm=None,
@@ -422,13 +422,13 @@ Stay in character. Be natural and conversational."""
     return response.choices[0].message.content
 
 
-@observe(name="prior_auth_eval")
+@observe(name="eligibility_verification_eval")
 async def run_simulation(
     scenario: dict,
     llm_config: dict,
     cold_transfer_config: dict,
 ) -> dict:
-    """Run a single prior auth simulation for a scenario."""
+    """Run a single eligibility verification simulation for a scenario."""
     insurance_rep = scenario["insurance_rep"]
     persona = scenario["persona"]
 
@@ -586,7 +586,7 @@ async def run_scenario(scenario_id: str) -> dict:
     scenario = get_scenario(scenario_id)
 
     # Load config
-    services_path = Path(__file__).parent.parent.parent.parent / "clients/demo_clinic_alpha/prior_auth/services.yaml"
+    services_path = Path(__file__).parent.parent.parent.parent / "clients/demo_clinic_alpha/eligibility_verification/services.yaml"
     with open(services_path) as f:
         services = yaml.safe_load(f)
 

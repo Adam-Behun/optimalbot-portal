@@ -1,5 +1,5 @@
 """
-Prior Auth Triage Integration Evaluation Runner
+Eligibility Verification Triage Integration Evaluation Runner
 
 Tests transitions between classification, IVR navigation, and conversation.
 These test actual processor logic (events, state changes) without LLM calls.
@@ -28,7 +28,7 @@ from pipecat.processors.frame_processor import FrameProcessor
 
 from pipeline.triage_detector import TriageDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor, IVRStatus
-from clients.demo_clinic_alpha.prior_auth.flow_definition import PriorAuthFlow
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
 
 
 # =============================================================================
@@ -500,7 +500,7 @@ async def run_voicemail_template(scenario: dict, flow_config: dict) -> dict:
         "patient_name": scenario["patient_name"],
         "facility_name": scenario["facility_name"],
     }
-    flow = PriorAuthFlow(patient_data=patient_data)
+    flow = EligibilityVerificationFlow(patient_data=patient_data)
     config = flow.get_triage_config()
 
     passed = True
@@ -573,7 +573,7 @@ def list_scenarios() -> None:
 
 
 def get_flow_config() -> dict:
-    """Get triage config from PriorAuthFlow."""
+    """Get triage config from EligibilityVerificationFlow."""
     patient_data = {
         "patient_name": "John Doe",
         "date_of_birth": "01/15/1980",
@@ -582,7 +582,7 @@ def get_flow_config() -> dict:
         "provider_npi": "1234567890",
         "facility_name": "Test Clinic",
     }
-    flow = PriorAuthFlow(patient_data=patient_data)
+    flow = EligibilityVerificationFlow(patient_data=patient_data)
     return flow.get_triage_config()
 
 

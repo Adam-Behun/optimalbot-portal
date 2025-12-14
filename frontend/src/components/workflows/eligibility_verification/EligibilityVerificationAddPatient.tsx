@@ -6,10 +6,10 @@ import { useOrganization } from '@/contexts/OrganizationContext';
 import { addPatient, addPatientsBulk } from '@/api';
 import { toast } from 'sonner';
 
-export function PriorAuthAddPatient() {
+export function EligibilityVerificationAddPatient() {
   const navigate = useNavigate();
   const { getWorkflowSchema } = useOrganization();
-  const schema = getWorkflowSchema('prior_auth');
+  const schema = getWorkflowSchema('eligibility_verification');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,8 +17,8 @@ export function PriorAuthAddPatient() {
     try {
       setLoading(true);
       setError(null);
-      await addPatient({ ...formData, workflow: 'prior_auth' });
-      navigate('/workflows/prior_auth/patients');
+      await addPatient({ ...formData, workflow: 'eligibility_verification' });
+      navigate('/workflows/eligibility_verification/patients');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -31,7 +31,7 @@ export function PriorAuthAddPatient() {
       // Add workflow to each patient and strip any computed fields that might be in the CSV
       const patientsWithWorkflow = patients.map(p => {
         const { prior_auth_status, reference_number, ...rest } = p as Record<string, unknown>;
-        return { ...rest, workflow: 'prior_auth' };
+        return { ...rest, workflow: 'eligibility_verification' };
       });
 
       const response = await addPatientsBulk(patientsWithWorkflow);
@@ -51,7 +51,7 @@ export function PriorAuthAddPatient() {
 
       // Navigate back to list if at least some succeeded
       if (response.success_count > 0) {
-        navigate('/workflows/prior_auth/patients');
+        navigate('/workflows/eligibility_verification/patients');
       }
     } catch (err: any) {
       console.error('Error uploading CSV:', err);
@@ -81,14 +81,14 @@ export function PriorAuthAddPatient() {
 
   if (!schema) {
     return (
-      <WorkflowLayout workflowName="prior_auth" title="Add Patient">
+      <WorkflowLayout workflowName="eligibility_verification" title="Add Patient">
         <p className="text-muted-foreground">Loading schema...</p>
       </WorkflowLayout>
     );
   }
 
   return (
-    <WorkflowLayout workflowName="prior_auth" title="Add Patient">
+    <WorkflowLayout workflowName="eligibility_verification" title="Add Patient">
       <div className="flex justify-center">
         <div className="w-full max-w-2xl">
           {error && (
@@ -99,7 +99,7 @@ export function PriorAuthAddPatient() {
           <DynamicForm
             schema={schema}
             onSubmit={handleSubmit}
-            onCancel={() => navigate('/workflows/prior_auth/patients')}
+            onCancel={() => navigate('/workflows/eligibility_verification/patients')}
             submitLabel="Add Patient"
             loading={loading}
             showCsvUpload={true}

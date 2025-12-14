@@ -7,19 +7,19 @@ import { getPatients } from '@/api';
 import { Users, CheckCircle, XCircle, Clock, Phone } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 
-export function PriorAuthDashboard() {
+export function EligibilityVerificationDashboard() {
   const navigate = useNavigate();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getPatients('prior_auth')
+    getPatients('eligibility_verification')
       .then(setPatients)
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  // Prior auth specific metrics
+  // Eligibility verification specific metrics
   const metrics = {
     total: patients.length,
     pending: patients.filter(p => p.prior_auth_status === 'Pending').length,
@@ -30,7 +30,7 @@ export function PriorAuthDashboard() {
 
   if (loading) {
     return (
-      <WorkflowLayout workflowName="prior_auth" title="Dashboard">
+      <WorkflowLayout workflowName="eligibility_verification" title="Dashboard">
         <p className="text-muted-foreground">Loading...</p>
       </WorkflowLayout>
     );
@@ -38,14 +38,14 @@ export function PriorAuthDashboard() {
 
   return (
     <WorkflowLayout
-      workflowName="prior_auth"
+      workflowName="eligibility_verification"
       title="Dashboard"
       actions={
         <div className="flex gap-2">
-          <Button onClick={() => navigate('/workflows/prior_auth/patients/add')}>
+          <Button onClick={() => navigate('/workflows/eligibility_verification/patients/add')}>
             Add New Patient
           </Button>
-          <Button variant="outline" onClick={() => navigate('/workflows/prior_auth/patients')}>
+          <Button variant="outline" onClick={() => navigate('/workflows/eligibility_verification/patients')}>
             View All Patients
           </Button>
         </div>

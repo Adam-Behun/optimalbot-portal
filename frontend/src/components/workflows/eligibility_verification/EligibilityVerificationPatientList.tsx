@@ -58,10 +58,10 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
-export function PriorAuthPatientList() {
+export function EligibilityVerificationPatientList() {
   const navigate = useNavigate();
   const { getWorkflowSchema } = useOrganization();
-  const schema = getWorkflowSchema('prior_auth');
+  const schema = getWorkflowSchema('eligibility_verification');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export function PriorAuthPatientList() {
     try {
       setLoading(true);
       setError(null);
-      const data = await getPatients('prior_auth');
+      const data = await getPatients('eligibility_verification');
       setPatients(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load patients');
@@ -221,7 +221,7 @@ export function PriorAuthPatientList() {
 
       try {
         const phoneNumber = patientToCall.insurance_phone || patientToCall.phone;
-        await startCall(patientId, phoneNumber, 'prior_auth');
+        await startCall(patientId, phoneNumber, 'eligibility_verification');
         toast.success('Call started');
       } catch (err) {
         // Revert on failure
@@ -246,7 +246,7 @@ export function PriorAuthPatientList() {
       for (const patient of patientsToCall) {
         try {
           const phoneNumber = patient.insurance_phone || patient.phone;
-          await startCall(patient.patient_id, phoneNumber, 'prior_auth');
+          await startCall(patient.patient_id, phoneNumber, 'eligibility_verification');
           successCount++;
         } catch (err) {
           failCount++;
@@ -304,7 +304,7 @@ export function PriorAuthPatientList() {
 
     try {
       setCallLoading(true);
-      await startCall(patientId, phoneNumber, 'prior_auth');
+      await startCall(patientId, phoneNumber, 'eligibility_verification');
       toast.success('Call started');
     } catch (err) {
       // Revert on failure
@@ -336,7 +336,7 @@ export function PriorAuthPatientList() {
 
   if (!schema) {
     return (
-      <WorkflowLayout workflowName="prior_auth" title="Patients">
+      <WorkflowLayout workflowName="eligibility_verification" title="Patients">
         <p className="text-muted-foreground">Loading schema...</p>
       </WorkflowLayout>
     );
@@ -344,7 +344,7 @@ export function PriorAuthPatientList() {
 
   if (error) {
     return (
-      <WorkflowLayout workflowName="prior_auth" title="Patients">
+      <WorkflowLayout workflowName="eligibility_verification" title="Patients">
         <div className="flex flex-col items-center justify-center py-8 gap-4">
           <p className="text-destructive">{error}</p>
           <Button onClick={loadPatients} variant="outline">
@@ -362,7 +362,7 @@ export function PriorAuthPatientList() {
 
   return (
     <WorkflowLayout
-      workflowName="prior_auth"
+      workflowName="eligibility_verification"
       title="Patients"
       actions={
         <div className="flex gap-2">
@@ -370,7 +370,7 @@ export function PriorAuthPatientList() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
-          <Button onClick={() => navigate('/workflows/prior_auth/patients/add')}>
+          <Button onClick={() => navigate('/workflows/eligibility_verification/patients/add')}>
             Add Patient
           </Button>
         </div>

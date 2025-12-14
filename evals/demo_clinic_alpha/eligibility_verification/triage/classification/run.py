@@ -1,7 +1,7 @@
 """
-Prior Auth Triage Classification Evaluation Runner
+Eligibility Verification Triage Classification Evaluation Runner
 
-Tests 3-way call classification (CONVERSATION/IVR/VOICEMAIL) using the PriorAuthFlow
+Tests 3-way call classification (CONVERSATION/IVR/VOICEMAIL) using the EligibilityVerificationFlow
 triage configuration. Scenarios test insurance company greeting patterns.
 
 Usage:
@@ -30,7 +30,7 @@ import yaml
 from anthropic import Anthropic
 from langfuse import Langfuse, observe
 
-from clients.demo_clinic_alpha.prior_auth.flow_definition import PriorAuthFlow
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
 
 
 # === LANGFUSE CLIENT ===
@@ -38,7 +38,7 @@ langfuse = Langfuse()
 
 
 # === CLASSIFIER PROMPT FROM FLOW ===
-CLASSIFIER_PROMPT = PriorAuthFlow.TRIAGE_CLASSIFIER_PROMPT
+CLASSIFIER_PROMPT = EligibilityVerificationFlow.TRIAGE_CLASSIFIER_PROMPT
 
 
 # === LLM GRADERS ===
@@ -316,7 +316,7 @@ async def run_scenario(scenario_id: str) -> dict:
     config = load_scenarios()
     scenario = get_scenario(scenario_id)
 
-    # Use prompt from PriorAuthFlow, allow override in scenarios.yaml
+    # Use prompt from EligibilityVerificationFlow, allow override in scenarios.yaml
     classifier_prompt = config.get("classifier_prompt", CLASSIFIER_PROMPT)
     llm_config = config.get("classifier_llm", {"model": "llama-3.3-70b-versatile"})
 

@@ -25,7 +25,7 @@ class BulkPatientRequest(BaseModel):
 
 class CallRequest(BaseModel):
     patient_id: str = Field(..., min_length=24, max_length=24)
-    client_name: str = Field(default="prior_auth")
+    client_name: str = Field(default="eligibility_verification")
     phone_number: Optional[str] = None
 
     @field_validator('patient_id')
