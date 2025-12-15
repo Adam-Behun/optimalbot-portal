@@ -216,14 +216,16 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, llm_config: dict, cold_transfer_config: dict):
+    """Runs the eligibility verification flow with patient data from scenario."""
+
+    def __init__(self, llm_config: dict, cold_transfer_config: dict, patient_data: dict):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
 
         self.flow = EligibilityVerificationFlow(
-            patient_data={"organization_name": "Demo Clinic Alpha"},
+            patient_data=patient_data,
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
@@ -232,7 +234,11 @@ class FlowRunner:
             cold_transfer_config=cold_transfer_config,
         )
 
-        self.current_node = self.flow.create_greeting_node()
+        # Initialize flow state with patient data
+        self.flow._init_flow_state()
+
+        # Start with greeting node for direct human conversation (no IVR)
+        self.current_node = self.flow.create_greeting_node_without_ivr()
         self.conversation_history = []
         self.function_calls = []  # Track all function calls
         self.done = False
@@ -289,6 +295,8 @@ class FlowRunner:
             self.conversation_history.append({"role": "user", "content": user_message})
 
         all_content = []
+        last_func_call = None  # Track last (func_name, args_json) to prevent loops
+        did_respond_immediately = False  # Only allow one respond_immediately continuation per turn
 
         while not self.done:
             messages = self.get_prompts() + self.conversation_history
@@ -316,6 +324,13 @@ class FlowRunner:
                         "args": {"_error": f"Malformed JSON: {str(e)}"},
                     })
                     break
+
+                # Deduplication: prevent infinite loops from repeated identical calls
+                current_func_call = (func_name, tool_call.function.arguments)
+                if current_func_call == last_func_call:
+                    print(f"    ⚠ Loop detected: {func_name} called with same args twice in a row, breaking")
+                    break
+                last_func_call = current_func_call
 
                 # Track function call
                 self.function_calls.append({
@@ -351,6 +366,11 @@ class FlowRunner:
                 if result:
                     all_content.append(result)
 
+                # Check if this function ends the conversation (even without a next_node)
+                if func_name in ("end_call", "end_conversation", "hangup"):
+                    self.done = True
+                    break
+
                 if next_node:
                     self.current_node = next_node
                     # Process pre_actions on the new node (e.g., tts_say)
@@ -375,7 +395,8 @@ class FlowRunner:
                     if ends_conversation:
                         self.done = True
                         break
-                    if self.current_node.get("respond_immediately"):
+                    if self.current_node.get("respond_immediately") and not did_respond_immediately:
+                        did_respond_immediately = True
                         continue
 
             if msg.content:
@@ -431,8 +452,9 @@ async def run_simulation(
     """Run a single eligibility verification simulation for a scenario."""
     insurance_rep = scenario["insurance_rep"]
     persona = scenario["persona"]
+    patient_data = scenario["patient_data"]
 
-    runner = FlowRunner(llm_config, cold_transfer_config)
+    runner = FlowRunner(llm_config, cold_transfer_config, patient_data)
 
     # Bot greeting
     pre_actions = runner.current_node.get("pre_actions") or []
@@ -462,11 +484,16 @@ async def run_simulation(
         print(f"INSURANCE: {insurance_msg}\n")
         conversation.append({"role": "user", "content": insurance_msg, "turn": turn})
 
-        # Monica responds
-        bot_response = await runner.process_message(insurance_msg, turn)
-        if bot_response:
-            print(f"MONICA: {bot_response}\n")
-            conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
+        # Monica responds - keep processing until she speaks or finishes
+        # This prevents the goodbye loop when bot is calling functions without speaking
+        while not runner.done:
+            bot_response = await runner.process_message(insurance_msg, turn)
+            if bot_response:
+                print(f"MONICA: {bot_response}\n")
+                conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
+                break
+            # Bot called functions but didn't speak - let her keep processing
+            # without advancing the insurance turn
 
     final_state = runner.mock_flow_manager.state
 
