@@ -13,6 +13,7 @@ import {
 import { Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 
 interface DynamicFormProps {
   schema: WorkflowConfig;
@@ -192,26 +193,40 @@ export function DynamicForm({
     setErrors({});
   };
 
-  // CSV Upload handlers
+  // Excel/CSV Upload handlers
   const handleDownloadSample = () => {
-    const headers = fields.map(f => f.key).join(',');
-    const exampleRow = fields.map(f => {
+    // Create example data row
+    const exampleRow: Record<string, string> = {};
+    fields.forEach(f => {
       switch (f.type) {
-        case 'date': return '1990-01-15';
-        case 'datetime': return '2025-01-15T10:00';
-        case 'phone': return '+11234567890';
-        default: return `Example ${f.label}`;
+        case 'date':
+          exampleRow[f.key] = '1990-01-15';
+          break;
+        case 'datetime':
+          exampleRow[f.key] = '2025-01-15T10:00';
+          break;
+        case 'phone':
+          exampleRow[f.key] = '+11234567890';
+          break;
+        case 'select':
+          exampleRow[f.key] = f.options?.[0] || `Example ${f.label}`;
+          break;
+        default:
+          exampleRow[f.key] = `Example ${f.label}`;
       }
-    }).join(',');
+    });
 
-    const csv = `${headers}\n${exampleRow}`;
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'patient_upload_example.csv';
-    a.click();
-    window.URL.revokeObjectURL(url);
+    // Create worksheet with headers and example row
+    const worksheet = XLSX.utils.json_to_sheet([exampleRow]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Patients');
+
+    // Set column widths for better readability
+    const colWidths = fields.map(f => ({ wch: Math.max(f.label.length, 20) }));
+    worksheet['!cols'] = colWidths;
+
+    // Download as Excel file
+    XLSX.writeFile(workbook, 'patient_upload_example.xlsx');
   };
 
   const handleUploadClick = () => {
@@ -222,6 +237,40 @@ export function DynamicForm({
     const file = event.target.files?.[0];
     if (!file || !onBulkSubmit) return;
 
+    const fileExtension = file.name.split('.').pop()?.toLowerCase();
+
+    // Handle Excel files (.xlsx, .xls)
+    if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+        // Read first sheet
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const patients = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
+
+        if (patients.length === 0) {
+          toast.error('Excel file is empty');
+          return;
+        }
+
+        toast.info(`Processing ${patients.length} patients...`);
+        await onBulkSubmit(patients);
+
+        // Reset file input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error: any) {
+        console.error('Error uploading Excel:', error);
+        const errorMsg = error.response?.data?.detail || error.message || 'Failed to upload Excel file';
+        toast.error(errorMsg);
+      }
+      return;
+    }
+
+    // Handle CSV files
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -256,7 +305,7 @@ export function DynamicForm({
 
   return (
     <div className="space-y-6">
-      {/* CSV Upload Buttons */}
+      {/* Excel/CSV Upload Buttons */}
       {showCsvUpload && onBulkSubmit && (
         <div className="flex justify-center gap-2">
           <Button
@@ -267,7 +316,7 @@ export function DynamicForm({
             className="w-60"
           >
             <Download className="mr-2 h-5 w-5" />
-            Download Sample .csv
+            Download Sample .xlsx
           </Button>
           <Button
             type="button"
@@ -277,12 +326,12 @@ export function DynamicForm({
             className="w-60"
           >
             <Upload className="mr-2 h-5 w-5" />
-            Upload .csv File
+            Upload Excel or CSV
           </Button>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".csv"
+            accept=".xlsx,.xls,.csv"
             className="hidden"
             onChange={handleFileChange}
           />

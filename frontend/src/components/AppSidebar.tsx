@@ -13,7 +13,6 @@ import {
   ClipboardCheck,
   Calendar,
   HelpCircle,
-  UserPlus,
   Phone,
   LucideIcon,
 } from "lucide-react";
