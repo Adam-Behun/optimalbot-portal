@@ -39,6 +39,20 @@ services:
       - "99213"
       - "99214"
       - "99215"
+      # Insurance jargon
+      - "non-par"
+      - "non-participating"
+      - "out-of-network"
+      - "in-network"
+      - "OOP"
+      - "out-of-pocket"
+      - "coinsurance"
+      - "copay"
+      - "deductible"
+      - "accumulator"
+      - "term date"
+      - "effective date"
+      - "telehealth"
 # https://developers.deepgram.com/docs/keyterm
 
   llm:
