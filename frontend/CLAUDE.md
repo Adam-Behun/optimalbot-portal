@@ -21,7 +21,7 @@ src/
 │   ├── ui/             # Shadcn primitives (Button, Input, Select, Table, etc.)
 │   ├── workflows/
 │   │   ├── shared/     # DynamicForm, DynamicTable, TranscriptViewer, WorkflowLayout
-│   │   ├── prior_auth/, patient_questions/, patient_intake/
+│   │   ├── eligibility_verification/, patient_scheduling/, mainline/
 │   └── LoginForm, ProtectedRoute, SidebarLayout, AppSidebar, etc.
 ├── contexts/           # OrganizationContext (org + workflow schemas)
 ├── lib/                # auth.ts (localStorage), utils.ts (date formatting)
@@ -62,7 +62,7 @@ interface SchemaField {
 
 ### Workflow Component Structure
 
-Each workflow folder (`prior_auth/`, `patient_questions/`, etc.) contains:
+Each workflow folder (`eligibility_verification/`, `patient_scheduling/`, `mainline/`) contains:
 - `index.ts` - Barrel exports
 - `*Dashboard.tsx` - Stats/overview page
 - `*PatientList.tsx` or `*CallList.tsx` - List with DynamicTable

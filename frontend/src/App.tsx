@@ -15,10 +15,6 @@ import {
   EligibilityVerificationAddPatient,
 } from './components/workflows/eligibility_verification';
 import {
-  PatientQuestionsDashboard,
-  PatientQuestionsCallList,
-} from './components/workflows/patient_questions';
-import {
   PatientSchedulingDashboard,
   PatientSchedulingCallList,
 } from './components/workflows/patient_scheduling';
@@ -78,22 +74,6 @@ const App = () => {
                 <ProtectedRoute>
                   <SidebarLayout>
                     <EligibilityVerificationAddPatient />
-                  </SidebarLayout>
-                </ProtectedRoute>
-              } />
-
-              {/* Patient Questions Workflow Routes */}
-              <Route path="/workflows/patient_questions/dashboard" element={
-                <ProtectedRoute>
-                  <SidebarLayout>
-                    <PatientQuestionsDashboard />
-                  </SidebarLayout>
-                </ProtectedRoute>
-              } />
-              <Route path="/workflows/patient_questions/calls" element={
-                <ProtectedRoute>
-                  <SidebarLayout>
-                    <PatientQuestionsCallList />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />

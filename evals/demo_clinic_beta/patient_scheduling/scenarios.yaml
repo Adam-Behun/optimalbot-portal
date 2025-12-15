@@ -1,0 +1,25 @@
+dataset_name: "demo_clinic_beta/patient_scheduling"
+dataset_description: "Scenarios for patient scheduling flow testing"
+
+scenarios:
+  - id: "1"
+    target_node: greeting
+    expected_problem: "Bot loops or misclassifies when patient status is unclear"
+    patient:
+      first_name: "Mike"
+      last_name: "Chen"
+      phone: "5559876543"
+      dob: "June 2, 1990"
+      email: "mike.chen@email.com"
+    persona: |
+      You want to schedule a routine cleaning.
+
+      TURN 1: Just say "Hi, I'd like to schedule a cleaning appointment."
+      Do NOT mention whether you're new or returning yet.
+
+      WHEN ASKED if you're new or returning: Be genuinely uncertain:
+      "I came here years ago as a kid, maybe once? I honestly don't remember."
+
+      IF PRESSED AGAIN about new/returning: Say "I guess treat me as new? Not sure if that matters."
+
+      After that, cooperate normally with scheduling.

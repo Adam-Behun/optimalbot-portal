@@ -39,6 +39,6 @@ class FlowLoader:
 
         Examples:
             eligibility_verification -> EligibilityVerificationFlow
-            patient_questions -> PatientQuestionsFlow
+            patient_scheduling -> PatientSchedulingFlow
         """
         return ''.join(word.capitalize() for word in self.client_name.split('_')) + 'Flow'

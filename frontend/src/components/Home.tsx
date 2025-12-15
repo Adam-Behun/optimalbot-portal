@@ -3,25 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { CalendarIcon, Shield, Phone, ClipboardCheck, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
+import { CalendarIcon, Shield, Phone, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
 import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
 
-// Icons for different workflow types
 const workflowIcons: Record<string, React.ReactNode> = {
   'eligibility_verification': <Shield className="h-5 w-5" />,
-  'patient_questions': <Phone className="h-5 w-5" />,
-  'eligibility': <ClipboardCheck className="h-5 w-5" />,
-  'scheduling': <CalendarIcon2 className="h-5 w-5" />,
-  'general_questions': <HelpCircle className="h-5 w-5" />,
+  'patient_scheduling': <CalendarIcon2 className="h-5 w-5" />,
+  'mainline': <Phone className="h-5 w-5" />,
 };
 
-// Descriptions for workflow types
 const workflowDescriptions: Record<string, string> = {
   'eligibility_verification': 'Verifies patient eligibility and benefits with insurance companies',
-  'patient_questions': 'Outbound calls to patients for check-ins and questions',
-  'eligibility': 'Confirms active coverage and general benefits',
-  'scheduling': 'Schedules visit for a patient',
-  'general_questions': 'Answers patient questions and routes call to the right resource',
+  'patient_scheduling': 'Inbound calls for appointment scheduling',
+  'mainline': 'Main phone line - answer questions or route to departments',
 };
 
 export function Home() {

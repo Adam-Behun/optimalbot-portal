@@ -4,13 +4,11 @@ import {
   Home,
   ChevronRight,
   FileCheck,
-  MessageSquare,
   BarChart3,
   LogOut,
   Settings,
   Moon,
   Sun,
-  ClipboardCheck,
   Calendar,
   HelpCircle,
   Phone,
@@ -53,11 +51,8 @@ import { useOrganization } from "../contexts/OrganizationContext";
 // Icons for different workflow types
 const workflowIcons: Record<string, LucideIcon> = {
   eligibility_verification: FileCheck,
-  patient_questions: MessageSquare,
   patient_scheduling: Calendar,
   mainline: Phone,
-  eligibility: ClipboardCheck,
-  general_questions: HelpCircle,
 };
 
 // Workflow-specific sub-items configuration
@@ -65,10 +60,6 @@ const workflowSubItems: Record<string, Array<{ title: string; urlSuffix: string 
   eligibility_verification: [
     { title: "Dashboard", urlSuffix: "dashboard" },
     { title: "Patients", urlSuffix: "patients" },
-  ],
-  patient_questions: [
-    { title: "Dashboard", urlSuffix: "dashboard" },
-    { title: "Calls", urlSuffix: "calls" },
   ],
   patient_scheduling: [
     { title: "Dashboard", urlSuffix: "dashboard" },
@@ -78,7 +69,6 @@ const workflowSubItems: Record<string, Array<{ title: string; urlSuffix: string 
     { title: "Dashboard", urlSuffix: "dashboard" },
     { title: "Calls", urlSuffix: "calls" },
   ],
-  // Default sub-items for other workflows
   default: [
     { title: "Dashboard", urlSuffix: "dashboard" },
   ],
