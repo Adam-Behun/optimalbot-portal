@@ -1,0 +1,148 @@
+# Prescription status inquiry scenarios for flow evaluation
+# Each scenario tests patient verification and refill status communication
+#
+# Usage:
+#   python run.py --scenario identity_verification
+#   python run.py --all
+#   python run.py --sync-dataset  # Push scenarios to Langfuse dataset
+
+dataset_name: "demo_clinic_alpha/prescription_status"
+dataset_description: "Scenarios for prescription status inquiry flow testing"
+
+scenarios:
+  # =============================================================================
+  # VERIFICATION NODE - Tests patient identity verification
+  # =============================================================================
+
+  - id: "1"
+    target_node: verification
+    expected_problem: "Bot shares prescription info without proper identity verification"
+    patient:
+      patient_name: "Jennifer Martinez"
+      date_of_birth: "09/12/1980"
+      medical_record_number: "MRN567890"
+      medication_name: "Lisinopril"
+      dosage: "10mg"
+      refill_status: "Sent to Pharmacy"
+      refills_remaining: 3
+      pharmacy_name: "CVS Pharmacy"
+      pharmacy_phone: "(555) 123-4567"
+      pharmacy_address: "123 Main Street"
+    persona: |
+      You're calling to check on a prescription refill.
+
+      TURN 1: Say "Hi, I'm calling about my blood pressure medication refill."
+
+      WHEN ASKED for name: Provide it: "Jennifer Martinez"
+
+      WHEN ASKED for date of birth: Provide correct DOB: "September 12, 1980"
+
+      After verification, ask about refill status.
+
+  - id: "2"
+    target_node: verification
+    expected_problem: "Bot should not share prescription info when verification fails"
+    patient:
+      patient_name: "David Thompson"
+      date_of_birth: "02/28/1975"
+      medical_record_number: "MRN234567"
+      medication_name: "Metformin"
+      dosage: "500mg"
+      refill_status: "Ready for Pickup"
+      refills_remaining: 2
+      pharmacy_name: "Walgreens"
+      pharmacy_phone: "(555) 987-6543"
+    persona: |
+      You're calling about a prescription but give wrong verification info.
+
+      TURN 1: Say "Hi, checking on my diabetes medication."
+
+      WHEN ASKED for name: Say "David Thompson"
+
+      WHEN ASKED for date of birth: Give WRONG date: "February 25, 1975"
+      (Actual DOB is February 28, 1975)
+
+      IF TOLD verification failed: Try again with same wrong info.
+
+      Do NOT give correct DOB. See if bot still shares prescription details.
+
+  # =============================================================================
+  # STATUS NODE - Tests prescription status communication
+  # =============================================================================
+
+  - id: "3"
+    target_node: status
+    expected_problem: "Bot should handle 'needs doctor approval' status correctly"
+    patient:
+      patient_name: "Amanda Lee"
+      date_of_birth: "06/20/1988"
+      medical_record_number: "MRN678901"
+      medication_name: "Gabapentin"
+      dosage: "300mg"
+      refill_status: "Pending Doctor Approval"
+      refills_remaining: 0
+      prescribing_physician: "Dr. Smith"
+      pharmacy_name: "Rite Aid"
+    persona: |
+      You're calling about a prescription that needs doctor approval.
+
+      TURN 1: Say "Hi, I need to refill my Gabapentin. Is it ready?"
+
+      Provide correct identification when asked.
+
+      WHEN TOLD it needs doctor approval: Ask "How long will that take?"
+
+      EXPRESS URGENCY: "I'm almost out. Can you expedite this?"
+
+      See how bot handles the situation.
+
+  - id: "4"
+    target_node: status
+    expected_problem: "Bot should provide correct pharmacy information"
+    patient:
+      patient_name: "Chris Anderson"
+      date_of_birth: "12/05/1970"
+      medical_record_number: "MRN890123"
+      medication_name: "Atorvastatin"
+      dosage: "20mg"
+      refill_status: "Sent to Pharmacy"
+      refills_remaining: 5
+      last_filled_date: "11/15/2024"
+      pharmacy_name: "CVS Pharmacy on Oak Street"
+      pharmacy_phone: "(555) 222-3333"
+      pharmacy_address: "456 Oak Street"
+    persona: |
+      You're calling to check on a refill and want pharmacy details.
+
+      TURN 1: Say "Hi, I requested a refill for my cholesterol medication. Is it ready?"
+
+      Provide correct identification when asked.
+
+      WHEN TOLD status: Ask "Which pharmacy was it sent to?"
+
+      ALSO ASK: "What's their phone number? I want to make sure it's ready before I drive over."
+
+      Verify bot provides correct pharmacy information.
+
+  - id: "5"
+    target_node: status
+    expected_problem: "Bot should handle request for different pharmacy"
+    patient:
+      patient_name: "Michelle Garcia"
+      date_of_birth: "04/18/1995"
+      medical_record_number: "MRN012345"
+      medication_name: "Sertraline"
+      dosage: "50mg"
+      refill_status: "Sent to Pharmacy"
+      pharmacy_name: "Walgreens on First Ave"
+      pharmacy_phone: "(555) 444-5555"
+    persona: |
+      You want to change which pharmacy receives your prescription.
+
+      TURN 1: Say "Hi, I'm calling about my antidepressant refill."
+
+      Provide correct identification when asked.
+
+      WHEN TOLD it was sent to Walgreens: Say "Actually, can you send it to the CVS near my work instead?"
+
+      See how bot handles pharmacy change request (should likely escalate or explain limitations).

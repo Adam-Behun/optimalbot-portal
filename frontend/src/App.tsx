@@ -22,6 +22,14 @@ import {
   MainlineDashboard,
   MainlineCallList,
 } from './components/workflows/mainline';
+import {
+  LabResultsDashboard,
+  LabResultsCallList,
+} from './components/workflows/lab_results';
+import {
+  PrescriptionStatusDashboard,
+  PrescriptionStatusCallList,
+} from './components/workflows/prescription_status';
 
 const App = () => {
   return (
@@ -106,6 +114,38 @@ const App = () => {
                 <ProtectedRoute>
                   <SidebarLayout>
                     <MainlineCallList />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+
+              {/* Lab Results Workflow Routes */}
+              <Route path="/workflows/lab_results/dashboard" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <LabResultsDashboard />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/lab_results/calls" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <LabResultsCallList />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+
+              {/* Prescription Status Workflow Routes */}
+              <Route path="/workflows/prescription_status/dashboard" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <PrescriptionStatusDashboard />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/workflows/prescription_status/calls" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <PrescriptionStatusCallList />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />

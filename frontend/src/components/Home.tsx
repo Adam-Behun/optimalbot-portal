@@ -3,19 +3,23 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { CalendarIcon, Shield, Phone, Calendar as CalendarIcon2, HelpCircle } from 'lucide-react';
+import { CalendarIcon, Shield, Phone, Calendar as CalendarIcon2, HelpCircle, Microscope, Pill } from 'lucide-react';
 import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
 
 const workflowIcons: Record<string, React.ReactNode> = {
   'eligibility_verification': <Shield className="h-5 w-5" />,
   'patient_scheduling': <CalendarIcon2 className="h-5 w-5" />,
   'mainline': <Phone className="h-5 w-5" />,
+  'lab_results': <Microscope className="h-5 w-5" />,
+  'prescription_status': <Pill className="h-5 w-5" />,
 };
 
 const workflowDescriptions: Record<string, string> = {
   'eligibility_verification': 'Verifies patient eligibility and benefits with insurance companies',
   'patient_scheduling': 'Inbound calls for appointment scheduling',
   'mainline': 'Main phone line - answer questions or route to departments',
+  'lab_results': 'Inbound calls for lab result inquiries',
+  'prescription_status': 'Inbound calls for prescription refill inquiries',
 };
 
 export function Home() {

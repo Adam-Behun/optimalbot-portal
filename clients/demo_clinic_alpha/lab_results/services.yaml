@@ -1,0 +1,57 @@
+call_type: "dial-in"
+
+services:
+  stt:
+    api_key: ${DEEPGRAM_API_KEY}
+    model: flux-general-en
+    eager_eot_threshold: 0.55
+    eot_threshold: 0.65
+    eot_timeout_ms: 3500
+    keyterm:
+      - "lab results"
+      - "test results"
+      - "blood work"
+      - "blood test"
+      - "urine test"
+      - "CBC"
+      - "metabolic panel"
+      - "lipid panel"
+      - "cholesterol"
+      - "glucose"
+      - "A1C"
+      - "hemoglobin"
+      - "thyroid"
+      - "TSH"
+      - "date of birth"
+      - "member ID"
+      - "medical record number"
+      - "Quest Diagnostics"
+      - "LabCorp"
+
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.4
+    api_key: ${OPENAI_API_KEY}
+    max_tokens: 128
+    service_tier: priority
+
+  tts:
+    provider: cartesia
+    model: sonic-3-2025-10-27
+    voice_id: 829ccd10-f8b3-43cd-b8a0-4aeaa81f3b30
+    api_key: ${CARTESIA_API_KEY}
+
+    generation_config:
+      speed: 0.95
+      volume: 1.0
+      emotion: neutral
+    aggregate_sentences: true
+
+  transport:
+    provider: daily
+    api_key: ${DAILY_API_KEY}
+    phone_number_id: ${DAILY_PHONE_NUMBER_ID}
+    enable_echo_cancellation: true
+    audio_in_sample_rate: 16000
+    audio_out_sample_rate: 24000

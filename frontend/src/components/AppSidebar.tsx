@@ -12,6 +12,8 @@ import {
   Calendar,
   HelpCircle,
   Phone,
+  Microscope,
+  Pill,
   LucideIcon,
 } from "lucide-react";
 
@@ -53,6 +55,8 @@ const workflowIcons: Record<string, LucideIcon> = {
   eligibility_verification: FileCheck,
   patient_scheduling: Calendar,
   mainline: Phone,
+  lab_results: Microscope,
+  prescription_status: Pill,
 };
 
 // Workflow-specific sub-items configuration
@@ -66,6 +70,14 @@ const workflowSubItems: Record<string, Array<{ title: string; urlSuffix: string 
     { title: "Calls", urlSuffix: "calls" },
   ],
   mainline: [
+    { title: "Dashboard", urlSuffix: "dashboard" },
+    { title: "Calls", urlSuffix: "calls" },
+  ],
+  lab_results: [
+    { title: "Dashboard", urlSuffix: "dashboard" },
+    { title: "Calls", urlSuffix: "calls" },
+  ],
+  prescription_status: [
     { title: "Dashboard", urlSuffix: "dashboard" },
     { title: "Calls", urlSuffix: "calls" },
   ],
