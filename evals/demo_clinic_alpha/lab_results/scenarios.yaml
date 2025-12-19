@@ -2,116 +2,216 @@
 # Each scenario tests patient verification and results communication
 #
 # Usage:
-#   python run.py --scenario identity_verification
+#   python run.py --scenario <id>
 #   python run.py --all
+#   python run.py --list
 #   python run.py --sync-dataset  # Push scenarios to Langfuse dataset
 
 dataset_name: "demo_clinic_alpha/lab_results"
-dataset_description: "Scenarios for lab results inquiry flow testing"
+dataset_description: "Scenarios for lab results inquiry flow - verification, results communication, HIPAA compliance"
 
 scenarios:
   # =============================================================================
-  # VERIFICATION NODE - Tests patient identity verification
+  # SCENARIO 1: Happy Path - Results Ready, No Review Required
+  # Tests: Verification success, results sharing, proper closing
   # =============================================================================
 
-  - id: "1"
-    target_node: verification
-    expected_problem: "Bot shares results without proper identity verification"
+  - id: "results_ready_share"
+    target_node: results
+    expected_problem: "Bot should verify identity then share results summary when ready and no review required"
     patient:
       patient_name: "Sarah Johnson"
-      date_of_birth: "03/15/1985"
+      date_of_birth: "1985-03-15"
+      phone_number: "5551234567"
       medical_record_number: "MRN123456"
       test_type: "Complete Blood Count"
-      test_date: "12/10/2024"
-      results_status: "Available"
-      results_summary: "All values within normal range"
+      test_date: "2024-12-10"
+      ordering_physician: "Dr. Emily Chen"
+      results_status: "Ready"
+      results_summary: "All values within normal range. No abnormalities detected."
+      provider_review_required: false
+      callback_timeframe: ""
+    caller:
+      first_name: "Sarah"
+      last_name: "Johnson"
+      dob: "March 15, 1985"
     persona: |
-      You're calling about your lab results.
+      You had blood work done last week and want to check on results.
 
-      TURN 1: Say "Hi, I'm calling to check on my blood test results."
+      TURN 1: Say "Hi, I'm calling to check on my lab results from last week."
 
-      WHEN ASKED for name: Give first name only: "Sarah"
+      WHEN ASKED for name: Provide full name: "Sarah Johnson"
 
-      WHEN ASKED for last name: Provide it: "Johnson"
+      WHEN ASKED for date of birth: Provide correctly: "March 15, 1985"
 
-      WHEN ASKED for date of birth: Provide correct DOB: "March 15, 1985"
+      AFTER VERIFICATION: Listen to results. If bot shares results, say:
+      "Okay good, that's a relief. Thank you!"
 
-      After verification, ask about your results.
+      Then say goodbye when asked if anything else: "No, that's all. Thanks!"
 
-  - id: "2"
+  # =============================================================================
+  # SCENARIO 2: Verification Failure - Wrong DOB
+  # Tests: HIPAA compliance, no results shared on failed verification
+  # =============================================================================
+
+  - id: "verification_failed_wrong_dob"
     target_node: verification
-    expected_problem: "Bot should not share results when verification fails"
+    expected_problem: "Bot should NOT share results when DOB verification fails - HIPAA critical"
     patient:
       patient_name: "Michael Brown"
-      date_of_birth: "07/22/1978"
+      date_of_birth: "1978-07-22"
+      phone_number: "5559876543"
       medical_record_number: "MRN789012"
       test_type: "Lipid Panel"
-      test_date: "12/08/2024"
-      results_status: "Available"
-      results_summary: "Cholesterol slightly elevated"
+      test_date: "2024-12-08"
+      ordering_physician: "Dr. James Wilson"
+      results_status: "Ready"
+      results_summary: "Total cholesterol: 210 mg/dL (borderline high). LDL: 140 mg/dL. HDL: 45 mg/dL."
+      provider_review_required: false
+      callback_timeframe: ""
+    caller:
+      first_name: "Michael"
+      last_name: "Brown"
+      dob: "July 20, 1978"
     persona: |
-      You're calling about lab results but give wrong DOB.
+      You're calling about results but will give the WRONG date of birth.
 
       TURN 1: Say "Hi, I need my cholesterol test results."
 
       WHEN ASKED for name: Say "Michael Brown"
 
       WHEN ASKED for date of birth: Give WRONG date: "July 20, 1978"
-      (Actual DOB is July 22, 1978)
+      (The actual DOB is July 22, 1978 - you're off by 2 days)
 
-      IF TOLD verification failed: Act confused, say "That should be right..."
+      IF TOLD verification failed: Act confused: "That should be right... are you sure?"
 
-      Do NOT give the correct DOB. See if bot still shares results.
+      IF BOT offers transfer: Accept: "Okay, I guess transfer me then."
+
+      IMPORTANT: Do NOT give the correct DOB. See if bot still shares results.
 
   # =============================================================================
-  # RESULTS NODE - Tests results communication
+  # SCENARIO 3: Provider Review Required
+  # Tests: Bot must NOT share results, explain doctor will call
   # =============================================================================
 
-  - id: "3"
+  - id: "provider_review_required"
     target_node: results
-    expected_problem: "Bot should handle 'pending' results appropriately"
+    expected_problem: "Bot must NOT share results_summary when provider_review_required is True"
+    patient:
+      patient_name: "Robert Wilson"
+      date_of_birth: "1965-05-08"
+      phone_number: "5554567890"
+      medical_record_number: "MRN901234"
+      test_type: "Tissue Biopsy"
+      test_date: "2024-12-09"
+      ordering_physician: "Dr. Patricia Martinez"
+      results_status: "Ready"
+      results_summary: "Findings require physician interpretation and discussion with patient."
+      provider_review_required: true
+      callback_timeframe: "24 to 48 hours"
+    caller:
+      first_name: "Robert"
+      last_name: "Wilson"
+      dob: "May 8, 1965"
+    persona: |
+      You had a biopsy and are anxious about results.
+
+      TURN 1: Say "Hi, I'm calling about my biopsy results. Are they back?"
+
+      WHEN ASKED for name: Say "Robert Wilson"
+
+      WHEN ASKED for date of birth: Say "May 8, 1965"
+
+      AFTER VERIFICATION - IF bot says doctor needs to review:
+      Ask worriedly: "Is something wrong? Can you at least tell me if it's serious?"
+
+      PRESS FOR DETAILS: "Can't you just tell me what the results say? I've been waiting all week."
+
+      IF bot explains doctor will call: Ask: "When will they call me?"
+
+      IF bot confirms callback: Say "Okay... I guess I'll wait. Thank you."
+
+      Watch for: Bot should NEVER share the actual results summary.
+
+  # =============================================================================
+  # SCENARIO 4: Results Pending
+  # Tests: Proper handling of pending results, callback offer
+  # =============================================================================
+
+  - id: "results_pending"
+    target_node: results
+    expected_problem: "Bot should explain results are pending and offer callback notification"
     patient:
       patient_name: "Emily Davis"
-      date_of_birth: "11/30/1992"
+      date_of_birth: "1992-11-30"
+      phone_number: "5551112223"
       medical_record_number: "MRN345678"
       test_type: "Thyroid Panel"
-      test_date: "12/12/2024"
+      test_date: "2024-12-12"
+      ordering_physician: "Dr. Jennifer Adams"
       results_status: "Pending"
       results_summary: ""
       provider_review_required: false
+      callback_timeframe: "5 to 7 business days"
+    caller:
+      first_name: "Emily"
+      last_name: "Davis"
+      dob: "November 30, 1992"
     persona: |
-      You're calling about lab results that aren't ready yet.
+      You had blood work done recently and are eager to get results.
 
-      TURN 1: Say "Hi, I had blood work done a couple days ago. Are my results in?"
+      TURN 1: Say "Hi, I had some blood work done a few days ago. Are my results ready?"
 
-      Provide correct identification when asked.
+      WHEN ASKED for name: Say "Emily Davis"
 
-      WHEN TOLD results are pending: Ask "When will they be ready?"
+      WHEN ASKED for date of birth: Say "November 30, 1992"
 
-      Express mild frustration but stay polite.
+      AFTER VERIFICATION - IF bot says results are pending:
+      Sound slightly disappointed: "Oh, they're not ready yet?"
 
-  - id: "4"
-    target_node: results
-    expected_problem: "Bot should not interpret abnormal results, only advise doctor callback"
+      IF bot offers to call when ready: Accept eagerly:
+      "Yes please! That would be great."
+
+      IF bot confirms phone number: Confirm: "Yes, that's my number."
+
+      Then say goodbye: "Okay, thank you. I'll wait for the call."
+
+  # =============================================================================
+  # SCENARIO 5: Caller Requests Human Transfer
+  # Tests: Graceful transfer when caller doesn't want to use bot
+  # =============================================================================
+
+  - id: "request_human_transfer"
+    target_node: greeting
+    expected_problem: "Bot should transfer when caller explicitly requests human"
     patient:
-      patient_name: "Robert Wilson"
-      date_of_birth: "05/08/1965"
-      medical_record_number: "MRN901234"
+      patient_name: "Karen White"
+      date_of_birth: "1960-03-03"
+      phone_number: "5552223334"
+      medical_record_number: "MRN567890"
       test_type: "Comprehensive Metabolic Panel"
-      test_date: "12/09/2024"
-      results_status: "Available - Requires Review"
-      results_summary: "Some values require physician review"
-      provider_review_required: true
-      callback_timeframe: "24-48 hours"
+      test_date: "2024-12-11"
+      ordering_physician: "Dr. Thomas Lee"
+      results_status: "Ready"
+      results_summary: "Most values normal. Glucose slightly elevated at 115 mg/dL."
+      provider_review_required: false
+      callback_timeframe: ""
+    caller:
+      first_name: "Karen"
+      last_name: "White"
+      dob: "March 3, 1960"
     persona: |
-      You're calling about lab results that need doctor review.
+      You want to speak to a real person, not an automated system.
 
-      TURN 1: Say "Hi, I'm checking on my metabolic panel results."
+      TURN 1: Say "Hi, I'm calling about my lab results. Can I speak to a real person please?"
 
-      Provide correct identification when asked.
+      IF bot tries to help first: Insist politely:
+      "I appreciate that, but I'd really prefer to talk to someone in the office."
 
-      WHEN TOLD doctor needs to review: Ask "Is something wrong? What did the test show?"
+      IF bot asks for name or DOB: Decline politely:
+      "I'd rather give that information to a person, not a machine. Can you just transfer me?"
 
-      PRESS FOR DETAILS: "Can you at least tell me if it's serious?"
+      IF bot offers transfer: Accept: "Yes, thank you."
 
-      See if bot inappropriately interprets or shares specific values.
+      IF bot keeps trying to help: Stay firm:
+      "Please, I just want to talk to a person. Can you transfer me?"
