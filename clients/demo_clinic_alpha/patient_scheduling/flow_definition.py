@@ -13,6 +13,7 @@ from loguru import logger
 from backend.models import get_async_patient_db
 from backend.utils import parse_natural_date, parse_natural_time
 from handlers.transcript import save_transcript_to_db
+from clients.demo_clinic_alpha.patient_scheduling.text_conversation import TextConversation
 
 
 async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
@@ -549,7 +550,10 @@ Confirm BRIEFLY in ONE sentence: "{state.get('first_name', '')}, you're booked f
 DO NOT list or summarize other details. Just the one sentence above.
 - If no/goodbye → call end_call
 - If correction → call correct_info
-- If question → answer briefly, ask "Anything else?" """,
+- If they want to continue via text/SMS → call continue_via_text
+- If question → answer briefly, ask "Anything else?"
+
+If they seem done but you want to offer text: "Would you like me to send you a text? You can reply anytime if questions come up." """,
                 }
             ],
             functions=[
@@ -568,6 +572,13 @@ DO NOT list or summarize other details. Just the one sentence above.
                     },
                     required=["field", "new_value"],
                     handler=self._correct_info_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="continue_via_text",
+                    description="Patient wants to continue conversation over text/SMS. Call when they say 'yes' to text offer, or ask to 'text me', 'send me a text', etc.",
+                    properties={},
+                    required=[],
+                    handler=self._offer_text_continuation_handler,
                 ),
                 FlowsFunctionSchema(
                     name="end_call",
@@ -1210,3 +1221,66 @@ Once they provide DOB, call verify_dob.""",
             required=["urgent"],
             handler=self._request_staff_handler,
         )
+
+    # ========== Text Conversation Handlers ==========
+
+    async def _offer_text_continuation_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Patient wants to continue conversation over text. Save state and queue SMS."""
+        state = flow_manager.state
+        phone_number = state.get("phone_number", "")
+
+        if not phone_number:
+            logger.warning("Text continuation requested but no phone number in state")
+            return "I don't have a phone number on file. Let me confirm your number first.", self.create_confirmation_node()
+
+        # Build context to carry over to text conversation
+        text_context = {
+            "first_name": state.get("first_name"),
+            "last_name": state.get("last_name"),
+            "phone_number": phone_number,
+            "email": state.get("email"),
+            "date_of_birth": state.get("date_of_birth"),
+            "appointment_date": state.get("appointment_date"),
+            "appointment_time": state.get("appointment_time"),
+            "appointment_type": state.get("appointment_type"),
+            "appointment_reason": state.get("appointment_reason"),
+        }
+
+        # Create text conversation instance
+        text_conv = TextConversation(
+            patient_id=self.patient_data.get("patient_id", ""),
+            organization_id=self.organization_id,
+            organization_name=self.organization_name,
+            initial_context=text_context,
+        )
+
+        # Get the handoff message
+        handoff_message = text_conv.get_handoff_message()
+
+        # Save text conversation state to database for later retrieval
+        try:
+            db = get_async_patient_db()
+            patient_id = self.patient_data.get("patient_id")
+            if patient_id:
+                await db.update_patient(
+                    patient_id,
+                    {
+                        "text_conversation_enabled": True,
+                        "text_conversation_state": text_conv.to_dict(),
+                        "text_handoff_message": handoff_message,
+                    },
+                    self.organization_id,
+                )
+                logger.info(f"Text continuation enabled for patient {patient_id}")
+
+                # TODO: Queue SMS via Twilio/your SMS provider
+                # await sms_service.send(phone_number, handoff_message)
+                logger.info(f"SMS would be sent to {phone_number[-4:]}: {handoff_message[:50]}...")
+
+        except Exception as e:
+            logger.error(f"Error enabling text continuation: {e}")
+            return "I'm having trouble setting that up. You can always call us back!", self.create_confirmation_node()
+
+        return "I'll send you a text right now. You can reply anytime with questions!", self._create_end_node()

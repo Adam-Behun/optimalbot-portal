@@ -149,6 +149,26 @@ class AsyncPatientRecord:
             logger.error(f"Error finding patient by phone {phone_number}: {e}")
             return None
 
+    async def find_patient_by_phone_for_text(self, phone_number: str) -> Optional[dict]:
+        """Find a patient by phone who has text conversation enabled. Returns most recently updated match."""
+        try:
+            digits_only = ''.join(c for c in phone_number if c.isdigit())
+            if not digits_only:
+                return None
+
+            # Find patients with text enabled, sorted by most recently updated
+            query = {
+                "phone_number": digits_only,
+                "text_conversation_enabled": True,
+            }
+
+            cursor = self.patients.find(query).sort("updated_at", -1).limit(1)
+            results = await cursor.to_list(length=1)
+            return results[0] if results else None
+        except Exception as e:
+            logger.error(f"Error finding text-enabled patient by phone {phone_number}: {e}")
+            return None
+
 
 _patient_db_instance: Optional[AsyncPatientRecord] = None
 
