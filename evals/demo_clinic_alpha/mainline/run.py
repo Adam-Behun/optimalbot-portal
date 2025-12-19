@@ -26,6 +26,7 @@ from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
 
 from clients.demo_clinic_alpha.mainline.flow_definition import MainlineFlow
+from clients.demo_clinic_alpha.mainline.schema import WORKFLOW_SCHEMA
 
 
 # === LANGFUSE CLIENT ===
@@ -47,14 +48,16 @@ def _call_grader(prompt: str) -> str:
 def _format_conversation(conversation: list[dict]) -> str:
     """Format conversation for graders."""
     return "\n".join([
-        f"{'BOT' if c['role'] == 'assistant' else 'PATIENT'}: {c['content']}"
+        f"{'BOT' if c['role'] == 'assistant' else 'CALLER'}: {c['content']}"
         for c in conversation if c.get('content')
     ])
 
 
-def grade_goal(conv_text: str, expected_problem: str, calls_text: str) -> dict:
-    """Grade whether the scenario's expected problem occurred."""
-    prompt = f"""Grade this mainline conversation. Be STRICT.
+def grade_routing(conv_text: str, expected_problem: str, calls_text: str, final_state: dict) -> dict:
+    """Grade whether the bot routed correctly based on caller intent."""
+    routed_to = final_state.get("routed_to", "Unknown")
+
+    prompt = f"""Grade this mainline receptionist conversation. Be STRICT.
 
 EXPECTED PROBLEM TO CHECK FOR:
 {expected_problem}
@@ -65,10 +68,13 @@ CONVERSATION:
 FUNCTION CALLS:
 {calls_text}
 
-Did the expected problem occur? Look for:
-- Bot confusion, loops, or wrong assumptions
-- Missing information, wrong data captured
-- Poor handling of the caller's behavior
+FINAL ROUTING: {routed_to}
+
+Check for these issues:
+- Did bot correctly identify caller intent (scheduling, lab results, billing, simple question)?
+- Did bot route to the appropriate workflow/department?
+- For simple questions (hours, parking, location), did bot answer directly without unnecessary routing?
+- Did bot over-route (transfer when they could answer) or under-route (try to handle what should be transferred)?
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -80,17 +86,18 @@ FAIL: <5 words what went wrong>"""
 
 
 def grade_conversation_quality(conv_text: str) -> dict:
-    """Grade conversational quality - no repetition, natural flow."""
+    """Grade conversational quality - natural, efficient, professional."""
     prompt = f"""Grade this conversation's QUALITY. Be STRICT about these issues:
 
 CONVERSATION:
 {conv_text}
 
 Check for these problems:
-1. REPETITION: Bot says same thing multiple times (e.g., multiple "Goodbye", repeated confirmations)
+1. REPETITION: Bot says same thing multiple times
 2. OVER-TALKING: Bot keeps talking after caller says goodbye
 3. ROBOTIC: Unnatural phrasing, lists, or overly formal language
-4. RAMBLING: Unnecessarily long responses when brief would work
+4. WRONG INFO: Bot gives incorrect practice information
+5. IGNORED REQUEST: Bot doesn't acknowledge caller's stated need
 
 If ANY of these issues exist, mark as FAIL.
 
@@ -104,8 +111,8 @@ FAIL: <5 words what went wrong>"""
 
 
 def grade_function_calls(calls_text: str, final_state: dict) -> dict:
-    """Grade function call correctness - right functions, right data."""
-    prompt = f"""Grade whether the bot called functions correctly.
+    """Grade function call correctness - right functions at right times."""
+    prompt = f"""Grade whether the bot called functions correctly for a MAINLINE RECEPTIONIST.
 
 FUNCTION CALLS:
 {calls_text}
@@ -114,10 +121,11 @@ FINAL STATE:
 {json.dumps(final_state, indent=2)}
 
 Check for:
-1. Called functions at appropriate times (not prematurely)
-2. Captured data correctly (no typos, wrong values)
-3. Didn't skip required functions
-4. Didn't call unnecessary functions
+1. route_to_workflow used for scheduling/lab_results/prescription_status intents
+2. route_to_staff used for billing/front_desk/unclear requests
+3. end_call used appropriately when caller says goodbye
+4. save_call_info captures volunteered caller information
+5. No premature routing before understanding caller's need
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -139,18 +147,20 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         for fc in function_calls
     ]) or "No function calls"
 
+    final_state = final_state or {}
+
     # Run all graders
-    goal = grade_goal(conv_text, expected_problem, calls_text)
+    routing = grade_routing(conv_text, expected_problem, calls_text, final_state)
     quality = grade_conversation_quality(conv_text)
-    functions = grade_function_calls(calls_text, final_state or {})
+    functions = grade_function_calls(calls_text, final_state)
 
     # All must pass
-    all_passed = goal["pass"] and quality["pass"] and functions["pass"]
+    all_passed = routing["pass"] and quality["pass"] and functions["pass"]
 
     # Build combined reason
     failures = []
-    if not goal["pass"]:
-        failures.append(f"goal: {goal['reason']}")
+    if not routing["pass"]:
+        failures.append(f"routing: {routing['reason']}")
     if not quality["pass"]:
         failures.append(f"quality: {quality['reason']}")
     if not functions["pass"]:
@@ -165,7 +175,7 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         "pass": all_passed,
         "reason": reason,
         "details": {
-            "goal": goal,
+            "routing": routing,
             "quality": quality,
             "functions": functions,
         }
@@ -211,19 +221,25 @@ class MockPipeline:
 
 class MockTransport:
     async def sip_call_transfer(self, config):
-        print(f"\n  [TRANSFER] → {config.get('toEndPoint')}\n")
+        print(f"\n  [SIP TRANSFER] → {config.get('toEndPoint')}\n")
 
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, llm_config: dict, cold_transfer_config: dict):
+    def __init__(self, llm_config: dict, cold_transfer_config: dict, practice_info: dict):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
 
+        # Build patient_data with practice_info from schema
+        patient_data = {
+            "organization_name": "Demo Clinic Alpha",
+            "practice_info": practice_info,
+        }
+
         self.flow = MainlineFlow(
-            patient_data={"organization_name": "Demo Clinic Alpha"},
+            patient_data=patient_data,
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
@@ -236,6 +252,7 @@ class FlowRunner:
         self.conversation_history = []
         self.function_calls = []  # Track all function calls
         self.done = False
+        self.handed_off_to = None  # Track workflow handoffs
 
     def get_prompts(self) -> list[dict]:
         messages = []
@@ -352,7 +369,21 @@ class FlowRunner:
                     all_content.append(result)
 
                 if next_node:
+                    next_node_name = next_node.get("name", "unknown")
+
+                    # Check if this is a handoff to another flow
+                    if func_name == "route_to_workflow":
+                        workflow = func_args.get("workflow", "unknown")
+                        self.handed_off_to = workflow
+                        print(f"\n  [HANDOFF] → {workflow} workflow\n")
+
+                        # For eval purposes, we stop here since the other flow takes over
+                        # In production, the PatientSchedulingFlow would continue
+                        self.done = True
+                        break
+
                     self.current_node = next_node
+
                     # Process pre_actions on the new node (e.g., tts_say)
                     pre_actions = self.current_node.get("pre_actions") or []
                     for action in pre_actions:
@@ -366,10 +397,10 @@ class FlowRunner:
                                 })
 
                     # Check if this node ends the conversation
-                    result_node_name = next_node.get("name")
                     post_actions = next_node.get("post_actions") or []
                     ends_conversation = (
-                        result_node_name == "end" or
+                        next_node_name == "end" or
+                        next_node_name == "transfer_initiated" or
                         any(a.get("type") == "end_conversation" for a in post_actions)
                     )
                     if ends_conversation:
@@ -389,7 +420,7 @@ class FlowRunner:
 
 @observe(as_type="generation", name="caller_simulator")
 async def get_caller_response(history: list[dict], caller: dict, persona: str) -> str:
-    system_prompt = f"""You are a caller to Demo Clinic Alpha.
+    system_prompt = f"""You are a caller to Demo Clinic Alpha's main phone line.
 
 {persona}
 
@@ -429,12 +460,13 @@ async def run_simulation(
     scenario: dict,
     llm_config: dict,
     cold_transfer_config: dict,
+    practice_info: dict,
 ) -> dict:
     """Run a single mainline simulation for a scenario."""
     caller = scenario["caller"]
     persona = scenario["persona"]
 
-    runner = FlowRunner(llm_config, cold_transfer_config)
+    runner = FlowRunner(llm_config, cold_transfer_config, practice_info)
 
     # Bot greeting
     pre_actions = runner.current_node.get("pre_actions") or []
@@ -471,6 +503,10 @@ async def run_simulation(
             conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
 
     final_state = runner.mock_flow_manager.state
+
+    # Add handoff info to state for grading
+    if runner.handed_off_to:
+        final_state["handed_off_to"] = runner.handed_off_to
 
     print(f"\n{'='*70}")
     print("FINAL STATE:")
@@ -595,10 +631,13 @@ async def run_scenario(scenario_id: str) -> dict:
     llm_config = services["services"]["llm"]
     cold_transfer_config = services.get("cold_transfer", {})
 
-    # Run simulation (trace is created by @observe decorator)
-    result = await run_simulation(scenario, llm_config, cold_transfer_config)
+    # Get practice_info from schema
+    practice_info = WORKFLOW_SCHEMA.get("practice_info", {})
 
-    # Grade the result (3 graders: goal, quality, functions)
+    # Run simulation (trace is created by @observe decorator)
+    result = await run_simulation(scenario, llm_config, cold_transfer_config, practice_info)
+
+    # Grade the result (3 graders: routing, quality, functions)
     grade = grade_scenario(
         result["conversation"],
         result["expected_problem"],
@@ -680,6 +719,9 @@ async def main():
 
     # Default: run first scenario
     config = load_scenarios()
+    if not config["scenarios"]:
+        print("No scenarios defined in scenarios.yaml")
+        return
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")

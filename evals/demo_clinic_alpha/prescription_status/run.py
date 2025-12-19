@@ -23,8 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 import yaml
 from langfuse import Langfuse
 
-# TODO: Import flow when implemented
-# from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
+from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
 
 
 # === LANGFUSE CLIENT ===
