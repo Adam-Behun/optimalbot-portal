@@ -343,9 +343,13 @@ class FlowRunner:
                 })
                 print(f"    → {func_name}({json.dumps(func_args)})")
 
+                # Don't include content when there's a tool call and respond_immediately
+                # This prevents spurious "I'll connect you" messages from handoff nodes
+                include_content = msg.content if not self.current_node.get("respond_immediately") else None
+
                 self.conversation_history.append({
                     "role": "assistant",
-                    "content": msg.content,
+                    "content": include_content,
                     "tool_calls": [{
                         "id": tool_call.id,
                         "type": "function",
@@ -376,11 +380,7 @@ class FlowRunner:
                         workflow = func_args.get("workflow", "unknown")
                         self.handed_off_to = workflow
                         print(f"\n  [HANDOFF] → {workflow} workflow\n")
-
-                        # For eval purposes, we stop here since the other flow takes over
-                        # In production, the PatientSchedulingFlow would continue
-                        self.done = True
-                        break
+                        # Continue with the new workflow's node instead of stopping
 
                     self.current_node = next_node
 

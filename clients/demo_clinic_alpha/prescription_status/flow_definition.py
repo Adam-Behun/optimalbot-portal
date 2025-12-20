@@ -287,6 +287,47 @@ RESULT: Transitions to identity verification before sharing any information.""",
             ],
         )
 
+    def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
+        """Entry point when handed off from mainline flow. No greeting, uses gathered context."""
+        # Store context in state
+        context_lower = context.lower()
+        if "lisinopril" in context_lower:
+            self.flow_manager.state["medication_name"] = "lisinopril"
+        if "prior auth" in context_lower:
+            self.flow_manager.state["issue_type"] = "prior_authorization"
+
+        return NodeConfig(
+            name="handoff_entry",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": f"""CONTEXT: {context}
+
+The caller already explained their prescription issue. The previous assistant acknowledged it.
+IMMEDIATELY call proceed_to_verification (do NOT speak first - no greeting, no acknowledgment).
+
+The context shows: {context}
+Note any medication names or complications for later.""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="proceed_to_verification",
+                    description="Proceed immediately to identity verification.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_verification_handler,
+                ),
+            ],
+            respond_immediately=True,
+        )
+
     def create_verification_node(self) -> NodeConfig:
         """Verify patient identity with name and DOB."""
         state = self.flow_manager.state

@@ -256,6 +256,44 @@ RESULT: Transitions to identity verification before sharing any information.""",
             ],
         )
 
+    def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
+        """Entry point when handed off from mainline flow. No greeting, uses gathered context."""
+        # Store context in state
+        self.flow_manager.state["test_type"] = "biopsy" if "biopsy" in context.lower() else ""
+        self.flow_manager.state["caller_anxious"] = "anxious" in context.lower() or "worried" in context.lower()
+
+        return NodeConfig(
+            name="handoff_entry",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": f"""CONTEXT: {context}
+
+The caller already explained they're checking on lab results. The previous assistant acknowledged it.
+IMMEDIATELY call proceed_to_verification (do NOT speak first - no greeting, no acknowledgment).
+
+The context shows: {context}
+Note any urgency or anxiety for when you communicate with them.""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="proceed_to_verification",
+                    description="Proceed immediately to identity verification.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_verification_handler,
+                ),
+            ],
+            respond_immediately=True,
+        )
+
     def create_verification_node(self) -> NodeConfig:
         """Verify patient identity with name and DOB."""
         state = self.flow_manager.state

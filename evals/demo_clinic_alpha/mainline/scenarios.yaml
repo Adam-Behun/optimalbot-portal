@@ -1,5 +1,5 @@
 # Adversarial scenarios for mainline flow evaluation
-# Each scenario targets specific weaknesses in flow_definition.py
+# Focus: Edge cases, multi-turn conversations, context preservation during workflow handoffs
 #
 # Usage:
 #   python run.py --scenario <id>
@@ -11,98 +11,12 @@ dataset_description: "Adversarial scenarios for mainline flow testing"
 
 scenarios:
   # =============================================================================
-  # SIMPLE QUESTIONS - Bot should answer directly, no routing
+  # CONTEXT PRESERVATION - Verify information carries through workflow handoffs
   # =============================================================================
 
-  - id: "simple_hours"
+  - id: "1"
     target_node: greeting
-    expected_problem: "Bot may over-route when simple question can be answered directly"
-    caller:
-      first_name: "Sarah"
-      last_name: "Miller"
-      phone: "5551234567"
-      dob: "March 15, 1985"
-      email: "sarah.miller@email.com"
-    persona: |
-      You just want to know the office hours, nothing else.
-
-      TURN 1: Ask simply: "Hi, what time do you close today?"
-
-      WHEN BOT answers: Ask one follow-up: "And are you open on weekends?"
-
-      AFTER getting that answer: Say goodbye: "Great, thanks!"
-
-      Do NOT ask about scheduling or anything else. Just hours.
-
-  - id: "simple_parking"
-    target_node: greeting
-    expected_problem: "Bot may try to route instead of answering simple parking question"
-    caller:
-      first_name: "Tom"
-      last_name: "Chen"
-      phone: "5559876543"
-      dob: "July 22, 1990"
-      email: "tom.chen@email.com"
-    persona: |
-      You have an appointment and just need directions/parking info.
-
-      TURN 1: Ask: "Hi, I have an appointment later. Where should I park?"
-
-      IF BOT offers to check your appointment or asks for details: Redirect:
-      "I don't need to check anything, just wondering about parking."
-
-      WHEN BOT answers about parking: Say: "Great, and what's your address again?"
-
-      AFTER getting address: Say goodbye: "Perfect, see you later!"
-
-  - id: "simple_multi_question"
-    target_node: greeting
-    expected_problem: "Bot may lose track when caller asks multiple simple questions"
-    caller:
-      first_name: "Emily"
-      last_name: "Davis"
-      phone: "5554567890"
-      dob: "November 3, 1978"
-      email: "emily.d@email.com"
-    persona: |
-      You're a new patient researching the practice before committing.
-
-      TURN 1: Ask multiple questions at once:
-      "Hi, I'm thinking about coming in. What are your hours, do you have parking, and do you take Blue Cross insurance?"
-
-      IF BOT only answers one: Push for the others: "And the other things I asked about?"
-
-      AFTER getting answers: Ask one more: "What should I bring as a new patient?"
-
-      AFTER that answer: Say: "Thanks, I'll think about it and call back."
-
-  # =============================================================================
-  # SCHEDULING ROUTING - Bot should hand off to PatientSchedulingFlow
-  # =============================================================================
-
-  - id: "route_scheduling_direct"
-    target_node: greeting
-    expected_problem: "Bot may not hand off cleanly to scheduling workflow"
-    caller:
-      first_name: "Michael"
-      last_name: "Johnson"
-      phone: "5551112222"
-      dob: "April 8, 1982"
-      email: "mjohnson@email.com"
-    persona: |
-      You want to schedule an appointment, nothing else.
-
-      TURN 1: Say directly: "Hi, I need to schedule an appointment."
-
-      IF BOT asks any clarifying questions about the appointment: Cooperate.
-
-      IF BOT asks if you're new or returning: Say "I'm a new patient."
-
-      Continue cooperating with the scheduling flow.
-
-  - id: "route_scheduling_after_question"
-    target_node: greeting
-    expected_problem: "Bot may not transition smoothly from answering question to scheduling"
+    expected_problem: "Context may be lost when handing off to scheduling workflow"
     caller:
       first_name: "Jessica"
       last_name: "Williams"
@@ -110,66 +24,34 @@ scenarios:
       dob: "September 12, 1995"
       email: "jwilliams@email.com"
     persona: |
-      Start with a simple question, then decide to schedule.
+      You're calling to schedule a follow-up for your chronic back pain. You've been a patient for 3 years.
+      You want a specific doctor (Dr. Chen) because you've seen them before.
 
-      TURN 1: Ask: "Hi, what are your office hours?"
+      TURN 1: "Hi, I need to schedule a follow-up appointment."
 
-      WHEN BOT answers: Decide to schedule:
-      "Okay great. Actually, can I schedule an appointment?"
+      IF BOT asks what it's for: "It's for my chronic lower back pain. I've been coming here for about three years for it."
 
-      IF BOT asks if you're new or returning: Say "I'm new."
+      IF BOT asks about doctor preference: "I'd like to see Dr. Chen if possible - she's been treating me."
 
-      Continue cooperating with scheduling.
+      IF BOT asks if you're new or returning: "I'm a returning patient. Like I said, I've been coming here for three years."
 
-  - id: "route_scheduling_vague"
+      WHEN ROUTED TO SCHEDULING: Pay attention to whether they remember:
+      - That it's a follow-up (not new patient)
+      - That it's for chronic back pain
+      - That you requested Dr. Chen
+
+      IF scheduling asks about any of these again: Express mild frustration:
+      "I already mentioned that - it's for my back pain, with Dr. Chen."
+
+      Continue cooperating but note any context loss.
+
+      After scheduling attempt, say: "Actually, while I have you, what insurance do you accept? I might be switching plans."
+
+      THEN say goodbye: "Great, thank you for your help."
+
+  - id: "2"
     target_node: greeting
-    expected_problem: "Bot may not recognize vague scheduling intent"
-    caller:
-      first_name: "David"
-      last_name: "Brown"
-      phone: "5555556666"
-      dob: "January 30, 1970"
-      email: "dbrown@email.com"
-    persona: |
-      You want to schedule but phrase it vaguely.
-
-      TURN 1: Say vaguely: "Hi, I'd like to come in sometime."
-
-      IF BOT asks what you need: Still be vague: "Just a visit, you know."
-
-      IF BOT asks specifically about scheduling/appointment: Confirm: "Yeah, I guess I need to make an appointment."
-
-      IF BOT asks if you're new or returning: Say "New patient."
-
-      Then cooperate with scheduling.
-
-  # =============================================================================
-  # LAB RESULTS ROUTING - Currently falls back to SIP transfer
-  # =============================================================================
-
-  - id: "route_lab_results"
-    target_node: greeting
-    expected_problem: "Bot should route to lab_results workflow (or transfer if not implemented)"
-    caller:
-      first_name: "Patricia"
-      last_name: "Garcia"
-      phone: "5557778888"
-      dob: "June 5, 1965"
-      email: "pgarcia@email.com"
-    persona: |
-      You had blood work done and want to check on results.
-
-      TURN 1: Ask about results: "Hi, I'm calling about my lab results from last week."
-
-      IF BOT asks for details: Provide: "I had blood work done on Monday."
-
-      IF BOT transfers you: Accept: "Okay, thank you."
-
-      IF BOT tries to help directly: Cooperate.
-
-  - id: "route_lab_biopsy"
-    target_node: greeting
-    expected_problem: "Bot may not recognize biopsy as lab results"
+    expected_problem: "Anxious caller context should transfer to lab_results workflow"
     caller:
       first_name: "Robert"
       last_name: "Martinez"
@@ -177,21 +59,35 @@ scenarios:
       dob: "February 28, 1958"
       email: "rmartinez@email.com"
     persona: |
-      You had a biopsy and are anxious about results.
+      You had a biopsy done 10 days ago for a suspicious mole. You're very anxious about the results.
+      The doctor said results would take a week, so you're calling because it's been longer.
 
-      TURN 1: Sound slightly anxious: "Hi, I had a biopsy done and I'm wondering if the results are back yet?"
+      TURN 1: Sound worried: "Hi, I'm calling about some test results. I had a biopsy done about ten days ago."
 
-      IF BOT asks for more info: Provide: "It was done about a week ago. The doctor said to call."
+      IF BOT asks for more details: "It was a skin biopsy, for a mole that looked suspicious. The doctor said I'd hear back in a week, but I haven't heard anything."
 
-      IF BOT transfers you: Accept gratefully: "Thank you, I appreciate it."
+      IF BOT asks when exactly: "It was done on the... let me think... the 8th. Dr. Patel did it."
 
-  # =============================================================================
-  # PRESCRIPTION ROUTING - Currently falls back to SIP transfer
-  # =============================================================================
+      Express anxiety naturally: "I've been pretty worried about it, to be honest. Is there any way to check if the results are back?"
 
-  - id: "route_prescription_refill"
+      WHEN ROUTED TO LAB RESULTS WORKFLOW: Pay attention to whether they know:
+      - That it's a biopsy (not routine blood work)
+      - That you're anxious
+      - That it's overdue (10 days vs 7 day estimate)
+
+      IF lab results workflow doesn't acknowledge the urgency: "I mentioned I've been waiting longer than expected. Can you please check if it's back?"
+
+      IF they ask you to repeat everything: Sound frustrated: "I already explained all this. It's a biopsy from the 8th."
+
+      Continue cooperating with whatever process they need.
+
+      IF they say results aren't ready: Ask: "Is there someone I can talk to about why it's taking so long?"
+
+      Say goodbye appropriately based on the resolution.
+
+  - id: "3"
     target_node: greeting
-    expected_problem: "Bot should route to prescription_status workflow (or transfer)"
+    expected_problem: "Complex prescription context may be lost during handoff"
     caller:
       first_name: "Linda"
       last_name: "Anderson"
@@ -199,154 +95,37 @@ scenarios:
       dob: "December 10, 1972"
       email: "landerson@email.com"
     persona: |
-      You need a prescription refill.
+      You take multiple medications. You need a refill for your blood pressure medication (lisinopril),
+      but there's a complication - your pharmacy said there's a problem with the prescription.
 
-      TURN 1: Ask directly: "Hi, I need to refill my prescription."
+      TURN 1: "Hi, I'm calling about a prescription issue."
 
-      IF BOT asks which medication: Say: "My blood pressure medication."
+      IF BOT asks what issue: "So I went to pick up my lisinopril refill at CVS, and they said there's some kind of hold on it? They told me to call you."
 
-      IF BOT transfers you: Accept: "Okay, thanks."
+      IF BOT asks which medication: "It's lisinopril, 10mg. I take it for blood pressure. I've been on it for two years."
 
-      IF BOT tries to help directly: Cooperate.
+      IF BOT asks about the CVS issue: "They said something about needing prior authorization? I don't really understand - it's the same medication I've always taken."
 
-  - id: "route_prescription_status"
+      IF BOT asks which CVS: "The one on Oak Street, near the grocery store."
+
+      WHEN ROUTED TO PRESCRIPTION WORKFLOW: Check if they know:
+      - That it's lisinopril 10mg
+      - That there's a prior auth issue
+      - That CVS Oak Street flagged it
+
+      IF prescription workflow asks you to repeat medication info: "I already told the person before - it's lisinopril 10mg, and CVS said there's a prior auth problem."
+
+      IF they need to verify your identity: Cooperate, but add: "You should have all my info from what I just told the first person."
+
+      Ask: "How long will this take to resolve? I only have a few pills left."
+
+      IF they can't resolve immediately: "Can someone call me back when it's sorted out? This is really important - I can't miss doses."
+
+      Say goodbye based on resolution.
+
+  - id: "4"
     target_node: greeting
-    expected_problem: "Bot may not recognize medication status inquiry"
-    caller:
-      first_name: "James"
-      last_name: "Taylor"
-      phone: "5554564567"
-      dob: "August 15, 1980"
-      email: "jtaylor@email.com"
-    persona: |
-      You called in a prescription and want to check if it's ready.
-
-      TURN 1: Ask: "Hi, I called in a prescription yesterday. Is it ready?"
-
-      IF BOT asks which pharmacy: Say: "CVS on Main Street."
-
-      IF BOT transfers you: Accept: "Sure, thank you."
-
-  # =============================================================================
-  # BILLING ROUTING - SIP transfer to billing department
-  # =============================================================================
-
-  - id: "route_billing_direct"
-    target_node: greeting
-    expected_problem: "Bot should transfer billing questions to staff"
-    caller:
-      first_name: "Nancy"
-      last_name: "Wilson"
-      phone: "5557897890"
-      dob: "May 20, 1968"
-      email: "nwilson@email.com"
-    persona: |
-      You have a billing question.
-
-      TURN 1: Ask directly: "Hi, I have a question about my bill."
-
-      IF BOT offers to transfer: Accept: "Yes, please transfer me."
-
-      IF BOT asks what the question is: Say: "I don't understand a charge on my statement."
-
-      Stay focused on billing, don't get sidetracked.
-
-  - id: "route_billing_insurance"
-    target_node: greeting
-    expected_problem: "Bot may confuse insurance question with general info"
-    caller:
-      first_name: "Christopher"
-      last_name: "Moore"
-      phone: "5550001111"
-      dob: "October 8, 1975"
-      email: "cmoore@email.com"
-    persona: |
-      You have a specific insurance claim question (not general "do you accept").
-
-      TURN 1: Ask: "Hi, I need to talk to someone about an insurance claim."
-
-      IF BOT says they accept most insurance: Clarify:
-      "No, I mean I have a specific claim that was denied. I need to dispute it."
-
-      IF BOT offers to transfer: Accept: "Yes please."
-
-  # =============================================================================
-  # FRONT DESK / HUMAN TRANSFER
-  # =============================================================================
-
-  - id: "request_human_immediately"
-    target_node: greeting
-    expected_problem: "Bot may not immediately transfer when human is requested"
-    caller:
-      first_name: "Karen"
-      last_name: "White"
-      phone: "5552223333"
-      dob: "March 3, 1960"
-      email: "kwhite@email.com"
-    persona: |
-      You want to speak to a human, not a bot.
-
-      TURN 1: Request human immediately: "Can I speak to a real person please?"
-
-      IF BOT tries to help first: Insist politely:
-      "I appreciate that, but I'd really prefer to speak with someone."
-
-      IF BOT offers transfer: Accept: "Yes, thank you."
-
-      IF BOT keeps trying to help: Stay firm:
-      "Please just transfer me to a person."
-
-  - id: "frustrated_caller"
-    target_node: greeting
-    expected_problem: "Bot may not de-escalate and transfer frustrated caller"
-    caller:
-      first_name: "Steven"
-      last_name: "Clark"
-      phone: "5554445555"
-      dob: "July 14, 1955"
-      email: "sclark@email.com"
-    persona: |
-      You're frustrated and want to speak to someone.
-
-      TURN 1: Sound annoyed: "Look, I've been trying to reach you all day. Can someone help me?"
-
-      IF BOT asks what you need: Sound more frustrated:
-      "I don't want to explain it to a machine. Can I speak to an actual person?"
-
-      IF BOT offers transfer: Accept: "Finally. Yes, please."
-
-      IF BOT keeps trying to help: Escalate:
-      "This is ridiculous. I want to speak to a manager."
-
-  # =============================================================================
-  # UNCLEAR / COMPLEX REQUESTS
-  # =============================================================================
-
-  - id: "unclear_request"
-    target_node: greeting
-    expected_problem: "Bot may guess wrong when request is unclear"
-    caller:
-      first_name: "Michelle"
-      last_name: "Lee"
-      phone: "5556667777"
-      dob: "April 22, 1988"
-      email: "mlee@email.com"
-    persona: |
-      You have a vague, unclear request.
-
-      TURN 1: Be vague: "Hi, I need some help with something."
-
-      IF BOT asks what you need: Still be vague: "It's about my account."
-
-      IF BOT asks to clarify: Say: "I'm not sure who to talk to about this."
-
-      IF BOT offers transfer: Accept: "Yes, that would be better."
-
-      IF BOT tries to narrow down: Say: "I'd rather just talk to someone."
-
-  - id: "multi_intent_call"
-    target_node: greeting
-    expected_problem: "Bot may only handle one of multiple requests"
+    expected_problem: "Bot may not handle multiple unrelated intents with proper sequencing"
     caller:
       first_name: "Daniel"
       last_name: "Harris"
@@ -354,92 +133,102 @@ scenarios:
       dob: "November 11, 1983"
       email: "dharris@email.com"
     persona: |
-      You have multiple unrelated needs.
+      You have three separate issues and limited time. You want to handle all of them efficiently.
+      1. Schedule a physical
+      2. Check on lab results from last week
+      3. Question about a bill you received
 
-      TURN 1: State multiple needs:
-      "Hi, I need to schedule an appointment AND I have a billing question."
+      TURN 1: State all needs upfront: "Hi, I have a few things I need help with. I need to schedule my annual physical, I'm waiting on some blood work results from last Tuesday, and I got a bill I don't understand."
 
-      IF BOT only addresses one: Push for the other:
-      "Okay, but what about the other thing I mentioned?"
+      IF BOT only addresses one: Push for acknowledgment of others: "Okay, but I mentioned three things - can we make sure we handle all of them?"
 
-      IF BOT offers to handle one first: Agree:
-      "Okay, let's do the appointment first I guess."
+      IF BOT asks to handle one at a time: Agree: "Sure, that's fine. Let's do the scheduling first."
 
-      Then cooperate with scheduling, but remember to ask about billing before hanging up.
+      DURING SCHEDULING: Be cooperative but efficient. When done, say: "Okay, that's booked. What about my lab results?"
 
-  - id: "wrong_number_redirect"
+      IF BOT seems to have forgotten: Remind them: "Remember I mentioned blood work from last Tuesday? I need to check on those results."
+
+      DURING LAB RESULTS: Be cooperative. When done, say: "Great. Now about that bill - I got a statement for $150 but I thought my copay was only $30."
+
+      IF BOT forgets the billing issue: "We're not done - I mentioned a billing question at the start."
+
+      Make sure all three issues get addressed before ending the call.
+
+      Say goodbye only after all three are handled: "Thanks for helping with everything. Have a good day."
+
+  - id: "5"
     target_node: greeting
-    expected_problem: "Bot may try to help when caller has wrong number"
+    expected_problem: "Bot may not recognize when caller needs scheduling vs something else"
     caller:
-      first_name: "Amanda"
-      last_name: "King"
-      phone: "5550009999"
-      dob: "August 30, 1992"
-      email: "aking@email.com"
+      first_name: "David"
+      last_name: "Brown"
+      phone: "5555556666"
+      dob: "January 30, 1970"
+      email: "dbrown@email.com"
     persona: |
-      You called the wrong number (meant to call a different clinic).
+      You want to schedule but communicate very indirectly. You're socially anxious and don't like being direct.
 
-      TURN 1: Ask: "Hi, is this Sunshine Medical Center?"
+      TURN 1: Be vague: "Hi, um, I was wondering if maybe, you know, I could come in sometime?"
 
-      IF BOT says no or identifies as different clinic: Realize mistake:
-      "Oh, I'm sorry, I must have the wrong number."
+      IF BOT asks what you need: Still vague: "Oh, just... like a checkup? I guess? It's been a while."
 
-      IF BOT offers to help anyway: Politely decline:
-      "No thanks, I need to call the other place. Sorry about that!"
+      IF BOT asks how long: "Maybe like... two years? Could be three. I'm not sure exactly."
 
-      Say goodbye and end the call.
+      IF BOT asks about symptoms: "No, nothing specific really. Well, maybe... I've been kind of tired lately? But it's probably nothing."
 
-  # =============================================================================
-  # EDGE CASES - Unusual but realistic scenarios
-  # =============================================================================
+      IF BOT asks about scheduling specifically: Slowly confirm: "Yeah, I guess I should probably make an appointment. If that's okay."
 
-  - id: "callback_request"
+      IF BOT asks if you're new or returning: Hesitate: "Um, I came once before? A long time ago. So... returning, I think?"
+
+      IF BOT seems confused or tries to transfer: Get slightly more direct: "Sorry, I'm not good at this. I just want to schedule a regular checkup."
+
+      WHEN ROUTED TO SCHEDULING: Check if they understood:
+      - That you want a general checkup
+      - That you're a returning patient
+      - That you mentioned being tired (relevant medical context)
+
+      IF scheduling asks everything fresh: Sigh but cooperate: "Okay... it's for a checkup. I'm an existing patient."
+
+      Complete the scheduling process cooperatively once engaged.
+
+      Say goodbye nervously: "Okay, um, thanks. Sorry if I was confusing."
+
+  - id: "6"
     target_node: greeting
-    expected_problem: "Bot may not handle callback requests appropriately"
+    expected_problem: "Bot may not de-escalate and transfer appropriately for persistent human requests"
     caller:
-      first_name: "Brian"
-      last_name: "Young"
-      phone: "5551112223"
-      dob: "February 5, 1977"
-      email: "byoung@email.com"
+      first_name: "Karen"
+      last_name: "White"
+      phone: "5552223333"
+      dob: "March 3, 1960"
+      email: "kwhite@email.com"
     persona: |
-      You can't talk now and want someone to call you back.
+      You don't trust AI systems with medical information. You want to speak to a human, period.
+      You won't be rude, but you will be firm and persistent.
 
-      TURN 1: Request callback: "Hi, I can't really talk right now. Can someone call me back?"
+      TURN 1: Be polite but clear: "Hi, I need to speak with someone at the front desk please."
 
-      IF BOT asks what it's about: Say: "It's about my upcoming appointment. But I need to go."
+      IF BOT asks what you need help with: Don't engage with the topic: "I'd prefer to discuss it with a person. Can you transfer me?"
 
-      IF BOT offers to help quickly: Decline:
-      "I really can't talk. Can you just have someone call me at this number?"
+      IF BOT says they can help: Stay firm: "I appreciate that, but I really would rather talk to a human. It's a personal preference."
 
-      IF BOT offers transfer or says they'll have someone call: Accept:
-      "Great, thanks. My number is 555-111-2223. Bye!"
+      IF BOT asks again what it's about: Don't reveal: "It's a medical matter I'd like to discuss with staff. Please transfer me."
 
-  - id: "language_barrier"
+      IF BOT offers to help with common things (scheduling, etc.): "Thank you, but no. I specifically need a person."
+
+      IF BOT says they'll transfer: Accept: "Thank you, I appreciate it."
+
+      IF BOT continues trying to help after you've asked 3+ times: Get firmer but stay polite: "I've asked several times now to speak with a person. I don't want to be rude, but please just transfer me."
+
+      IF BOT STILL doesn't transfer after 5 requests: Finally express frustration: "This is exactly why I wanted a human. Please, just transfer the call."
+
+      Count mentally how many times you have to ask. This is a test of persistence.
+
+      When finally transferred: "Thank you."
+
+  - id: "7"
     target_node: greeting
-    expected_problem: "Bot may not handle requests for non-English support"
-    caller:
-      first_name: "Maria"
-      last_name: "Rodriguez"
-      phone: "5553334445"
-      dob: "September 18, 1970"
-      email: "mrodriguez@email.com"
-    persona: |
-      You prefer to speak Spanish but start in English.
-
-      TURN 1: Ask: "Hi, do you have someone who speaks Spanish?"
-
-      IF BOT says no or tries to help in English: Express difficulty:
-      "My English is not so good. Is there someone else?"
-
-      IF BOT offers transfer: Accept gratefully: "Yes please, thank you."
-
-      IF BOT keeps trying in English: Try simple English:
-      "I need... appointment... but Spanish please?"
-
-  - id: "check_in_not_schedule"
-    target_node: greeting
-    expected_problem: "Bot should transfer check-in requests, not try to schedule"
+    expected_problem: "Bot may confuse check-in (I'm here now) with scheduling (I want to book future)"
     caller:
       first_name: "Thomas"
       last_name: "Scott"
@@ -447,14 +236,186 @@ scenarios:
       dob: "December 1, 1985"
       email: "tscott@email.com"
     persona: |
-      You're at the office and need to check in for your existing appointment.
+      You're sitting in the parking lot of the clinic. You have a 2:30 appointment and it's 2:20.
+      You're calling to check in before coming inside because you saw a sign about phone check-in.
 
-      TURN 1: Say: "Hi, I'm here for my 3 o'clock appointment."
+      TURN 1: "Hi, I'm here for my 2:30 appointment. I saw there's phone check-in?"
 
-      IF BOT tries to schedule: Clarify:
-      "No, I already have an appointment. I'm in the parking lot. I need to check in."
+      IF BOT offers to schedule: Clarify quickly: "No, I don't need to schedule. I already have an appointment - today, at 2:30. I'm in the parking lot right now."
 
-      IF BOT offers transfer: Accept: "Yes, please."
+      IF BOT asks what the appointment is for: "It's with Dr. Patel, a follow-up. But I just need to check in - I'm already here."
 
-      IF BOT keeps trying to schedule: Stay firm:
-      "I don't need to schedule. I have an appointment TODAY. I just need to check in."
+      IF BOT tries to confirm appointment details: Get slightly impatient: "Look, I can see the building. I just want to check in so I don't have to wait in the lobby. Can you help with that or not?"
+
+      IF BOT offers to transfer: Accept: "Yes, please. I just need someone to mark me as arrived."
+
+      IF BOT keeps trying to schedule or verify: Be direct: "I have an existing appointment TODAY. In 10 minutes. I am OUTSIDE your building. I need to CHECK IN, not schedule anything new."
+
+      IF BOT seems lost: "Maybe I should just come inside and check in at the desk. Is there a long wait in the lobby?"
+
+      Continue until resolved or you give up and say you'll come inside.
+
+      If transferred appropriately: "Thank you."
+      If giving up: "Forget it, I'll just come in. Thank you anyway."
+
+  - id: "8"
+    target_node: greeting
+    expected_problem: "Bot may misroute insurance claim dispute as general insurance question"
+    caller:
+      first_name: "Christopher"
+      last_name: "Moore"
+      phone: "5550001111"
+      dob: "October 8, 1975"
+      email: "cmoore@email.com"
+    persona: |
+      You have a specific, complex insurance problem. A claim was denied, you've already appealed once,
+      and you need help with the second appeal. This is NOT a general "do you accept my insurance" question.
+
+      TURN 1: "Hi, I need to talk to someone about an insurance claim that was denied."
+
+      IF BOT says they accept most insurance: Clarify firmly: "No, you don't understand. I'm not asking if you take my insurance. I have a specific claim that was denied. Claim number 2024-8847. I need help appealing it."
+
+      IF BOT asks about the denial: Explain: "It was for a procedure I had in October. They denied it saying it wasn't medically necessary, but my doctor submitted notes saying it was."
+
+      IF BOT asks for more details: "I already appealed once and they denied again. I need help filing a second-level appeal. This involves medical records and your billing department."
+
+      IF BOT tries to transfer to billing: Accept but add context: "Okay, but please make sure they know this is a denied claim appeal, not a payment question. Claim number 2024-8847."
+
+      IF BOT offers general help: Stay focused: "This is too complicated for general help. I need someone who handles insurance disputes."
+
+      WHEN TRANSFERRED: Make sure context carries: "They should know it's about claim 2024-8847, denied twice, needs second appeal."
+
+      IF transferred and context is lost: "Did they tell you what this is about? I'm calling about a denied insurance claim I'm trying to appeal."
+
+      Continue until appropriately connected to billing/someone who can help with appeals.
+
+      Say goodbye based on resolution.
+
+  - id: "9"
+    target_node: greeting
+    expected_problem: "Bot may not handle callback requests and should capture correct information"
+    caller:
+      first_name: "Brian"
+      last_name: "Young"
+      phone: "5551112223"
+      dob: "February 5, 1977"
+      email: "byoung@email.com"
+    persona: |
+      You're at work and can't really talk. You need someone to call you back about rescheduling an appointment.
+      Your callback number is different from the number you're calling from.
+
+      TURN 1: Speak quietly: "Hi, I can't really talk right now - I'm at work. Can someone call me back?"
+
+      IF BOT asks what it's about: Whisper: "I need to reschedule my appointment for Friday. But I can't talk now."
+
+      IF BOT offers to quickly reschedule: Decline: "No, I really can't talk. My boss is right here. I just need someone to call me back later."
+
+      IF BOT asks for callback number: Provide different number: "Call me at 555-999-8765. That's my cell. I can talk after 5pm."
+
+      IF BOT confirms details: Verify: "Yes - callback at 555-999-8765 after 5pm about rescheduling my Friday appointment."
+
+      IF BOT tries to continue the conversation: Be firm but quiet: "I really need to go. Please just have someone call. 555-999-8765, after 5. Thanks, bye."
+
+      IF BOT asks for more information: Cut it short: "I can't explain more right now. Just have someone call please. Gotta go."
+
+      End the call quickly - you genuinely can't talk.
+
+      If successfully captured callback info: "Thank you. Bye."
+      If bot keeps trying: Just hang up after giving the callback number once more.
+
+  - id: "10"
+    target_node: greeting
+    expected_problem: "Bot may get confused by caller who changes their mind mid-conversation"
+    caller:
+      first_name: "Michelle"
+      last_name: "Lee"
+      phone: "5556667777"
+      dob: "April 22, 1988"
+      email: "mlee@email.com"
+    persona: |
+      You're indecisive. You start wanting one thing but change your mind as you talk.
+      This tests if the bot can handle shifting intents gracefully.
+
+      TURN 1: "Hi, I think I need to schedule an appointment."
+
+      IF BOT starts scheduling: Change direction: "Actually, wait. Before I do that - do you know if my lab results are back? I had blood work last week."
+
+      IF BOT switches to lab results: Change again: "Hmm, actually never mind the labs. Let me just schedule the appointment. But wait - what are your hours? I need to figure out when I can come in."
+
+      IF BOT provides hours: "Okay, so you're open until 5. That might work. Actually, can I check on those lab results first after all? Then I'll know if I even need to come in."
+
+      IF BOT helps with labs: "Okay. Actually, I changed my mind, I do want to schedule either way. Sorry, I know I'm all over the place today."
+
+      IF BOT seems frustrated or confused: "Sorry, I'm just stressed. Let me focus. I need to: one, check my lab results, and two, schedule a follow-up regardless of the results. Can we do both?"
+
+      IF BOT successfully handles the chaos: Express gratitude: "Thank you for bearing with me. I know I was confusing."
+
+      CONTINUE until both lab results check and scheduling are addressed.
+
+      Say goodbye: "Thanks for your patience. Sorry again for being all over the place."
+
+  - id: "11"
+    target_node: greeting
+    expected_problem: "Bot may not properly handle medical urgency signals during routing"
+    caller:
+      first_name: "Patricia"
+      last_name: "Garcia"
+      phone: "5557778888"
+      dob: "June 5, 1965"
+      email: "pgarcia@email.com"
+    persona: |
+      You have test results back and your doctor left a message saying to call "as soon as possible"
+      about them. You don't know what the results show but you're worried the phrasing means bad news.
+
+      TURN 1: Sound concerned: "Hi, my doctor left a message saying to call about my test results as soon as possible. I don't know what's going on."
+
+      IF BOT asks which tests: "Blood work, I think? I had a bunch of tests done. She just said to call right away about the results."
+
+      IF BOT asks when the message was: "She called this morning. Said it was important and to call as soon as I could. Is something wrong?"
+
+      IF BOT tries to check results routinely: Express urgency: "Can you please check soon? The way she said 'as soon as possible' has me really worried. Doctors don't usually say that, do they?"
+
+      IF BOT routes to lab results: Make sure urgency transfers: "Please let them know my doctor said it was urgent. I don't want to wait in a queue."
+
+      WHEN TRANSFERRED TO LAB RESULTS: Check if they know:
+      - Doctor flagged this as urgent
+      - Caller is anxious about "as soon as possible" phrasing
+
+      IF lab results workflow treats this as routine: "Did they tell you this was flagged as urgent? My doctor specifically said to call right away."
+
+      IF they need time to look: "Okay, but please understand I'm worried. Can you check quickly?"
+
+      Continue until resolved or escalated appropriately.
+
+      Say goodbye based on what happens - express relief if results are fine, concern if they need to have doctor call back.
+
+  - id: "12"
+    target_node: greeting
+    expected_problem: "Bot should handle language preference requests and transfer appropriately"
+    caller:
+      first_name: "Maria"
+      last_name: "Rodriguez"
+      phone: "5553334445"
+      dob: "September 18, 1970"
+      email: "mrodriguez@email.com"
+    persona: |
+      You can speak English but are much more comfortable in Spanish.
+      You're calling about a complex insurance issue and really need to explain it in Spanish.
+
+      TURN 1: "Hello, do you have someone who speaks Spanish?"
+
+      IF BOT responds in English offering help: Try in limited English: "I can speak little English, but I need talk about... how you say... insurance problem? Is complicated. Better in Spanish."
+
+      IF BOT says no Spanish available: Try to proceed: "Okay, I try English. My insurance, they say... they no pay? For my... medicine? I don't understand the paper they send."
+
+      IF BOT tries to help with prescription/billing: Struggle: "No, not... is not just medicine. Is the insurance. They send letter. Many words I don't know. I need someone explain in Spanish."
+
+      IF BOT offers to transfer: Accept gratefully: "Yes please. Someone Spanish. Thank you."
+
+      IF BOT keeps trying in English: Get a bit frustrated: "Please, is too hard. I make mistakes in English. I need Spanish speaker for this. My insurance problem is big - many dollars."
+
+      IF NO Spanish option and bot tries to help: Do your best but express difficulty: "Okay... I try explain... but if I say wrong, is because English hard for me."
+
+      Continue attempting to communicate but keep requesting Spanish if available.
+
+      When resolved one way or another: "Thank you for trying to help."

@@ -316,6 +316,69 @@ Capture any info they ALREADY volunteered in the function call, but don't ask fo
             ],
         )
 
+    def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
+        """Entry point when handed off from mainline flow. No greeting, uses gathered context."""
+        # Parse context to extract key info
+        context_lower = context.lower()
+        is_returning = any(word in context_lower for word in ["returning", "follow-up", "been coming", "three years", "existing"])
+
+        # Extract visit reason and doctor preference from context
+        visit_reason = context.split(",")[0] if context else ""  # First part is usually the reason
+
+        # Pre-populate state with extracted context
+        if visit_reason:
+            self.flow_manager.state["appointment_reason"] = visit_reason
+
+        # Pre-set state based on context (the mainline already acknowledged)
+        if is_returning:
+            self.flow_manager.state["appointment_type"] = "Returning Patient"
+
+        return NodeConfig(
+            name="handoff_entry",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": f"""CONTEXT: {context}
+
+CRITICAL: Do NOT generate any text. Only call the function. No acknowledgment, no greeting, no words at all.
+
+Call the appropriate function immediately based on context:
+- "returning" / "follow-up" / "been here" → set_returning_patient
+- "new" / "first time" → set_new_patient
+
+Include visit_reason and doctor_preference in the function arguments.""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="set_new_patient",
+                    description="Patient is new. Include volunteered info.",
+                    properties={
+                        "visit_reason": {"type": "string", "description": "Why they're coming in"},
+                    },
+                    required=[],
+                    handler=self._set_new_patient_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="set_returning_patient",
+                    description="Patient has been here before. Include all context.",
+                    properties={
+                        "visit_reason": {"type": "string", "description": "Why they're coming in"},
+                        "doctor_preference": {"type": "string", "description": "Preferred doctor if mentioned"},
+                    },
+                    required=[],
+                    handler=self._set_returning_patient_handler,
+                ),
+            ],
+            respond_immediately=True,
+        )
+
     def create_visit_reason_node(self) -> NodeConfig:
         appointment_type = self.flow_manager.state.get("appointment_type", "")
 

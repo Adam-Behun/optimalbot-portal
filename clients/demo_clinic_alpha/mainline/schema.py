@@ -9,9 +9,6 @@ WORKFLOW_SCHEMA = {
         "location": "123 Main Street, Suite 100",
         "parking": "Free parking available in the rear lot",
         "website": "www.democlinicalpha.com",
-        "new_patient_info": "Bring photo ID and insurance card, arrive 15 minutes early",
-        "accepted_insurance": "Most major insurance plans accepted",
-        "wait_times": "Usually under 15 minutes for scheduled appointments",
     },
     "patient_schema": {
         "fields": [

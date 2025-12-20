@@ -62,6 +62,54 @@ class ConversationPipeline:
         self.transfer_in_progress = False
         self.transcript_saved = False  # Track if transcript has been saved to prevent duplicates
 
+    async def _warmup_all_flows(self, organization_name: str):
+        """Warm up OpenAI prompt cache for all flows that might be used.
+
+        This runs in parallel to prime OpenAI's prompt cache before the first
+        user turn, reducing latency for initial responses and workflow handoffs.
+        """
+        warmup_tasks = []
+
+        # Determine which flows to warm up based on client
+        if self.client_name == "demo_clinic_alpha":
+            # Mainline routes to multiple workflows - warm up all of them
+            try:
+                from clients.demo_clinic_alpha.mainline.flow_definition import warmup_openai as warmup_mainline
+                warmup_tasks.append(warmup_mainline(organization_name))
+            except ImportError:
+                logger.debug("Mainline warmup not available")
+
+            try:
+                from clients.demo_clinic_alpha.patient_scheduling.flow_definition import warmup_openai as warmup_scheduling
+                warmup_tasks.append(warmup_scheduling(organization_name))
+            except ImportError:
+                logger.debug("Scheduling warmup not available")
+
+            try:
+                from clients.demo_clinic_alpha.lab_results.flow_definition import warmup_openai as warmup_lab
+                warmup_tasks.append(warmup_lab(organization_name))
+            except ImportError:
+                logger.debug("Lab results warmup not available")
+
+            try:
+                from clients.demo_clinic_alpha.prescription_status.flow_definition import warmup_openai as warmup_rx
+                warmup_tasks.append(warmup_rx(organization_name))
+            except ImportError:
+                logger.debug("Prescription status warmup not available")
+
+        elif self.client_name == "demo_clinic_beta":
+            try:
+                from clients.demo_clinic_beta.patient_scheduling.flow_definition import warmup_openai
+                warmup_tasks.append(warmup_openai(organization_name))
+            except ImportError:
+                logger.debug("Beta scheduling warmup not available")
+
+        if warmup_tasks:
+            await asyncio.gather(*warmup_tasks, return_exceptions=True)
+            logger.info(f"OpenAI warmed up for {len(warmup_tasks)} flows")
+        else:
+            logger.warning("No warmup functions found for client")
+
     async def run(self, room_url: str, room_token: str, room_name: str):
         logger.info(f"✅ Starting {self.call_type} call session - Client: {self.client_name}, Phone: {self.phone_number}")
 
@@ -92,9 +140,8 @@ class ConversationPipeline:
 
         # Start OpenAI warmup early - while pipeline is being assembled
         # This primes OpenAI's prompt cache BEFORE the first user turn
-        organization_name = self.patient_data.get("organization_name", "Demo Clinic Beta")
-        from clients.demo_clinic_beta.patient_scheduling.flow_definition import warmup_openai
-        warmup_task = asyncio.create_task(warmup_openai(organization_name))
+        organization_name = self.patient_data.get("organization_name", "Demo Clinic")
+        warmup_task = asyncio.create_task(self._warmup_all_flows(organization_name))
         self.triage_detector = components.get('triage_detector')
         self.ivr_processor = components.get('ivr_processor')
         self.context = components['context']
