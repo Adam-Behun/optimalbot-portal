@@ -762,19 +762,41 @@ ONE response max, then call the function.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": "The transfer failed. Apologize and continue helping them.",
+                    "content": """The transfer didn't go through. Apologize and offer alternatives.
+
+If caller wants to try the transfer again:
+→ Call retry_transfer
+
+If caller says goodbye or wants to end call:
+→ Call end_call
+
+If caller wants to continue scheduling:
+→ Answer their question, then ask if there's anything else""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
-                    name="continue_conversation",
-                    description="Continue with the conversation after failed transfer.",
+                    name="retry_transfer",
+                    description="""Retry the failed transfer.
+
+WHEN TO USE: Caller wants to try the transfer again.
+RESULT: Attempts SIP transfer again.""",
                     properties={},
                     required=[],
-                    handler=self._return_to_conversation_handler,
-                )
+                    handler=self._retry_transfer_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="end_call",
+                    description="""End the call gracefully.
+
+WHEN TO USE: Caller says goodbye or confirms no more questions.
+RESULT: Ends the call.""",
+                    properties={},
+                    required=[],
+                    handler=self._end_call_handler,
+                ),
             ],
-            respond_immediately=False,
+            respond_immediately=True,
             pre_actions=[
                 {"type": "tts_say", "text": "I apologize, the transfer didn't go through."}
             ],
@@ -901,6 +923,37 @@ Once they provide DOB, call verify_dob.""",
         flow_manager.state["appointment_type"] = "Returning Patient"
         captured = self._store_volunteered_info(args, flow_manager)
         logger.info(f"Flow: Returning Patient - captured: {captured if captured else 'none'}")
+
+        # Check if caller is already verified (e.g., handed off from lab_results)
+        if flow_manager.state.get("identity_verified"):
+            # Copy verified patient info from state if available
+            patient_name = flow_manager.state.get("patient_name", "")
+            if patient_name:
+                # Parse "Last, First" format if present
+                if "," in patient_name:
+                    parts = [p.strip() for p in patient_name.split(",")]
+                    if len(parts) == 2:
+                        flow_manager.state["last_name"] = parts[0]
+                        flow_manager.state["first_name"] = parts[1]
+                else:
+                    # Assume "First Last" format
+                    parts = patient_name.split()
+                    if len(parts) >= 2:
+                        flow_manager.state["first_name"] = parts[0]
+                        flow_manager.state["last_name"] = " ".join(parts[1:])
+
+            # Copy other verified fields
+            for field in ["phone_number", "date_of_birth", "email"]:
+                if flow_manager.state.get(field):
+                    pass  # Already in state from lab_results verification
+
+            first_name = flow_manager.state.get("first_name", "")
+            logger.info(f"Flow: Caller already verified as {first_name}, skipping lookup")
+
+            # Skip visit_reason if already provided, otherwise ask
+            if flow_manager.state.get("appointment_reason"):
+                return f"Great, {first_name}! Let me help you schedule that.", self.create_scheduling_node()
+            return None, self.create_visit_reason_node()
 
         # Go to lookup flow to verify patient identity
         return None, self.create_returning_patient_lookup_node()
@@ -1201,11 +1254,15 @@ Once they provide DOB, call verify_dob.""",
         """Transfer to staff. If urgent=true or patient_confirmed=true, transfer immediately."""
         urgent = args.get("urgent", False)
         patient_confirmed = args.get("patient_confirmed", False)
+        reason = args.get("reason", "general inquiry")
+
+        # Store reason for potential retry
+        flow_manager.state["transfer_reason"] = reason
+
+        logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
 
         if urgent or patient_confirmed:
             # Immediate transfer - no confirmation needed
-            reason = "URGENT" if urgent else "CONFIRMED"
-            logger.info(f"Flow: {reason} - initiating immediate staff transfer")
             staff_number = self.cold_transfer_config.get("staff_number")
 
             if not staff_number:
@@ -1218,6 +1275,16 @@ Once they provide DOB, call verify_dob.""",
                 if self.transport:
                     await self.transport.sip_call_transfer({"toEndPoint": staff_number})
                     logger.info(f"SIP call transfer initiated: {staff_number}")
+
+                # Update call status
+                try:
+                    patient_id = self.patient_data.get("patient_id")
+                    if patient_id:
+                        db = get_async_patient_db()
+                        await db.update_call_status(patient_id, "Transferred", self.organization_id)
+                except Exception as e:
+                    logger.error(f"Error updating call status: {e}")
+
                 return None, self.create_transfer_initiated_node()
             except Exception as e:
                 logger.exception("Cold transfer failed")
@@ -1249,10 +1316,58 @@ Once they provide DOB, call verify_dob.""",
                 await self.transport.sip_call_transfer({"toEndPoint": staff_number})
                 logger.info(f"SIP call transfer initiated: {staff_number}")
 
+            # Update call status
+            try:
+                patient_id = self.patient_data.get("patient_id")
+                if patient_id:
+                    db = get_async_patient_db()
+                    await db.update_call_status(patient_id, "Transferred", self.organization_id)
+            except Exception as e:
+                logger.error(f"Error updating call status: {e}")
+
             return None, self.create_transfer_initiated_node()
 
         except Exception as e:
             logger.exception("Cold transfer failed")
+
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
+
+            return None, self.create_transfer_failed_node()
+
+    async def _retry_transfer_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        """Retry a failed SIP transfer."""
+        logger.info("Flow: Retrying SIP transfer")
+
+        staff_number = self.cold_transfer_config.get("staff_number")
+
+        if not staff_number:
+            logger.warning("Retry transfer requested but no staff_number configured")
+            return None, self.create_transfer_failed_node()
+
+        try:
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
+
+            if self.transport:
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                logger.info(f"SIP call transfer retry initiated: {staff_number}")
+
+            # Update call status
+            try:
+                patient_id = self.patient_data.get("patient_id")
+                if patient_id:
+                    db = get_async_patient_db()
+                    await db.update_call_status(patient_id, "Transferred", self.organization_id)
+            except Exception as e:
+                logger.error(f"Error updating call status: {e}")
+
+            return None, self.create_transfer_initiated_node()
+
+        except Exception as e:
+            logger.exception("Cold transfer retry failed")
 
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False
@@ -1270,18 +1385,34 @@ Once they provide DOB, call verify_dob.""",
         """Return the request_staff function schema for use in multiple nodes."""
         return FlowsFunctionSchema(
             name="request_staff",
-            description="Transfer to staff. Use urgent=true for medical emergencies - transfers immediately. Use patient_confirmed=true if patient already said yes/please/transfer me.",
+            description="""Transfer call to human staff member.
+
+WHEN TO USE:
+- Caller needs help with something other than scheduling
+- Caller has medical emergency or urgent symptoms
+- Caller explicitly asks for a human
+- Caller is frustrated
+
+EXAMPLES:
+- Medical emergency (pain, swelling) → call with urgent=true
+- "I want to talk to a person" → call with patient_confirmed=true
+- Billing question → call with reason="billing"
+- Cancel/reschedule existing → call with reason="reschedule" """,
             properties={
                 "urgent": {
                     "type": "boolean",
-                    "description": "Set true for medical emergencies (pain, swelling, can't eat). Set false for general requests.",
+                    "description": "Set true for urgent requests that need immediate attention (medical emergencies, pain, swelling). Transfers immediately.",
                 },
                 "patient_confirmed": {
                     "type": "boolean",
-                    "description": "Set true if patient already confirmed they want transfer (said yes, please, transfer me, etc.). Set false if we still need to ask.",
+                    "description": "Set true if caller explicitly asked for human/staff transfer. Transfers immediately.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for transfer (e.g., 'medical_emergency', 'billing', 'reschedule', 'frustrated')",
                 },
             },
-            required=["urgent"],
+            required=[],
             handler=self._request_staff_handler,
         )
 

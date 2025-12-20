@@ -319,7 +319,7 @@ EXAMPLES:
                     handler=self._route_to_workflow_handler,
                 ),
                 FlowsFunctionSchema(
-                    name="route_to_staff",
+                    name="request_staff",
                     description="""Transfer caller to human staff via phone.
 
 WHEN TO USE: Caller needs billing help, asks for a human, or has unclear/complex needs.
@@ -327,9 +327,18 @@ RESULT: Initiates SIP transfer to staff phone number.
 
 EXAMPLES:
 - "I have a question about my bill" → department="billing", reason="billing question"
-- "Can I speak to someone?" → department="front_desk", reason="requested human"
+- "Can I speak to someone?" → department="front_desk", patient_confirmed=true
+- Urgent/frustrated caller → department="front_desk", urgent=true
 - Unclear request → department="front_desk", reason="unclear request" """,
                     properties={
+                        "urgent": {
+                            "type": "boolean",
+                            "description": "Set true for urgent requests that need immediate attention (frustrated caller, medical concerns). Transfers immediately.",
+                        },
+                        "patient_confirmed": {
+                            "type": "boolean",
+                            "description": "Set true if caller explicitly asked for human/staff transfer. Transfers immediately.",
+                        },
                         "department": {
                             "type": "string",
                             "enum": ["billing", "front_desk"],
@@ -340,8 +349,8 @@ EXAMPLES:
                             "description": "Brief reason for transfer",
                         },
                     },
-                    required=["department", "reason"],
-                    handler=self._route_to_staff_handler,
+                    required=["department"],
+                    handler=self._request_staff_handler,
                 ),
                 FlowsFunctionSchema(
                     name="save_call_info",
@@ -395,7 +404,7 @@ EXAMPLES:
             task_messages=[],
             functions=[],
             pre_actions=[
-                {"type": "tts_say", "text": "Transferring you now, one moment please."}
+                {"type": "tts_say", "text": "Transferring you now, please hold."}
             ],
             post_actions=[{"type": "end_conversation"}],
         )
@@ -579,6 +588,7 @@ EXAMPLES:
             transport=self.transport,
             pipeline=self.pipeline,
             organization_id=self.organization_id,
+            cold_transfer_config=self.cold_transfer_config,
         )
 
         # Get context from mainline conversation
@@ -612,18 +622,21 @@ EXAMPLES:
         # Use handoff entry point with context (no greeting, context-aware)
         return None, prescription_flow.create_handoff_entry_node(context=context)
 
-    async def _route_to_staff_handler(
+    async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
         """Route to human staff via SIP transfer."""
+        urgent = args.get("urgent", False)
+        patient_confirmed = args.get("patient_confirmed", False)
         department = args.get("department", "front_desk")
         reason = args.get("reason", "")
 
         flow_manager.state["call_type"] = department.replace("_", " ").title()
         flow_manager.state["call_reason"] = reason
         flow_manager.state["routed_to"] = f"{department.replace('_', ' ').title()} (staff)"
+        flow_manager.state["transfer_reason"] = reason
 
-        logger.info(f"Flow: Routing to {department} staff - reason: {reason}")
+        logger.info(f"Flow: Routing to {department} staff - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
 
         return await self._initiate_sip_transfer(flow_manager, department)
 
@@ -654,6 +667,15 @@ EXAMPLES:
             if self.transport:
                 await self.transport.sip_call_transfer({"toEndPoint": transfer_number})
                 logger.info(f"SIP transfer initiated to {department}: {transfer_number}")
+
+            # Update call status
+            try:
+                patient_id = self.patient_data.get("patient_id")
+                if patient_id:
+                    db = get_async_patient_db()
+                    await db.update_call_status(patient_id, "Transferred", self.organization_id)
+            except Exception as e:
+                logger.error(f"Error updating call status: {e}")
 
             return None, self.create_transfer_initiated_node()
 

@@ -84,6 +84,7 @@ class LabResultsFlow:
         transport=None,
         pipeline=None,
         organization_id: str = None,
+        cold_transfer_config: Dict[str, Any] = None,
     ):
         self.flow_manager = flow_manager
         self.main_llm = main_llm
@@ -94,6 +95,7 @@ class LabResultsFlow:
         self.organization_id = organization_id
         self.patient_data = patient_data
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
+        self.cold_transfer_config = cold_transfer_config or {}
 
         # Initialize flow state directly in constructor
         self._init_flow_state()
@@ -119,33 +121,6 @@ class LabResultsFlow:
         # Call outcome tracking
         self.flow_manager.state["identity_verified"] = False
         self.flow_manager.state["results_communicated"] = False
-
-        # Pending database updates (batched at end of call)
-        self.flow_manager.state["_pending_updates"] = {}
-
-    def _queue_db_update(self, updates: Dict[str, Any]) -> None:
-        """Queue database updates to be batched at end of call."""
-        pending = self.flow_manager.state.get("_pending_updates", {})
-        pending.update(updates)
-        self.flow_manager.state["_pending_updates"] = pending
-
-    async def _flush_db_updates(self) -> None:
-        """Flush all pending database updates."""
-        pending = self.flow_manager.state.get("_pending_updates", {})
-        if not pending:
-            return
-
-        patient_id = self.flow_manager.state.get("patient_id")
-        if not patient_id:
-            return
-
-        try:
-            db = get_async_patient_db()
-            await db.update_patient(patient_id, pending, self.organization_id)
-            logger.info(f"Database updated with {len(pending)} fields for patient {patient_id}")
-            self.flow_manager.state["_pending_updates"] = {}
-        except Exception as e:
-            logger.error(f"Error flushing database updates: {e}")
 
     def _normalize_name(self, name: str) -> str:
         """Normalize name for comparison (lowercase, handle 'Last, First' format)."""
@@ -528,7 +503,160 @@ RESULT: Ends the call gracefully.""",
             respond_immediately=True,
         )
 
-    def create_end_node(self) -> NodeConfig:
+    def create_completion_node(self) -> NodeConfig:
+        """After delivering results, ask if there's anything else and handle follow-up requests."""
+        # Get practice info for simple questions
+        practice_info = self.patient_data.get("practice_info", {})
+        office_hours = practice_info.get("office_hours", "Monday through Friday, 8 AM to 5 PM")
+        location = practice_info.get("location", "")
+        parking = practice_info.get("parking", "")
+
+        # Build practice info text
+        practice_facts = []
+        if office_hours:
+            practice_facts.append(f"- Office hours: {office_hours}")
+        if location:
+            practice_facts.append(f"- Location: {location}")
+        if parking:
+            practice_facts.append(f"- Parking: {parking}")
+
+        practice_info_text = "\n".join(practice_facts) if practice_facts else "- Contact the front desk for practice information"
+
+        return NodeConfig(
+            name="completion",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": f"""# Goal
+The lab results inquiry is complete. Thank the caller and check if they need anything else.
+
+# Questions You CAN Answer Directly
+{practice_info_text}
+
+# Scenario Handling
+
+If patient says NO / GOODBYE:
+→ Say something warm like "Take care!"
+→ Call end_call
+
+If patient asks a SIMPLE QUESTION (hours, location, parking):
+→ Answer directly
+→ Ask "Is there anything else I can help with?"
+
+If patient needs SCHEDULING (book, cancel, reschedule appointment):
+→ Say "I can help with that."
+→ Call route_to_workflow with workflow="scheduling"
+
+If patient needs PRESCRIPTION help (refill, medication status):
+→ Say "Let me connect you with someone who can help with that."
+→ Call route_to_workflow with workflow="prescription_status"
+
+If patient needs BILLING or asks for a HUMAN:
+→ Say "Let me transfer you to our billing team." or "Let me connect you with someone."
+→ Call request_staff with appropriate department
+
+# Example Flow
+You: "Thanks for your patience with that. Is there anything else I can help you with today?"
+
+Caller: "Actually yes, I need to schedule a follow-up appointment."
+→ "I can help with that."
+→ Call route_to_workflow with workflow="scheduling", reason="follow-up after lab results"
+
+Caller: "What time do you close?"
+→ "We're open {office_hours}."
+→ "Anything else?"
+
+Caller: "No, that's all. Thank you!"
+→ "Take care!"
+→ Call end_call
+
+# Guardrails
+- Keep responses brief and warm
+- The caller's identity is already verified - no need to re-verify for scheduling or prescriptions
+- Include relevant context in the reason field when routing (e.g., "follow-up after lab results")
+- If caller is frustrated or asks for a human, route to front_desk immediately""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="route_to_workflow",
+                    description="""Route caller to an AI-powered workflow.
+
+WHEN TO USE: Caller asks about scheduling or prescriptions.
+RESULT: Hands off to specialized AI workflow (no phone transfer).
+
+IMPORTANT: The caller is already verified - context carries through.
+
+EXAMPLES:
+- workflow="scheduling", reason="follow-up after lab results"
+- workflow="prescription_status", reason="refill inquiry after lab call" """,
+                    properties={
+                        "workflow": {
+                            "type": "string",
+                            "enum": ["scheduling", "prescription_status"],
+                            "description": "Workflow: scheduling (appointments) or prescription_status (refills/medications)",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief context for the next workflow",
+                        },
+                    },
+                    required=["workflow", "reason"],
+                    handler=self._route_to_workflow_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="request_staff",
+                    description="""Transfer caller to human staff via phone.
+
+WHEN TO USE: Caller needs billing help, asks for a human, or has unclear/complex needs.
+RESULT: Initiates SIP transfer to staff phone number.
+
+EXAMPLES:
+- "I have a billing question" → department="billing"
+- "Can I speak to someone?" → department="front_desk"
+- Unclear request → department="front_desk" """,
+                    properties={
+                        "department": {
+                            "type": "string",
+                            "enum": ["billing", "front_desk"],
+                            "description": "Department: billing (payments/insurance), front_desk (general/complex/unclear)",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief reason for transfer",
+                        },
+                    },
+                    required=["department"],
+                    handler=self._request_staff_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="end_call",
+                    description="""End the call gracefully.
+
+WHEN TO USE: Caller says goodbye or confirms no more questions.
+RESULT: Saves transcript and ends the call.
+
+EXAMPLES:
+- "No, that's all, thanks!" → call end_call
+- "Bye!" → call end_call""",
+                    properties={},
+                    required=[],
+                    handler=self._end_call_handler,
+                ),
+            ],
+            respond_immediately=True,
+            pre_actions=[
+                {"type": "tts_say", "text": "Thanks for your patience with that. Is there anything else I can help you with today?"},
+            ],
+        )
+
+    def _create_end_node(self) -> NodeConfig:
         """Terminal node that ends the conversation."""
         return NodeConfig(
             name="end",
@@ -575,6 +703,59 @@ Then call request_staff with patient_confirmed=true.""",
             post_actions=[{"type": "end_conversation"}],
         )
 
+    def create_transfer_failed_node(self) -> NodeConfig:
+        """Node shown when transfer fails."""
+        return NodeConfig(
+            name="transfer_failed",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": """The transfer didn't go through. Apologize and offer alternatives.
+
+If caller wants to try the transfer again:
+→ Call retry_transfer
+
+If caller says goodbye or wants to end call:
+→ Call end_call
+
+If caller has a question you can answer:
+→ Answer it, then ask if there's anything else""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="retry_transfer",
+                    description="""Retry the failed transfer.
+
+WHEN TO USE: Caller wants to try the transfer again.
+RESULT: Attempts SIP transfer again.""",
+                    properties={},
+                    required=[],
+                    handler=self._retry_transfer_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="end_call",
+                    description="""End the call gracefully.
+
+WHEN TO USE: Caller says goodbye or confirms no more questions.
+RESULT: Ends the call.""",
+                    properties={},
+                    required=[],
+                    handler=self._end_call_handler,
+                ),
+            ],
+            respond_immediately=True,
+            pre_actions=[
+                {"type": "tts_say", "text": "I apologize, the transfer didn't go through."}
+            ],
+        )
+
     # ========== Function Handlers ==========
 
     async def _proceed_to_verification_handler(
@@ -611,8 +792,14 @@ Then call request_staff with patient_confirmed=true.""",
             # Verification successful
             flow_manager.state["identity_verified"] = True
 
-            # Queue database update (will be flushed at end of call)
-            self._queue_db_update({"identity_verified": True})
+            # Write to database immediately
+            patient_id = flow_manager.state.get("patient_id")
+            if patient_id:
+                try:
+                    db = get_async_patient_db()
+                    await db.update_field(patient_id, "identity_verified", True, self.organization_id)
+                except Exception as e:
+                    logger.error(f"Error updating identity_verified: {e}")
 
             # Extract first name for personalized response
             first_name = provided_name.strip().split()[0].title() if provided_name.strip() else "there"
@@ -630,7 +817,12 @@ Then call request_staff with patient_confirmed=true.""",
             # → Share results immediately (handler guarantees this is spoken)
             if results_status.lower() in ["ready", "available"] and not provider_review_required and results_summary:
                 flow_manager.state["results_communicated"] = True
-                self._queue_db_update({"results_communicated": True})
+                if patient_id:
+                    try:
+                        db = get_async_patient_db()
+                        await db.update_field(patient_id, "results_communicated", True, self.organization_id)
+                    except Exception as e:
+                        logger.error(f"Error updating results_communicated: {e}")
                 logger.info("Flow: Results communicated to patient (ready, no review required)")
 
                 message = f"Thank you, {first_name}. I found your record. I can see you had a {test_type}"
@@ -638,7 +830,7 @@ Then call request_staff with patient_confirmed=true.""",
                     message += f" on {test_date}"
                 message += f". Your results are in and show: {results_summary}"
 
-                return message, self.create_closing_node()
+                return message, self.create_completion_node()
 
             # Scenario 2: Provider review required OR Scenario 3: Pending
             # → Go to results node for callback handling
@@ -669,15 +861,21 @@ Then call request_staff with patient_confirmed=true.""",
 
             logger.info("Flow: Callback confirmed")
 
-            # Queue database update (will be flushed at end of call)
-            self._queue_db_update(update_fields)
+            # Write to database immediately
+            patient_id = flow_manager.state.get("patient_id")
+            if patient_id:
+                try:
+                    db = get_async_patient_db()
+                    await db.update_patient(patient_id, update_fields, self.organization_id)
+                except Exception as e:
+                    logger.error(f"Error updating callback info: {e}")
 
             response = f"I've confirmed your callback number. You should expect a call within {callback_timeframe}."
         else:
             logger.info("Flow: Patient declined callback")
             response = "Understood. You can always call us back to check on your results."
 
-        return response, self.create_closing_node()
+        return response, self.create_completion_node()
 
     async def _end_call_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -688,9 +886,6 @@ Then call request_staff with patient_confirmed=true.""",
         db = get_async_patient_db() if patient_id else None
 
         try:
-            # Flush all pending database updates
-            await self._flush_db_updates()
-
             # Save transcript
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
@@ -710,49 +905,177 @@ Then call request_staff with patient_confirmed=true.""",
                 except Exception as db_error:
                     logger.error(f"Failed to update status to Failed: {db_error}")
 
-        return None, self.create_end_node()
+        return None, self._create_end_node()
 
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Transfer to staff member."""
+        """Transfer to staff member via cold transfer."""
+        urgent = args.get("urgent", False)
         patient_confirmed = args.get("patient_confirmed", False)
         reason = args.get("reason", "general inquiry")
 
-        logger.info(f"Flow: Staff transfer requested - reason: {reason}, confirmed: {patient_confirmed}")
+        logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
 
-        # For now, just transition to transfer node
-        # In production, would initiate actual SIP transfer
-        if self.transport and hasattr(self.transport, 'sip_call_transfer'):
+        # Store reason for potential retry
+        flow_manager.state["transfer_reason"] = reason
+
+        # Get staff number from config
+        staff_number = self.cold_transfer_config.get("staff_number") if hasattr(self, 'cold_transfer_config') else None
+
+        if not staff_number:
+            logger.warning("Cold transfer requested but no staff_number configured")
+            return None, self.create_transfer_failed_node()
+
+        try:
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
+
+            if self.transport:
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                logger.info(f"SIP call transfer initiated: {staff_number}")
+
+            # Update call status
             try:
-                if self.pipeline:
-                    self.pipeline.transfer_in_progress = True
-                # Note: staff_number would come from cold_transfer_config in production
-                logger.info("Flow: Would initiate SIP transfer here")
+                patient_id = flow_manager.state.get("patient_id")
+                if patient_id:
+                    db = get_async_patient_db()
+                    await db.update_call_status(patient_id, "Transferred", self.organization_id)
             except Exception as e:
-                logger.error(f"Flow: Transfer failed: {e}")
+                logger.error(f"Error updating call status: {e}")
 
-        return None, self.create_transfer_initiated_node()
+            return None, self.create_transfer_initiated_node()
+
+        except Exception as e:
+            logger.exception("Cold transfer failed")
+
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
+
+            return None, self.create_transfer_failed_node()
+
+    async def _retry_transfer_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        """Retry a failed SIP transfer."""
+        logger.info("Flow: Retrying SIP transfer")
+
+        staff_number = self.cold_transfer_config.get("staff_number") if hasattr(self, 'cold_transfer_config') else None
+
+        if not staff_number:
+            logger.warning("Retry transfer requested but no staff_number configured")
+            return None, self.create_transfer_failed_node()
+
+        try:
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
+
+            if self.transport:
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                logger.info(f"SIP call transfer retry initiated: {staff_number}")
+
+            return None, self.create_transfer_initiated_node()
+
+        except Exception as e:
+            logger.exception("Cold transfer retry failed")
+
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
+
+            return None, self.create_transfer_failed_node()
+
+    async def _route_to_workflow_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Route to an AI workflow (same call, no phone transfer)."""
+        workflow = args.get("workflow", "")
+        reason = args.get("reason", "")
+
+        flow_manager.state["routed_to"] = f"{workflow} (AI)"
+
+        logger.info(f"Flow: Routing to {workflow} workflow - reason: {reason}")
+
+        if workflow == "scheduling":
+            return await self._handoff_to_scheduling(flow_manager, reason)
+        elif workflow == "prescription_status":
+            return await self._handoff_to_prescription_status(flow_manager, reason)
+        else:
+            logger.warning(f"Unknown workflow: {workflow}")
+            return "I'm not sure how to help with that. Let me transfer you to someone who can.", self.create_transfer_failed_node()
+
+    async def _handoff_to_scheduling(
+        self, flow_manager: FlowManager, reason: str
+    ) -> tuple[str, NodeConfig]:
+        """Hand off to PatientSchedulingFlow with gathered context."""
+        from clients.demo_clinic_alpha.patient_scheduling.flow_definition import PatientSchedulingFlow
+
+        scheduling_flow = PatientSchedulingFlow(
+            patient_data=self.patient_data,
+            flow_manager=flow_manager,
+            main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator,
+            transport=self.transport,
+            pipeline=self.pipeline,
+            organization_id=self.organization_id,
+            cold_transfer_config=self.cold_transfer_config,
+        )
+
+        logger.info(f"Flow: Handing off to PatientSchedulingFlow with context: {reason}")
+
+        # Use handoff entry point with context (no greeting, context-aware)
+        return None, scheduling_flow.create_handoff_entry_node(context=reason)
+
+    async def _handoff_to_prescription_status(
+        self, flow_manager: FlowManager, reason: str
+    ) -> tuple[str, NodeConfig]:
+        """Hand off to PrescriptionStatusFlow with gathered context."""
+        from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
+
+        prescription_flow = PrescriptionStatusFlow(
+            patient_data=self.patient_data,
+            flow_manager=flow_manager,
+            main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator,
+            transport=self.transport,
+            pipeline=self.pipeline,
+            organization_id=self.organization_id,
+            cold_transfer_config=self.cold_transfer_config,
+        )
+
+        logger.info(f"Flow: Handing off to PrescriptionStatusFlow with context: {reason}")
+
+        # Use handoff entry point with context (no greeting, context-aware)
+        return None, prescription_flow.create_handoff_entry_node(context=reason)
 
     def _get_request_staff_function(self) -> FlowsFunctionSchema:
         """Return the request_staff function schema for use in multiple nodes."""
         return FlowsFunctionSchema(
             name="request_staff",
-            description="""WHEN TO USE: Caller needs help with something other than lab results, or explicitly asks for a human, or is frustrated.
-RESULT: Transfers call to staff member.
+            description="""Transfer call to human staff member.
+
+WHEN TO USE:
+- Caller needs help with something other than lab results
+- Caller explicitly asks for a human
+- Caller is frustrated
+- Verification failed
 
 EXAMPLES:
 - Caller asks about appointments → call with reason="scheduling"
 - Caller says "I want to talk to a person" → call with patient_confirmed=true
+- Urgent medical concern → call with urgent=true
 - Caller needs billing help → call with reason="billing" """,
             properties={
-                "reason": {
-                    "type": "string",
-                    "description": "Brief reason for transfer (e.g., 'scheduling', 'billing', 'frustrated', 'general')",
+                "urgent": {
+                    "type": "boolean",
+                    "description": "Set true for urgent requests that need immediate attention (medical concerns, frustrated caller). Transfers immediately.",
                 },
                 "patient_confirmed": {
                     "type": "boolean",
-                    "description": "Set true if patient explicitly asked for human/staff transfer",
+                    "description": "Set true if patient explicitly asked for human/staff transfer. Transfers immediately.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for transfer (e.g., 'scheduling', 'billing', 'frustrated', 'verification_failed')",
                 },
             },
             required=[],

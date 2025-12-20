@@ -7,6 +7,7 @@ from loguru import logger
 
 from backend.models import get_async_patient_db
 from backend.utils import parse_natural_date
+from handlers.transcript import save_transcript_to_db
 
 
 async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
@@ -776,7 +777,7 @@ RESULT: Returns to medication identification node if multiple prescriptions exis
             post_actions=[{"type": "end_conversation"}],
         )
 
-    def _create_transfer_initiated_node(self) -> NodeConfig:
+    def create_transfer_initiated_node(self) -> NodeConfig:
         """Node shown while transfer is in progress."""
         return NodeConfig(
             name="transfer_initiated",
@@ -788,7 +789,7 @@ RESULT: Returns to medication identification node if multiple prescriptions exis
             post_actions=[{"type": "end_conversation"}],
         )
 
-    def _create_transfer_failed_node(self) -> NodeConfig:
+    def create_transfer_failed_node(self) -> NodeConfig:
         """Node shown when transfer fails."""
         return NodeConfig(
             name="transfer_failed",
@@ -801,42 +802,43 @@ RESULT: Returns to medication identification node if multiple prescriptions exis
             task_messages=[
                 {
                     "role": "system",
-                    "content": """The transfer failed. Offer alternatives WITHOUT repeating the apology:
-1. Offer to have staff call them back
-2. Suggest they contact the pharmacy or doctor's office directly
-3. Continue helping them with their prescription inquiry
-4. End call gracefully if they're done
+                    "content": """The transfer didn't go through. Apologize and offer alternatives.
 
-If caller says goodbye or indicates they're done, call end_call.
-If caller still needs help, offer an alternative solution.""",
+If caller wants to try the transfer again:
+→ Call retry_transfer
+
+If caller says goodbye or wants to end call:
+→ Call end_call
+
+If caller has a question you can answer:
+→ Answer it, then ask if there's anything else""",
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
-                    name="offer_callback",
-                    description="""Offer to have staff call the patient back.
-WHEN TO USE: Caller needs staff help but transfer failed.
-RESULT: Record callback request and proceed to closing.""",
+                    name="retry_transfer",
+                    description="""Retry the failed transfer.
+
+WHEN TO USE: Caller wants to try the transfer again.
+RESULT: Attempts SIP transfer again.""",
                     properties={},
                     required=[],
-                    handler=self._offer_callback_handler,
+                    handler=self._retry_transfer_handler,
                 ),
                 FlowsFunctionSchema(
                     name="end_call",
                     description="""End the call gracefully.
-WHEN TO USE ONLY:
-- Caller explicitly says goodbye ("bye", "thank you, goodbye", "have a good day")
-- Caller says they're done ("that's all", "I don't need anything else")
-- Caller accepts alternative solution and is satisfied
-DO NOT USE if caller is still requesting help.""",
+
+WHEN TO USE: Caller says goodbye or confirms no more questions.
+RESULT: Ends the call.""",
                     properties={},
                     required=[],
                     handler=self._end_call_handler,
                 ),
             ],
-            respond_immediately=False,
+            respond_immediately=True,
             pre_actions=[
-                {"type": "tts_say", "text": "I apologize, the transfer didn't go through. Let me see what else I can do for you."}
+                {"type": "tts_say", "text": "I apologize, the transfer didn't go through."}
             ],
         )
 
@@ -868,11 +870,22 @@ WHEN TO USE:
 - Patient has medical concerns or dosage questions
 - Patient explicitly requests to speak with a human
 
-RESULT: Call ends with transfer announcement.""",
+EXAMPLES:
+- Third-party caller → call with reason="third_party"
+- Patient says "I want to talk to a person" → call with patient_confirmed=true
+- Urgent medical concern → call with urgent=true""",
             properties={
                 "urgent": {
                     "type": "boolean",
-                    "description": "Set true for urgent requests that need immediate attention. Set false for general transfers.",
+                    "description": "Set true for urgent requests that need immediate attention (medical concerns, frustrated caller). Transfers immediately.",
+                },
+                "patient_confirmed": {
+                    "type": "boolean",
+                    "description": "Set true if patient explicitly asked for human/staff transfer. Transfers immediately.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for transfer (e.g., 'third_party', 'pharmacy_change', 'expedite', 'medical_question')",
                 },
             },
             required=[],
@@ -1100,20 +1113,28 @@ RESULT: Call ends with transfer announcement.""",
     ) -> tuple[None, NodeConfig]:
         """End the call."""
         logger.info("Flow: Ending call")
+        patient_id = self.patient_data.get("patient_id")
+        db = get_async_patient_db() if patient_id else None
 
-        # Update call status in database
         try:
-            patient_id = self.patient_data.get("patient_id")
-            if patient_id:
-                db = get_async_patient_db()
-                await db.update_patient(
-                    patient_id,
-                    {"call_status": "Completed"},
-                    self.organization_id,
-                )
-                logger.info(f"Call status updated to Completed: {patient_id}")
+            # Save transcript
+            if self.pipeline:
+                await save_transcript_to_db(self.pipeline)
+                logger.info("Transcript saved")
+
+            # Update call status
+            if patient_id and db:
+                await db.update_call_status(patient_id, "Completed", self.organization_id)
+                logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
+
         except Exception as e:
-            logger.error(f"Error updating call status: {e}")
+            logger.exception("Error in end_call_handler")
+
+            if patient_id and db:
+                try:
+                    await db.update_call_status(patient_id, "Failed", self.organization_id)
+                except Exception as db_error:
+                    logger.error(f"Failed to update status to Failed: {db_error}")
 
         return None, self._create_end_node()
 
@@ -1122,15 +1143,21 @@ RESULT: Call ends with transfer announcement.""",
     ) -> tuple[None, NodeConfig]:
         """Transfer to staff member via cold transfer."""
         urgent = args.get("urgent", False)
+        patient_confirmed = args.get("patient_confirmed", False)
+        reason = args.get("reason", "general inquiry")
+
+        logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
+
+        # Store reason for potential retry
+        flow_manager.state["transfer_reason"] = reason
+
         staff_number = self.cold_transfer_config.get("staff_number")
 
         if not staff_number:
             logger.warning("Cold transfer requested but no staff_number configured")
-            return None, self._create_transfer_failed_node()
+            return None, self.create_transfer_failed_node()
 
         try:
-            logger.info(f"Flow: Initiating staff transfer to {staff_number} (urgent={urgent})")
-
             if self.pipeline:
                 self.pipeline.transfer_in_progress = True
 
@@ -1151,7 +1178,7 @@ RESULT: Call ends with transfer announcement.""",
             except Exception as e:
                 logger.error(f"Error updating call status: {e}")
 
-            return None, self._create_transfer_initiated_node()
+            return None, self.create_transfer_initiated_node()
 
         except Exception as e:
             logger.exception("Cold transfer failed")
@@ -1159,7 +1186,37 @@ RESULT: Call ends with transfer announcement.""",
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False
 
-            return None, self._create_transfer_failed_node()
+            return None, self.create_transfer_failed_node()
+
+    async def _retry_transfer_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        """Retry a failed SIP transfer."""
+        logger.info("Flow: Retrying SIP transfer")
+
+        staff_number = self.cold_transfer_config.get("staff_number")
+
+        if not staff_number:
+            logger.warning("Retry transfer requested but no staff_number configured")
+            return None, self.create_transfer_failed_node()
+
+        try:
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
+
+            if self.transport:
+                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                logger.info(f"SIP call transfer retry initiated: {staff_number}")
+
+            return None, self.create_transfer_initiated_node()
+
+        except Exception as e:
+            logger.exception("Cold transfer retry failed")
+
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
+
+            return None, self.create_transfer_failed_node()
 
     async def _return_to_conversation_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -1167,11 +1224,3 @@ RESULT: Call ends with transfer announcement.""",
         """Return to the previous conversation node after failed transfer."""
         logger.info("Flow: Returning to status node after failed transfer")
         return "No problem, let me continue helping you.", self.create_status_node()
-
-    async def _offer_callback_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
-        """Offer to have staff call the patient back."""
-        logger.info("Flow: Offering callback after failed transfer")
-        first_name = flow_manager.state.get("verified_first_name", "there")
-        return f"I'll make a note for our staff to call you back, {first_name}. Is there anything else I can help you with in the meantime?", self.create_closing_node()

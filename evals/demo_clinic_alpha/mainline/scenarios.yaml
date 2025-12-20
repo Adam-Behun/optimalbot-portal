@@ -27,7 +27,7 @@ scenarios:
       You're calling to schedule a follow-up for your chronic back pain. You've been a patient for 3 years.
       You want a specific doctor (Dr. Chen) because you've seen them before.
 
-      TURN 1: "Hi, I need to schedule a follow-up appointment."
+      TURN 1: Introduce yourself with your name: "Hi, this is Jessica Williams. I need to schedule a follow-up appointment."
 
       IF BOT asks what it's for: "It's for my chronic lower back pain. I've been coming here for about three years for it."
 
@@ -36,12 +36,14 @@ scenarios:
       IF BOT asks if you're new or returning: "I'm a returning patient. Like I said, I've been coming here for three years."
 
       WHEN ROUTED TO SCHEDULING: Pay attention to whether they remember:
+      - Your name (Jessica Williams)
       - That it's a follow-up (not new patient)
       - That it's for chronic back pain
       - That you requested Dr. Chen
+      - That you've been a patient for 3 years
 
       IF scheduling asks about any of these again: Express mild frustration:
-      "I already mentioned that - it's for my back pain, with Dr. Chen."
+      "I already mentioned that - it's for my back pain, with Dr. Chen. I gave my name at the beginning too."
 
       Continue cooperating but note any context loss.
 
@@ -195,7 +197,7 @@ scenarios:
 
   - id: "6"
     target_node: greeting
-    expected_problem: "Bot may not de-escalate and transfer appropriately for persistent human requests"
+    expected_problem: "Bot may not de-escalate and transfer appropriately for persistent human requests; also tests transfer failure recovery"
     caller:
       first_name: "Karen"
       last_name: "White"
@@ -224,11 +226,32 @@ scenarios:
 
       Count mentally how many times you have to ask. This is a test of persistence.
 
+      === TRANSFER FAILURE HANDLING ===
+
+      IF TRANSFER FAILS (bot apologizes, says transfer didn't connect):
+      - First failure: "Yes, please try again."
+      - Verify bot attempts retry (should hear "Transferring you now" again)
+
+      IF SECOND TRANSFER ATTEMPT FAILS:
+      - Express frustration but stay civil: "This is frustrating. Is there another number I can call directly?"
+      - IF BOT offers alternative or direct number: "Okay, I'll try that. Thank you."
+      - IF BOT offers to try again: Accept one more time: "Fine, try once more."
+
+      IF BOT asks if there's something else it can help with after failed transfer:
+      - Stay firm: "No, I really need to talk to a person. Can you try the transfer again?"
+
+      === SUCCESS CRITERIA ===
+      - Bot should transfer after 1-2 polite requests (patient_confirmed should trigger immediate transfer)
+      - If transfer fails, bot should apologize and offer retry
+      - Bot should successfully retry when asked
+      - If multiple failures, bot should offer alternatives (callback, direct number)
+
       When finally transferred: "Thank you."
+      If giving up after failures: "I'll try calling back later. Goodbye."
 
   - id: "7"
     target_node: greeting
-    expected_problem: "Bot may confuse check-in (I'm here now) with scheduling (I want to book future)"
+    expected_problem: "Bot should recognize check-in is outside its capabilities and transfer to front_desk"
     caller:
       first_name: "Thomas"
       last_name: "Scott"
@@ -245,15 +268,18 @@ scenarios:
 
       IF BOT asks what the appointment is for: "It's with Dr. Patel, a follow-up. But I just need to check in - I'm already here."
 
-      IF BOT tries to confirm appointment details: Get slightly impatient: "Look, I can see the building. I just want to check in so I don't have to wait in the lobby. Can you help with that or not?"
+      IF BOT offers to transfer to front desk: Accept immediately - this is correct behavior:
+      "Yes, please. I just need someone to mark me as arrived."
 
-      IF BOT offers to transfer: Accept: "Yes, please. I just need someone to mark me as arrived."
-
-      IF BOT keeps trying to schedule or verify: Be direct: "I have an existing appointment TODAY. In 10 minutes. I am OUTSIDE your building. I need to CHECK IN, not schedule anything new."
+      IF BOT keeps trying to schedule or verify: Be direct: "I have an existing appointment TODAY. In 10 minutes. I am OUTSIDE your building. I need to CHECK IN, not schedule anything new. Can you transfer me to the front desk?"
 
       IF BOT seems lost: "Maybe I should just come inside and check in at the desk. Is there a long wait in the lobby?"
 
-      Continue until resolved or you give up and say you'll come inside.
+      === SUCCESS CRITERIA ===
+      - Bot should recognize "check-in" is not scheduling
+      - Bot should NOT route to scheduling workflow
+      - Bot should offer to transfer to front_desk (correct - check-in is outside AI capabilities)
+      - Transfer should happen within 2-3 turns of clarification
 
       If transferred appropriately: "Thank you."
       If giving up: "Forget it, I'll just come in. Thank you anyway."
@@ -293,7 +319,7 @@ scenarios:
 
   - id: "9"
     target_node: greeting
-    expected_problem: "Bot may not handle callback requests and should capture correct information"
+    expected_problem: "Bot should recognize callback requests require human handling and transfer to front_desk"
     caller:
       first_name: "Brian"
       last_name: "Young"
@@ -308,20 +334,27 @@ scenarios:
 
       IF BOT asks what it's about: Whisper: "I need to reschedule my appointment for Friday. But I can't talk now."
 
-      IF BOT offers to quickly reschedule: Decline: "No, I really can't talk. My boss is right here. I just need someone to call me back later."
+      IF BOT offers to quickly reschedule: Decline firmly: "No, I really can't talk. My boss is right here. I just need someone to call me back later."
 
-      IF BOT asks for callback number: Provide different number: "Call me at 555-999-8765. That's my cell. I can talk after 5pm."
+      IF BOT offers to transfer to front desk: Accept - this is correct behavior:
+      "Yes please, just have them call me at 555-999-8765 after 5pm. Thanks."
 
-      IF BOT confirms details: Verify: "Yes - callback at 555-999-8765 after 5pm about rescheduling my Friday appointment."
+      IF BOT asks for callback number (trying to help): Provide it but stay urgent:
+      "Call me at 555-999-8765. That's my cell. After 5pm. But I really need to go now."
 
-      IF BOT tries to continue the conversation: Be firm but quiet: "I really need to go. Please just have someone call. 555-999-8765, after 5. Thanks, bye."
+      IF BOT tries to continue the conversation: Be firm but quiet:
+      "I really need to go. Please just transfer me or have someone call. 555-999-8765, after 5. Thanks, bye."
 
-      IF BOT asks for more information: Cut it short: "I can't explain more right now. Just have someone call please. Gotta go."
+      === SUCCESS CRITERIA ===
+      - Bot should recognize caller can't talk and needs callback
+      - Bot should NOT try to push through with scheduling workflow
+      - Bot should offer to transfer to front_desk (correct - callbacks need human handling)
+      - Bot should acknowledge the callback request context for the transfer
 
       End the call quickly - you genuinely can't talk.
 
-      If successfully captured callback info: "Thank you. Bye."
-      If bot keeps trying: Just hang up after giving the callback number once more.
+      If transferred appropriately: "Thank you. Bye."
+      If bot keeps trying to handle it: Just hang up: "I have to go. Bye."
 
   - id: "10"
     target_node: greeting
@@ -391,7 +424,7 @@ scenarios:
 
   - id: "12"
     target_node: greeting
-    expected_problem: "Bot should handle language preference requests and transfer appropriately"
+    expected_problem: "Bot should recognize language barrier and transfer to front_desk for human assistance"
     caller:
       first_name: "Maria"
       last_name: "Rodriguez"
@@ -404,18 +437,25 @@ scenarios:
 
       TURN 1: "Hello, do you have someone who speaks Spanish?"
 
-      IF BOT responds in English offering help: Try in limited English: "I can speak little English, but I need talk about... how you say... insurance problem? Is complicated. Better in Spanish."
+      IF BOT offers to transfer to front desk: Accept - this is correct behavior:
+      "Yes please. Someone Spanish. Thank you."
 
-      IF BOT says no Spanish available: Try to proceed: "Okay, I try English. My insurance, they say... they no pay? For my... medicine? I don't understand the paper they send."
+      IF BOT responds in English offering help: Try in limited English:
+      "I can speak little English, but I need talk about... how you say... insurance problem? Is complicated. Better in Spanish. Can you transfer me?"
 
-      IF BOT tries to help with prescription/billing: Struggle: "No, not... is not just medicine. Is the insurance. They send letter. Many words I don't know. I need someone explain in Spanish."
+      IF BOT tries to help with prescription/billing: Struggle and request transfer:
+      "No, not... is not just medicine. Is the insurance. They send letter. Many words I don't know. Please, I need someone explain in Spanish. Can you transfer?"
 
-      IF BOT offers to transfer: Accept gratefully: "Yes please. Someone Spanish. Thank you."
+      IF BOT keeps trying in English: Get a bit frustrated:
+      "Please, is too hard. I make mistakes in English. I need Spanish speaker for this. My insurance problem is big - many dollars. Please transfer me to front desk."
 
-      IF BOT keeps trying in English: Get a bit frustrated: "Please, is too hard. I make mistakes in English. I need Spanish speaker for this. My insurance problem is big - many dollars."
+      === SUCCESS CRITERIA ===
+      - Bot should recognize language preference request immediately
+      - Bot should offer to transfer to front_desk (correct - Spanish support needs human)
+      - Bot should NOT try to push through with complex insurance help in English
+      - Transfer should include context: "needs Spanish speaker for insurance question"
+      - Transfer should happen within 1-2 turns of Spanish being mentioned
 
-      IF NO Spanish option and bot tries to help: Do your best but express difficulty: "Okay... I try explain... but if I say wrong, is because English hard for me."
-
-      Continue attempting to communicate but keep requesting Spanish if available.
-
-      When resolved one way or another: "Thank you for trying to help."
+      When transferred: "Thank you."
+      If bot insists on helping in English: Express difficulty but cooperate:
+      "Okay... I try explain... but if I say wrong, is because English hard for me."

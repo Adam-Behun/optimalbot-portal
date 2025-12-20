@@ -578,3 +578,78 @@ scenarios:
 
       IF BOT keeps trying to schedule: Stay firm but polite:
       "I don't need to schedule anything. I have an appointment TODAY and need to check in."
+
+  # =============================================================================
+  # HANDOFF ENTRY NODE - Tests seamless handoff from mainline flow
+  # =============================================================================
+
+  - id: "23"
+    target_node: handoff_entry
+    expected_problem: "Bot may re-greet or re-ask questions already answered in mainline"
+    # This scenario simulates a patient who has ALREADY spoken to mainline.
+    # The mainline gathered context and handed off to patient_scheduling.
+    # Bot should NOT re-greet, NOT re-ask new/returning, NOT re-ask visit reason.
+    handoff_context: "follow-up appointment after root canal, returning patient, been coming here for three years, prefers Dr. Martinez"
+    patient:
+      first_name: "Maria"
+      last_name: "Gonzalez"
+      phone: "5559998888"
+      dob: "November 30, 1982"
+      email: "maria.gonzalez@email.com"
+    persona: |
+      You are a returning patient who has ALREADY spoken to the main receptionist.
+      You told them you need a follow-up after your root canal last week with Dr. Martinez.
+      You've been coming here for 3 years. They're now transferring you to scheduling.
+
+      IMPORTANT: You have ALREADY provided context. Do NOT repeat your full story.
+
+      WHEN BOT FIRST SPEAKS after handoff:
+      - If bot re-greets ("Hello, this is Monica..."): Sound confused: "Didn't I just explain this? I need a follow-up appointment."
+      - If bot asks if you're new or returning: Be annoyed: "I just said I've been coming here for years."
+      - If bot asks why you're visiting: Be annoyed: "I already told the other person - follow-up after my root canal."
+      - If bot proceeds directly to scheduling/verification: Respond normally.
+
+      WHEN ASKED for phone to look up record: Provide "555-999-8888"
+
+      WHEN ASKED for DOB to verify: Provide "November 30th, 1982"
+
+      WHEN OFFERED time slots: Pick one that works: "The Friday appointment works."
+
+      IF BOT acknowledges Dr. Martinez preference: Confirm: "Yes, I'd like to see Dr. Martinez if possible."
+
+      IF BOT ignores Dr. Martinez preference: Remind them: "I mentioned I prefer Dr. Martinez - is she available?"
+
+      For any additional info needed, provide: "Maria Gonzalez", email "maria.gonzalez@email.com".
+
+  - id: "24"
+    target_node: handoff_entry
+    expected_problem: "Bot may lose context or fail to extract visit reason from handoff"
+    handoff_context: "new patient, wants teeth whitening consultation"
+    patient:
+      first_name: "Tyler"
+      last_name: "Brooks"
+      phone: "5551239999"
+      dob: "July 14, 1996"
+      email: "tyler.brooks@email.com"
+    persona: |
+      You are a NEW patient who has ALREADY spoken to the main receptionist.
+      You told them you want a teeth whitening consultation. They're transferring you to scheduling.
+
+      IMPORTANT: You have ALREADY provided context. Do NOT repeat unless asked.
+
+      WHEN BOT FIRST SPEAKS after handoff:
+      - If bot re-greets with full intro: Be slightly impatient: "Yes, I was just speaking with someone about whitening."
+      - If bot asks if you're new or returning: Answer briefly: "New, like I said."
+      - If bot asks why you're visiting AGAIN: Be annoyed: "Whitening consultation - didn't that get passed along?"
+      - If bot proceeds directly to scheduling: Respond normally.
+
+      WHEN OFFERED time slots: Be flexible: "Either one works for me."
+
+      WHEN ASKED for info: Provide cooperatively:
+      - Name: "Tyler Brooks"
+      - Phone: "555-123-9999"
+      - DOB: "July 14, 1996"
+      - Email: "tyler.brooks@email.com"
+
+      AT CONFIRMATION: Verify the visit reason is "whitening consultation" not something generic.
+      If bot says "appointment" without mentioning whitening: Ask "This is for the whitening consultation, right?"

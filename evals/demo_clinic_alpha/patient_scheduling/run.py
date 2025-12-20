@@ -9,6 +9,11 @@ Usage:
     python run.py --sync-dataset            # Sync scenarios to Langfuse dataset
 
 Results are stored locally in results/<scenario_id>/ and traces are pushed to Langfuse.
+
+Scenario Types:
+    - Normal scenarios: Start at greeting node (bot greets first)
+    - Handoff scenarios: Start at handoff_entry node (simulates mainline handoff)
+      Define `handoff_context` field in scenario YAML to use handoff entry point.
 """
 import argparse
 import asyncio
@@ -194,8 +199,12 @@ def list_scenarios() -> None:
     config = load_scenarios()
     print("\nAvailable scenarios:\n")
     for s in config["scenarios"]:
-        print(f"  {s['id']:<30} [{s['target_node']}]")
-        print(f"    Expected: {s['expected_problem']}\n")
+        handoff_marker = " [HANDOFF]" if s.get("handoff_context") else ""
+        print(f"  {s['id']:<30} [{s['target_node']}]{handoff_marker}")
+        print(f"    Expected: {s['expected_problem']}")
+        if s.get("handoff_context"):
+            print(f"    Context: {s['handoff_context'][:60]}...")
+        print()
 
 
 # === MOCKS ===
@@ -216,11 +225,12 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, llm_config: dict, cold_transfer_config: dict):
+    def __init__(self, llm_config: dict, cold_transfer_config: dict, handoff_context: str = None):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
+        self.handoff_context = handoff_context
 
         self.flow = PatientSchedulingFlow(
             patient_data={"organization_name": "Demo Clinic Alpha"},
@@ -232,7 +242,13 @@ class FlowRunner:
             cold_transfer_config=cold_transfer_config,
         )
 
-        self.current_node = self.flow.create_greeting_node()
+        # Use handoff_entry node if context provided (simulates mainline handoff)
+        # Otherwise use greeting node (normal call start)
+        if handoff_context:
+            self.current_node = self.flow.create_handoff_entry_node(context=handoff_context)
+        else:
+            self.current_node = self.flow.create_greeting_node()
+
         self.conversation_history = []
         self.function_calls = []  # Track all function calls
         self.done = False
@@ -433,25 +449,38 @@ async def run_simulation(
     """Run a single patient scheduling simulation for a scenario."""
     patient = scenario["patient"]
     persona = scenario["persona"]
+    handoff_context = scenario.get("handoff_context")
 
-    runner = FlowRunner(llm_config, cold_transfer_config)
-
-    # Bot greeting
-    pre_actions = runner.current_node.get("pre_actions") or []
-    greeting = pre_actions[0].get("text", "") if pre_actions else ""
+    runner = FlowRunner(llm_config, cold_transfer_config, handoff_context=handoff_context)
 
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
     print(f"TARGET: {scenario['target_node']}")
     print(f"EXPECTED PROBLEM: {scenario['expected_problem']}")
+    if handoff_context:
+        print(f"HANDOFF CONTEXT: {handoff_context}")
     print(f"{'='*70}\n")
 
-    print(f"MONICA: {greeting}\n")
+    conversation = []
+    turn = 0
 
-    conversation = [{"role": "assistant", "content": greeting, "turn": 0}]
+    # Handle initial bot response based on entry point
+    if handoff_context:
+        # Handoff entry: bot should respond immediately (no greeting, uses context)
+        # The handoff_entry node has respond_immediately=True, so bot speaks first
+        print("[HANDOFF FROM MAINLINE - bot processes context and responds]\n")
+        bot_response = await runner.process_message("", turn)
+        if bot_response:
+            print(f"MONICA: {bot_response}\n")
+            conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
+    else:
+        # Normal entry: bot greets first via pre_action
+        pre_actions = runner.current_node.get("pre_actions") or []
+        greeting = pre_actions[0].get("text", "") if pre_actions else ""
+        print(f"MONICA: {greeting}\n")
+        conversation.append({"role": "assistant", "content": greeting, "turn": 0})
 
     # Conversation loop
-    turn = 0
     while not runner.done and turn < 20:
         turn += 1
 
@@ -561,19 +590,25 @@ def sync_dataset_to_langfuse() -> None:
 
     # Create dataset items for each scenario
     for scenario in config["scenarios"]:
+        # Build input dict, including handoff_context if present
+        input_data = {
+            "patient": scenario["patient"],
+            "persona": scenario["persona"],
+        }
+        if scenario.get("handoff_context"):
+            input_data["handoff_context"] = scenario["handoff_context"]
+
         langfuse.create_dataset_item(
             dataset_name=dataset_name,
             id=scenario["id"],  # Use scenario ID as item ID for upsert
-            input={
-                "patient": scenario["patient"],
-                "persona": scenario["persona"],
-            },
+            input=input_data,
             expected_output={
                 "target_node": scenario["target_node"],
                 "expected_problem": scenario["expected_problem"],
             },
             metadata={
                 "target_node": scenario["target_node"],
+                "has_handoff_context": bool(scenario.get("handoff_context")),
             },
         )
         print(f"  Synced: {scenario['id']}")

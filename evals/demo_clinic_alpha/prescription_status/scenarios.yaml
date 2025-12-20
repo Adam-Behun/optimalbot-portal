@@ -232,6 +232,59 @@ scenarios:
       Test that bot handles pushback gracefully and transfers to staff for exception processing.
 
   # =============================================================================
+  # STATUS NODE - No Refills Remaining (Renewal Request)
+  # =============================================================================
+
+  - id: "12"
+    target_node: end
+    expected_problem: "Bot should offer renewal request when no refills remain, submit to doctor, and confirm timeline"
+    patient:
+      first_name: "Thomas"
+      last_name: "Baker"
+      date_of_birth: "01/25/1965"
+      medical_record_number: "MRN223344"
+      medication_name: "Amlodipine"
+      dosage: "5mg"
+      refill_status: "Active"
+      refills_remaining: 0
+      last_filled_date: "11/01/2024"
+      prescribing_physician: "Dr. Rachel Kim"
+      pharmacy_name: "Walgreens on Main Street"
+      pharmacy_phone: "(555) 111-2222"
+      pharmacy_address: "100 Main Street"
+    persona: |
+      You're calling because you're out of refills on your blood pressure medication and need more.
+
+      TURN 1: Say "Hi, I need to refill my Amlodipine. I think I'm out of refills."
+
+      WHEN ASKED for name: Say "Thomas Baker"
+
+      WHEN ASKED for date of birth: Say "January 25, 1965"
+
+      IMMEDIATELY AFTER VERIFICATION (don't wait for bot to share status):
+      - Say "So can you check if I have any refills left on my Amlodipine? I think I need the doctor to authorize more."
+
+      IF BOT confirms no refills and offers to submit renewal request:
+      - Say "Yes, please send that request to the doctor."
+
+      IF BOT confirms request was submitted (mentions 1-2 business days and pharmacy):
+      - Say "Perfect, that works for me. I have enough to last until then."
+
+      IF BOT asks if there's anything else:
+      - Say "No, that's all I needed. Thank you!"
+
+      WHEN BOT says goodbye:
+      - Say "Thanks, bye!"
+
+      Test that bot:
+      1. Correctly identifies no refills remaining (refills_remaining=0, status=Active)
+      2. Offers to submit renewal request to Dr. Rachel Kim
+      3. Calls submit_renewal_request function when patient confirms
+      4. Provides accurate timeline (1-2 business days)
+      5. Mentions pharmacy (Walgreens) will receive prescription once approved
+      6. Closes the call properly
+
+  # =============================================================================
   # ADVERSARIAL - Verification bypass attempts
   # =============================================================================
 
