@@ -1,8 +1,67 @@
+import os
 from typing import Dict, Any
+
+from openai import AsyncOpenAI
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from loguru import logger
+
 from backend.models import get_async_patient_db
+from backend.utils import parse_natural_date
 from handlers.transcript import save_transcript_to_db
+
+
+async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
+    """Warm up OpenAI with system prompt prefix for cache hits.
+
+    OpenAI caches prompt prefixes of 1024+ tokens. We send a request
+    with the same system prompt structure to prime the cache.
+    """
+    try:
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        global_instructions = f"""You are Jamie, a friendly assistant for {organization_name}.
+
+# Voice Conversation Style
+You are on a phone call with a patient. Your responses will be converted to speech:
+- Speak naturally and warmly, like a helpful clinic staff member
+- Keep responses concise—one or two sentences is usually enough
+- Use natural acknowledgments: "Of course", "I understand", "Let me check that for you"
+- NEVER use bullet points, numbered lists, asterisks, or markdown formatting
+- If asked to repeat, SHORTEN your response each time
+
+# Handling Speech Recognition
+The input is transcribed from speech and may contain errors:
+- Silently correct obvious transcription mistakes based on context
+- "march twenty second" means "March 22nd"
+- If truly unclear, ask naturally: "Sorry, I didn't catch that"
+
+# HIPAA Compliance
+- You MUST verify patient identity before discussing ANY health information
+- Never share lab results with unverified callers
+- If verification fails, do not provide any lab information"""
+
+        task_context = """# Goal
+Determine what the caller needs and route appropriately.
+
+If caller asks about LAB RESULTS, TEST RESULTS, or BLOOD WORK:
+→ Proceed to identity verification
+
+If caller needs something ELSE (appointments, billing, prescriptions):
+→ Transfer to staff"""
+
+        await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": global_instructions},
+                {"role": "system", "content": task_context},
+                {"role": "user", "content": "Hi, I'm calling about my lab results"},
+                {"role": "assistant", "content": "Of course, I can help you with that. For privacy and security, I need to verify your identity first. May I have your first and last name?"},
+            ],
+            max_tokens=1,
+        )
+        logger.info("OpenAI connection warmed up with prompt prefix")
+    except Exception as e:
+        logger.warning(f"OpenAI warmup failed (non-critical): {e}")
 
 
 class LabResultsFlow:
@@ -18,7 +77,7 @@ class LabResultsFlow:
     def __init__(
         self,
         patient_data: Dict[str, Any],
-        flow_manager: FlowManager = None,
+        flow_manager: FlowManager,
         main_llm=None,
         classifier_llm=None,
         context_aggregator=None,
@@ -33,33 +92,75 @@ class LabResultsFlow:
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
-        self._patient_data = patient_data
+        self.patient_data = patient_data
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
 
-    def _init_flow_state(self):
-        """Initialize flow_manager state with patient data. Called after flow_manager is set."""
-        if not self.flow_manager:
-            return
+        # Initialize flow state directly in constructor
+        self._init_flow_state()
 
+    def _init_flow_state(self):
+        """Initialize flow_manager state with patient data."""
         # Patient record (from clinic database)
-        self.flow_manager.state["patient_id"] = self._patient_data.get("patient_id")
-        self.flow_manager.state["patient_name"] = self._patient_data.get("patient_name", "")
-        self.flow_manager.state["date_of_birth"] = self._patient_data.get("date_of_birth", "")
-        self.flow_manager.state["medical_record_number"] = self._patient_data.get("medical_record_number", "")
-        self.flow_manager.state["phone_number"] = self._patient_data.get("phone_number", "")
+        self.flow_manager.state["patient_id"] = self.patient_data.get("patient_id")
+        self.flow_manager.state["patient_name"] = self.patient_data.get("patient_name", "")
+        self.flow_manager.state["date_of_birth"] = self.patient_data.get("date_of_birth", "")
+        self.flow_manager.state["medical_record_number"] = self.patient_data.get("medical_record_number", "")
+        self.flow_manager.state["phone_number"] = self.patient_data.get("phone_number", "")
 
         # Lab order information
-        self.flow_manager.state["test_type"] = self._patient_data.get("test_type", "")
-        self.flow_manager.state["test_date"] = self._patient_data.get("test_date", "")
-        self.flow_manager.state["ordering_physician"] = self._patient_data.get("ordering_physician", "")
-        self.flow_manager.state["results_status"] = self._patient_data.get("results_status", "")
-        self.flow_manager.state["results_summary"] = self._patient_data.get("results_summary", "")
-        self.flow_manager.state["provider_review_required"] = self._patient_data.get("provider_review_required", False)
-        self.flow_manager.state["callback_timeframe"] = self._patient_data.get("callback_timeframe", "24 to 48 hours")
+        self.flow_manager.state["test_type"] = self.patient_data.get("test_type", "")
+        self.flow_manager.state["test_date"] = self.patient_data.get("test_date", "")
+        self.flow_manager.state["ordering_physician"] = self.patient_data.get("ordering_physician", "")
+        self.flow_manager.state["results_status"] = self.patient_data.get("results_status", "")
+        self.flow_manager.state["results_summary"] = self.patient_data.get("results_summary", "")
+        self.flow_manager.state["provider_review_required"] = self.patient_data.get("provider_review_required", False)
+        self.flow_manager.state["callback_timeframe"] = self.patient_data.get("callback_timeframe", "24 to 48 hours")
 
         # Call outcome tracking
         self.flow_manager.state["identity_verified"] = False
         self.flow_manager.state["results_communicated"] = False
+
+        # Pending database updates (batched at end of call)
+        self.flow_manager.state["_pending_updates"] = {}
+
+    def _queue_db_update(self, updates: Dict[str, Any]) -> None:
+        """Queue database updates to be batched at end of call."""
+        pending = self.flow_manager.state.get("_pending_updates", {})
+        pending.update(updates)
+        self.flow_manager.state["_pending_updates"] = pending
+
+    async def _flush_db_updates(self) -> None:
+        """Flush all pending database updates."""
+        pending = self.flow_manager.state.get("_pending_updates", {})
+        if not pending:
+            return
+
+        patient_id = self.flow_manager.state.get("patient_id")
+        if not patient_id:
+            return
+
+        try:
+            db = get_async_patient_db()
+            await db.update_patient(patient_id, pending, self.organization_id)
+            logger.info(f"Database updated with {len(pending)} fields for patient {patient_id}")
+            self.flow_manager.state["_pending_updates"] = {}
+        except Exception as e:
+            logger.error(f"Error flushing database updates: {e}")
+
+    def _normalize_name(self, name: str) -> str:
+        """Normalize name for comparison (lowercase, handle 'Last, First' format)."""
+        name = name.strip().lower()
+        if "," in name:
+            parts = [p.strip() for p in name.split(",")]
+            if len(parts) == 2:
+                return f"{parts[1]} {parts[0]}"
+        return name
+
+    def _normalize_dob(self, dob: str) -> str | None:
+        """Normalize date of birth to ISO format for comparison."""
+        if not dob:
+            return None
+        return parse_natural_date(dob.strip()) or dob.strip()
 
     def _get_global_instructions(self) -> str:
         """Global behavioral rules for patient interactions."""
@@ -130,7 +231,12 @@ Caller: "I need to schedule an appointment."
 # Guardrails
 - Do NOT ask for any personal information yet
 - Do NOT discuss lab results until identity is verified
-- Route to verification as soon as caller mentions lab/test results""",
+- Route to verification as soon as caller mentions lab/test results
+
+# Error Handling
+If you miss what the caller said:
+- Ask naturally: "I'm sorry, could you repeat that?"
+- Never guess what they need""",
                 }
             ],
             functions=[
@@ -181,12 +287,26 @@ You: "Thank you, Maria. And what is your date of birth?"
 Caller: "March 22nd, 1978"
 → Call verify_identity with name="Maria Santos" and date_of_birth="March 22, 1978"
 
+# Data Normalization
+**Dates** (spoken → written):
+- "march twenty second nineteen seventy eight" → "March 22, 1978"
+- "three twenty two seventy eight" → "March 22, 1978"
+- "oh three twenty two nineteen seventy eight" → "March 22, 1978"
+
+Always normalize dates before calling verify_identity.
+
 # Guardrails
 - Collect BOTH name AND date of birth before calling verify_identity. This step is important.
 - Do NOT reveal any patient information during verification
 - Do NOT say whether the name or DOB matches until both are collected
 - Be patient if caller needs to repeat information
-- If caller refuses to verify, explain it's required for privacy and offer to transfer to staff""",
+- If caller refuses to verify, explain it's required for privacy and offer to transfer to staff
+
+# Error Handling
+If you miss information:
+- Ask naturally: "I'm sorry, could you repeat that?"
+- Never guess or make up values
+- If caller is unclear, ask for clarification: "Could you spell that for me?" """,
                 }
             ],
             functions=[
@@ -217,13 +337,16 @@ EXAMPLES:
         )
 
     def create_results_node(self) -> NodeConfig:
-        """Communicate lab results or status to patient based on results_status."""
+        """Handle provider review or pending results scenarios.
+
+        Note: Ready results with no review required are handled directly by
+        verify_identity handler to guarantee results are spoken.
+        """
         state = self.flow_manager.state
         test_type = state.get("test_type", "lab test")
         test_date = state.get("test_date", "")
         ordering_physician = state.get("ordering_physician", "your doctor")
         results_status = state.get("results_status", "")
-        results_summary = state.get("results_summary", "")
         provider_review_required = state.get("provider_review_required", False)
         callback_timeframe = state.get("callback_timeframe", "24 to 48 hours")
         phone_number = state.get("phone_number", "")
@@ -234,8 +357,8 @@ EXAMPLES:
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""# Goal
-Communicate lab results status to the verified patient appropriately based on the scenario.
+                    "content": f"""# Context
+The patient has been verified. Handle their lab results inquiry.
 
 # Lab Order Information
 - Test Type: {test_type}
@@ -243,69 +366,58 @@ Communicate lab results status to the verified patient appropriately based on th
 - Ordering Physician: {ordering_physician}
 - Results Status: {results_status}
 - Provider Review Required: {provider_review_required}
-- Results Summary: {results_summary}
 - Callback Timeframe: {callback_timeframe}
 - Phone on File (last 4): {phone_last4}
 
 # Scenario Handling
 
-## Scenario 1: Results Available AND Provider Review NOT Required
-If results_status is "Ready" or "Available" (not "Pending") and provider_review_required is False:
-→ Share the test information and results_summary
-→ Example: "I can see your {test_type} results from {test_date} are in. The results show {results_summary}."
-→ Call mark_results_communicated
-
-## Scenario 2: Provider Review Required
+## Provider Review Required
 If provider_review_required is True:
-→ Do NOT share the results_summary. This step is important.
-→ Explain that {ordering_physician} needs to review the results first
-→ Tell them the doctor will call within {callback_timeframe}
-→ If they ask "Is something wrong?" or seem worried: "Provider review is standard procedure for certain types of results. {ordering_physician} wants to ensure they can answer any questions you might have."
-→ Confirm callback phone number: "Is the phone number ending in {phone_last4} still the best number to reach you?"
-→ Call confirm_callback with their response
+→ Do NOT share any results. This step is important.
+→ Explain: "{ordering_physician} needs to review these results before they can be shared."
+→ Tell them: "The doctor will call you within {callback_timeframe} to discuss."
+→ If worried: "Provider review is standard procedure for certain results."
+→ Confirm callback: "Is the number ending in {phone_last4} still the best to reach you?"
+→ Call confirm_callback after they respond
 
-## Scenario 3: Results Pending
+## Results Pending
 If results_status is "Pending":
-→ Explain results are still being processed
-→ Give expected timeline if known
-→ Offer to note that they should be called when results arrive
-→ Example: "Your {test_type} from {test_date} is still being processed. Results typically take 5 to 7 business days. Would you like us to call you when they're ready?"
-→ If yes, confirm phone number and call confirm_callback
+→ Explain: "Your {test_type} from {test_date} is still being processed."
+→ Offer callback: "Would you like us to call you when they're ready?"
+→ If yes, confirm phone and call confirm_callback
 
-# Example Conversations
+# Example Flow (Provider Review)
+You: "I can see your results have been received. However, {ordering_physician} needs to review them before I can share the details. The doctor will call you within {callback_timeframe}. Is the number ending in {phone_last4} the best to reach you?"
+Patient: "Yes, that's my cell."
+→ Call confirm_callback with confirmed=true
 
-Example (Ready, no review):
-"Let me check the status of your lab results. I can see you had a {test_type} performed on {test_date}, ordered by {ordering_physician}. The results are in and show {results_summary}."
-→ Call mark_results_communicated
-
-Example (Provider review required):
-"I can see your lab results have been received from the lab. However, {ordering_physician} needs to review these results before they can be shared with you. The doctor will call you personally within {callback_timeframe} to discuss the results. Is the phone number ending in {phone_last4} still the best number to reach you?"
+# Example Flow (Pending)
+You: "Your {test_type} is still being processed. Would you like us to call when it's ready?"
+Patient: "Yes please."
+You: "Is the number ending in {phone_last4} still good?"
+Patient: "Yes."
+→ Call confirm_callback with confirmed=true
 
 # Guardrails
-- NEVER share results_summary if provider_review_required is True. This step is important.
-- NEVER interpret or diagnose—just relay the summary as written
-- If caller presses for more details you don't have, be honest: "That's all the information I have available"
-- If caller is upset about waiting, empathize but stay on script""",
+- NEVER share results when provider_review_required is True. This step is important.
+- If caller presses for details: "I understand, but the doctor needs to review first."
+- If frustrated, offer transfer: call request_staff
+
+# Error Handling
+If you miss what caller said: "I'm sorry, could you repeat that?"
+If caller gives new number you didn't catch: "Could you say that number again?" """,
                 }
             ],
             functions=[
                 FlowsFunctionSchema(
-                    name="mark_results_communicated",
-                    description="""WHEN TO USE: After successfully sharing lab results with the patient (only when results are ready AND no provider review required).
-RESULT: Records that results were communicated and proceeds to closing.""",
-                    properties={},
-                    required=[],
-                    handler=self._mark_results_communicated_handler,
-                ),
-                FlowsFunctionSchema(
                     name="confirm_callback",
-                    description="""WHEN TO USE: After confirming the callback phone number with patient (for provider review or pending scenarios).
+                    description="""WHEN TO USE: After confirming callback phone number with patient.
 RESULT: Records callback preference and proceeds to closing.
 
 EXAMPLES:
-- Patient confirms "Yes, that's my cell" → confirmed=true
-- Patient gives different number "Actually, call me at 555-1234" → confirmed=true, new_number="5551234"
-- Patient declines callback → confirmed=false""",
+- "Yes, that's my cell" → confirmed=true
+- "Call me at 555-1234" → confirmed=true, new_number="5551234"
+- "No, don't call" → confirmed=false""",
                     properties={
                         "confirmed": {
                             "type": "boolean",
@@ -313,7 +425,7 @@ EXAMPLES:
                         },
                         "new_number": {
                             "type": "string",
-                            "description": "New phone number if patient provided a different one (digits only), or empty",
+                            "description": "New phone number if different (digits only), or empty",
                         },
                     },
                     required=["confirmed"],
@@ -334,6 +446,10 @@ EXAMPLES:
                     "content": """# Goal
 Wrap up the call professionally and check if patient needs anything else.
 
+# IMPORTANT: Do NOT proactively repeat information
+Do NOT summarize or repeat results on your own. Just ask if there's anything else.
+HOWEVER: If the patient asks you to repeat something, you SHOULD repeat it. Use the conversation history to find what was said.
+
 # Example Flow
 You: "Is there anything else I can help you with today?"
 
@@ -350,8 +466,14 @@ If patient needs something else (appointments, billing, etc.):
 
 # Guardrails
 - Keep the closing brief and warm
+- Do NOT repeat or summarize results—they've already been shared
 - Don't introduce new topics
-- If they have more lab questions you can't answer, offer to transfer""",
+- If they have more lab questions you can't answer, offer to transfer
+
+# Error Handling
+If you miss what the caller said:
+- Ask naturally: "I'm sorry, could you repeat that?"
+- Never assume they said goodbye""",
                 }
             ],
             functions=[
@@ -368,7 +490,7 @@ RESULT: Ends the call gracefully.""",
             respond_immediately=True,
         )
 
-    def _create_end_node(self) -> NodeConfig:
+    def create_end_node(self) -> NodeConfig:
         """Terminal node that ends the conversation."""
         return NodeConfig(
             name="end",
@@ -419,7 +541,7 @@ Then call request_staff with patient_confirmed=true.""",
 
     async def _proceed_to_verification_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
+    ) -> tuple[str | None, NodeConfig]:
         """Transition from greeting to verification."""
         logger.info("Flow: Proceeding to identity verification")
         # Return None for message - let the LLM generate the verification request naturally
@@ -427,30 +549,22 @@ Then call request_staff with patient_confirmed=true.""",
 
     async def _verify_identity_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
+    ) -> tuple[str | None, NodeConfig]:
         """Verify caller identity against stored patient record."""
-        provided_name = args.get("name", "").strip().lower()
-        provided_dob = args.get("date_of_birth", "").strip()
+        provided_name = args.get("name", "")
+        provided_dob = args.get("date_of_birth", "")
 
-        stored_name = flow_manager.state.get("patient_name", "").lower()
+        stored_name = flow_manager.state.get("patient_name", "")
         stored_dob = flow_manager.state.get("date_of_birth", "")
 
-        # Normalize DOB for comparison (handle various formats)
-        from backend.utils import parse_natural_date
-        provided_dob_normalized = parse_natural_date(provided_dob) or provided_dob
-        stored_dob_normalized = parse_natural_date(stored_dob) or stored_dob
+        # Use helper methods for normalization
+        provided_name_normalized = self._normalize_name(provided_name)
+        stored_name_normalized = self._normalize_name(stored_name)
+        provided_dob_normalized = self._normalize_dob(provided_dob)
+        stored_dob_normalized = self._normalize_dob(stored_dob)
 
-        # Check if name matches (allow for "Last, First" vs "First Last" formats)
-        name_match = False
-        if stored_name:
-            # Handle "Last, First" format
-            if "," in stored_name:
-                parts = [p.strip() for p in stored_name.split(",")]
-                stored_name_reversed = f"{parts[1]} {parts[0]}".lower() if len(parts) == 2 else stored_name
-                name_match = provided_name == stored_name or provided_name == stored_name_reversed
-            else:
-                name_match = provided_name == stored_name
-
+        # Check matches
+        name_match = provided_name_normalized == stored_name_normalized if stored_name_normalized else False
         dob_match = provided_dob_normalized == stored_dob_normalized if stored_dob_normalized else False
 
         logger.info(f"Flow: Identity verification - name_match={name_match}, dob_match={dob_match}")
@@ -459,52 +573,42 @@ Then call request_staff with patient_confirmed=true.""",
             # Verification successful
             flow_manager.state["identity_verified"] = True
 
-            # Update database
-            try:
-                patient_id = flow_manager.state.get("patient_id")
-                if patient_id:
-                    db = get_async_patient_db()
-                    await db.update_patient(
-                        patient_id,
-                        {"identity_verified": True},
-                        self.organization_id,
-                    )
-                    logger.info(f"Database updated: identity_verified=True for patient {patient_id}")
-            except Exception as e:
-                logger.error(f"Error updating identity verification in database: {e}")
+            # Queue database update (will be flushed at end of call)
+            self._queue_db_update({"identity_verified": True})
 
             # Extract first name for personalized response
-            first_name = provided_name.split()[0].title() if provided_name else "there"
+            first_name = provided_name.strip().split()[0].title() if provided_name.strip() else "there"
 
             logger.info(f"Flow: Identity verified for {first_name}")
+
+            # Check results status and route appropriately
+            results_status = flow_manager.state.get("results_status", "")
+            provider_review_required = flow_manager.state.get("provider_review_required", False)
+            results_summary = flow_manager.state.get("results_summary", "")
+            test_type = flow_manager.state.get("test_type", "lab test")
+            test_date = flow_manager.state.get("test_date", "")
+
+            # Scenario 1: Results ready AND no provider review required
+            # → Share results immediately (handler guarantees this is spoken)
+            if results_status.lower() in ["ready", "available"] and not provider_review_required and results_summary:
+                flow_manager.state["results_communicated"] = True
+                self._queue_db_update({"results_communicated": True})
+                logger.info("Flow: Results communicated to patient (ready, no review required)")
+
+                message = f"Thank you, {first_name}. I found your record. I can see you had a {test_type}"
+                if test_date:
+                    message += f" on {test_date}"
+                message += f". Your results are in and show: {results_summary}"
+
+                return message, self.create_closing_node()
+
+            # Scenario 2: Provider review required OR Scenario 3: Pending
+            # → Go to results node for callback handling
             return f"Thank you, {first_name}. I found your record. Let me check the status of your lab results.", self.create_results_node()
         else:
             # Verification failed
             logger.warning(f"Flow: Identity verification failed - provided: {provided_name}, {provided_dob}")
             return None, self.create_verification_failed_node()
-
-    async def _mark_results_communicated_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
-        """Mark that results were successfully communicated to patient."""
-        flow_manager.state["results_communicated"] = True
-        logger.info("Flow: Results communicated to patient")
-
-        # Update database
-        try:
-            patient_id = flow_manager.state.get("patient_id")
-            if patient_id:
-                db = get_async_patient_db()
-                await db.update_patient(
-                    patient_id,
-                    {"results_communicated": True},
-                    self.organization_id,
-                )
-                logger.info(f"Database updated: results_communicated=True for patient {patient_id}")
-        except Exception as e:
-            logger.error(f"Error updating results_communicated in database: {e}")
-
-        return None, self.create_closing_node()
 
     async def _confirm_callback_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -517,26 +621,18 @@ Then call request_staff with patient_confirmed=true.""",
             callback_timeframe = flow_manager.state.get("callback_timeframe", "24 to 48 hours")
 
             # Update phone number if new one provided
+            update_fields = {"callback_confirmed": True}
             if new_number:
                 # Normalize to digits only
                 new_number_digits = ''.join(c for c in new_number if c.isdigit())
                 flow_manager.state["phone_number"] = new_number_digits
+                update_fields["caller_phone_number"] = new_number_digits
                 logger.info(f"Flow: Callback number updated to {new_number_digits[-4:]}")
 
             logger.info("Flow: Callback confirmed")
 
-            # Update database
-            try:
-                patient_id = flow_manager.state.get("patient_id")
-                if patient_id:
-                    db = get_async_patient_db()
-                    update_fields = {"callback_confirmed": True}
-                    if new_number:
-                        update_fields["caller_phone_number"] = flow_manager.state.get("phone_number")
-                    await db.update_patient(patient_id, update_fields, self.organization_id)
-                    logger.info(f"Database updated: callback confirmed for patient {patient_id}")
-            except Exception as e:
-                logger.error(f"Error updating callback confirmation in database: {e}")
+            # Queue database update (will be flushed at end of call)
+            self._queue_db_update(update_fields)
 
             response = f"I've confirmed your callback number. You should expect a call within {callback_timeframe}."
         else:
@@ -554,6 +650,9 @@ Then call request_staff with patient_confirmed=true.""",
         db = get_async_patient_db() if patient_id else None
 
         try:
+            # Flush all pending database updates
+            await self._flush_db_updates()
+
             # Save transcript
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
@@ -573,7 +672,7 @@ Then call request_staff with patient_confirmed=true.""",
                 except Exception as db_error:
                     logger.error(f"Failed to update status to Failed: {db_error}")
 
-        return None, self._create_end_node()
+        return None, self.create_end_node()
 
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager

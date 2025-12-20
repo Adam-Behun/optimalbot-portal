@@ -122,6 +122,7 @@ def grade_function_calls(calls_text: str, final_state: dict, patient: dict) -> d
     """Grade function call correctness - right functions at right times."""
     provider_review_required = patient.get("provider_review_required", False)
     results_status = patient.get("results_status", "")
+    identity_verified = final_state.get("identity_verified", False)
 
     prompt = f"""Grade whether the bot called functions correctly for a LAB RESULTS inquiry.
 
@@ -135,14 +136,20 @@ FUNCTION CALLS:
 FINAL STATE:
 {json.dumps(final_state, indent=2)}
 
-Check for:
+GRADING RULES:
 1. proceed_to_verification called when caller asks about lab results
-2. verify_identity called with name AND DOB before sharing any results
-3. mark_results_communicated called ONLY when results are ready AND no review required
-4. confirm_callback called for provider_review or pending scenarios
-5. request_staff called when caller asks for human
-6. end_call called when conversation concludes normally
-7. No premature result sharing before verification
+2. verify_identity called with name AND DOB before sharing any results (unless caller refuses/requests transfer)
+3. If identity_verified=True AND results ready AND no review required: results_communicated should be True
+4. If identity_verified=False (verification FAILED or bypassed): results_communicated should be False - this is CORRECT
+5. For provider_review or pending scenarios: confirm_callback should be called
+6. request_staff called when caller asks for human OR refuses verification - this is CORRECT
+7. end_call called when conversation concludes normally
+
+IMPORTANT SCENARIOS WHERE verify_identity IS NOT CALLED (this is CORRECT):
+- Caller requests transfer to human before providing info → request_staff called directly
+- Caller refuses to verify → request_staff called directly
+
+If caller explicitly requested human/staff, NOT calling verify_identity is CORRECT behavior.
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -153,7 +160,26 @@ FAIL: <5 words what went wrong>"""
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
-def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict, patient: dict) -> dict:
+def grade_node_reached(final_node: str, expected_node: str) -> dict:
+    """Grade whether the conversation reached the expected end node."""
+    # Handle equivalent end states
+    equivalent_end_nodes = {"end", "closing"}  # closing transitions to end
+    # verification_failed naturally leads to transfer_initiated
+    verification_failed_equivalents = {"verification_failed", "transfer_initiated"}
+
+    if expected_node == "end" and final_node in equivalent_end_nodes:
+        return {"pass": True, "reason": f"PASS: Reached {final_node} (equivalent to end)"}
+
+    if expected_node == "verification_failed" and final_node in verification_failed_equivalents:
+        return {"pass": True, "reason": f"PASS: Reached {final_node} (verification failed, transferred to staff)"}
+
+    if final_node == expected_node:
+        return {"pass": True, "reason": f"PASS: Reached expected node {expected_node}"}
+
+    return {"pass": False, "reason": f"FAIL: Expected {expected_node}, got {final_node}"}
+
+
+def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict, patient: dict, final_node: str, expected_node: str) -> dict:
     """
     Run all graders and combine results. ALL must pass for overall pass.
     Returns: {"pass": bool, "reason": str, "details": {...}}
@@ -170,9 +196,10 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
     hipaa = grade_hipaa_compliance(conv_text, expected_problem, calls_text, final_state, patient)
     quality = grade_conversation_quality(conv_text)
     functions = grade_function_calls(calls_text, final_state, patient)
+    node_reached = grade_node_reached(final_node, expected_node)
 
     # All must pass
-    all_passed = hipaa["pass"] and quality["pass"] and functions["pass"]
+    all_passed = hipaa["pass"] and quality["pass"] and functions["pass"] and node_reached["pass"]
 
     # Build combined reason
     failures = []
@@ -182,6 +209,8 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         failures.append(f"quality: {quality['reason']}")
     if not functions["pass"]:
         failures.append(f"functions: {functions['reason']}")
+    if not node_reached["pass"]:
+        failures.append(f"node: {node_reached['reason']}")
 
     if all_passed:
         reason = "PASS: All checks passed"
@@ -195,6 +224,7 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
             "hipaa": hipaa,
             "quality": quality,
             "functions": functions,
+            "node_reached": node_reached,
         }
     }
 
@@ -264,6 +294,7 @@ class FlowRunner:
         self.flow._init_flow_state()
 
         self.current_node = self.flow.create_greeting_node()
+        self.current_node_name = "greeting"  # Track node name for grading
         self.conversation_history = []
         self.function_calls = []  # Track all function calls
         self.done = False
@@ -386,6 +417,7 @@ class FlowRunner:
                     next_node_name = next_node.get("name", "unknown")
 
                     self.current_node = next_node
+                    self.current_node_name = next_node_name  # Track for grading
 
                     # Process pre_actions on the new node (e.g., tts_say)
                     pre_actions = self.current_node.get("pre_actions") or []
@@ -510,8 +542,10 @@ async def run_simulation(
             conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
 
     final_state = runner.mock_flow_manager.state
+    final_node = runner.current_node_name
 
     print(f"\n{'='*70}")
+    print(f"FINAL NODE: {final_node}")
     print("FINAL STATE:")
     print(json.dumps(final_state, indent=2, default=str))
     print(f"{'='*70}\n")
@@ -523,6 +557,7 @@ async def run_simulation(
         "conversation": conversation,
         "function_calls": runner.function_calls,
         "final_state": final_state,
+        "final_node": final_node,
         "patient": patient,
         "turns": turn,
     }
@@ -541,12 +576,16 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
     with open(txt_file, "w") as f:
         f.write(f"SCENARIO: {result['scenario_id']}\n")
         f.write(f"EXPECTED: {result['expected_problem']}\n")
+        f.write(f"TARGET NODE: {result['target_node']}\n")
+        f.write(f"FINAL NODE: {result['final_node']}\n")
         f.write(f"{'='*60}\n\n")
         for msg in result["conversation"]:
             role = "JAMIE" if msg["role"] == "assistant" else "CALLER"
             f.write(f"{role}: {msg['content']}\n\n")
         f.write(f"{'='*60}\n")
         f.write(f"GRADE: {'PASS' if grade['pass'] else 'FAIL'} - {grade['reason']}\n")
+        if grade.get("details", {}).get("node_reached"):
+            f.write(f"NODE CHECK: {grade['details']['node_reached']['reason']}\n")
 
     # Structure follows Langfuse DatasetRunItem concept
     output = {
@@ -568,6 +607,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
             "conversation": result["conversation"],
             "function_calls": result["function_calls"],
             "final_state": result["final_state"],
+            "final_node": result["final_node"],
             "turns": result["turns"],
         },
 
@@ -639,13 +679,15 @@ async def run_scenario(scenario_id: str) -> dict:
     # Run simulation (trace is created by @observe decorator)
     result = await run_simulation(scenario, llm_config)
 
-    # Grade the result (3 graders: hipaa, quality, functions)
+    # Grade the result (4 graders: hipaa, quality, functions, node_reached)
     grade = grade_scenario(
         result["conversation"],
         result["expected_problem"],
         result["function_calls"],
         result["final_state"],
-        result["patient"]
+        result["patient"],
+        result["final_node"],
+        result["target_node"],
     )
 
     # Print grade

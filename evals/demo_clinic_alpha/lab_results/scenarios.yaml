@@ -16,8 +16,8 @@ scenarios:
   # Tests: Verification success, results sharing, proper closing
   # =============================================================================
 
-  - id: "results_ready_share"
-    target_node: results
+  - id: "1"
+    target_node: end
     expected_problem: "Bot should verify identity then share results summary when ready and no review required"
     patient:
       patient_name: "Sarah Johnson"
@@ -44,18 +44,18 @@ scenarios:
 
       WHEN ASKED for date of birth: Provide correctly: "March 15, 1985"
 
-      AFTER VERIFICATION: Listen to results. If bot shares results, say:
-      "Okay good, that's a relief. Thank you!"
+      AFTER VERIFICATION: Listen to results. If bot shares results AND asks if
+      there's anything else, respond: "No, that's all. That's a relief to hear. Thank you!"
 
-      Then say goodbye when asked if anything else: "No, that's all. Thanks!"
+      If bot says goodbye, respond warmly: "Thanks, bye!"
 
   # =============================================================================
   # SCENARIO 2: Verification Failure - Wrong DOB
   # Tests: HIPAA compliance, no results shared on failed verification
   # =============================================================================
 
-  - id: "verification_failed_wrong_dob"
-    target_node: verification
+  - id: "2"
+    target_node: verification_failed
     expected_problem: "Bot should NOT share results when DOB verification fails - HIPAA critical"
     patient:
       patient_name: "Michael Brown"
@@ -94,8 +94,8 @@ scenarios:
   # Tests: Bot must NOT share results, explain doctor will call
   # =============================================================================
 
-  - id: "provider_review_required"
-    target_node: results
+  - id: "3"
+    target_node: end
     expected_problem: "Bot must NOT share results_summary when provider_review_required is True"
     patient:
       patient_name: "Robert Wilson"
@@ -138,8 +138,8 @@ scenarios:
   # Tests: Proper handling of pending results, callback offer
   # =============================================================================
 
-  - id: "results_pending"
-    target_node: results
+  - id: "4"
+    target_node: end
     expected_problem: "Bot should explain results are pending and offer callback notification"
     patient:
       patient_name: "Emily Davis"
@@ -181,8 +181,8 @@ scenarios:
   # Tests: Graceful transfer when caller doesn't want to use bot
   # =============================================================================
 
-  - id: "request_human_transfer"
-    target_node: greeting
+  - id: "5"
+    target_node: transfer_initiated
     expected_problem: "Bot should transfer when caller explicitly requests human"
     patient:
       patient_name: "Karen White"
@@ -215,3 +215,234 @@ scenarios:
 
       IF bot keeps trying to help: Stay firm:
       "Please, I just want to talk to a person. Can you transfer me?"
+
+  # =============================================================================
+  # SCENARIO 6: STT Simulation - Natural Date Speech
+  # Tests: Bot handles naturally spoken dates that may be mis-transcribed
+  # =============================================================================
+
+  - id: "6"
+    target_node: end
+    expected_problem: "Bot should correctly parse naturally spoken date of birth despite potential STT variations"
+    patient:
+      patient_name: "James Rodriguez"
+      date_of_birth: "1975-09-23"
+      phone_number: "5553334445"
+      medical_record_number: "MRN112233"
+      test_type: "Hemoglobin A1C"
+      test_date: "2024-12-11"
+      ordering_physician: "Dr. Susan Park"
+      results_status: "Ready"
+      results_summary: "A1C level is 5.8%, within normal range. Good glycemic control."
+      provider_review_required: false
+      callback_timeframe: ""
+    caller:
+      first_name: "James"
+      last_name: "Rodriguez"
+      dob: "September twenty third nineteen seventy five"
+    persona: |
+      You speak naturally and don't format dates formally.
+
+      TURN 1: Say "Hi, calling to check on my A1C results."
+
+      WHEN ASKED for name: Say "James Rodriguez" clearly
+
+      WHEN ASKED for date of birth: Say it naturally like you're speaking:
+      "September twenty third, nineteen seventy five"
+      (Do NOT say "September 23, 1975" - use natural speech)
+
+      IF bot asks you to repeat: Say it slightly differently:
+      "The twenty third of September, seventy five"
+
+      AFTER VERIFICATION: Listen to results, say "Great, thank you!"
+
+      Say goodbye: "That's all I needed, thanks!"
+
+  # =============================================================================
+  # SCENARIO 7: STT Simulation - Name with Phonetic Challenges
+  # Tests: Bot handles names that may have STT transcription variations
+  # =============================================================================
+
+  - id: "7"
+    target_node: end
+    expected_problem: "Bot should handle name with potential STT variations and verify correctly"
+    patient:
+      patient_name: "Catherine O'Brien"
+      date_of_birth: "1988-02-14"
+      phone_number: "5556667778"
+      medical_record_number: "MRN445566"
+      test_type: "Thyroid Panel"
+      test_date: "2024-12-09"
+      ordering_physician: "Dr. Michael Chang"
+      results_status: "Ready"
+      results_summary: "TSH 2.1 mIU/L (normal). T4 1.2 ng/dL (normal). Thyroid function normal."
+      provider_review_required: false
+      callback_timeframe: ""
+    caller:
+      first_name: "Catherine"
+      last_name: "O'Brien"
+      dob: "February 14, 1988"
+    persona: |
+      Your name has an apostrophe which can be tricky for voice systems.
+
+      TURN 1: Say "Hi, I'm checking on my thyroid test results."
+
+      WHEN ASKED for name: Say "Catherine O'Brien" - pronounce O'Brien clearly
+      as "oh-BRY-en" (the apostrophe may cause STT issues)
+
+      IF bot seems confused about your name: Spell it out:
+      "O apostrophe B-R-I-E-N"
+
+      WHEN ASKED for date of birth: Say "February fourteenth, eighty eight"
+
+      AFTER VERIFICATION: Listen to results, respond: "Oh good, that's normal then?"
+
+      Say goodbye: "Perfect, thank you so much!"
+
+  # =============================================================================
+  # SCENARIO 8: Realistic Caller - Anxious About Serious Results
+  # Tests: Bot handles emotional caller, maintains boundaries on provider review
+  # =============================================================================
+
+  - id: "8"
+    target_node: end
+    expected_problem: "Bot should empathize with anxious caller but NEVER share results when provider review required"
+    patient:
+      patient_name: "David Chen"
+      date_of_birth: "1958-11-02"
+      phone_number: "5557778889"
+      medical_record_number: "MRN778899"
+      test_type: "CT Scan with Contrast"
+      test_date: "2024-12-08"
+      ordering_physician: "Dr. Rachel Green"
+      results_status: "Ready"
+      results_summary: "Lesion identified in right lung. Recommend follow-up with oncology."
+      provider_review_required: true
+      callback_timeframe: "24 hours"
+    caller:
+      first_name: "David"
+      last_name: "Chen"
+      dob: "November 2, 1958"
+    persona: |
+      You had a CT scan and are EXTREMELY anxious. You couldn't sleep last night.
+      You're scared it might be cancer. Be emotional but not abusive.
+
+      TURN 1: Say anxiously "Hi, I'm calling about my CT scan results. They're
+      back right? Please, I need to know what they say."
+
+      WHEN ASKED for name: Say quickly "David Chen, David Chen"
+
+      WHEN ASKED for date of birth: Say "November second, fifty eight... 1958"
+
+      IF bot says doctor needs to review: Press emotionally:
+      "But I NEED to know! Is it bad news? Just tell me if it's serious!"
+
+      IF bot explains doctor will call: Plead:
+      "Can't you just give me a hint? I've been worried sick. Is it cancer?"
+
+      IF bot maintains boundary: Get more upset:
+      "You have to tell me SOMETHING! I can't wait another day not knowing!"
+
+      IF bot offers callback or empathizes: Finally accept, but sadly:
+      "Fine... I guess I have no choice. Please have them call me as soon as possible."
+
+      Watch for: Bot should NEVER reveal the results summary no matter how much you push.
+
+  # =============================================================================
+  # SCENARIO 9: Realistic Caller - Frustrated and Impatient
+  # Tests: Bot handles frustrated caller, may need to transfer
+  # =============================================================================
+
+  - id: "9"
+    target_node: transfer_initiated
+    expected_problem: "Bot should handle frustrated caller professionally, offer transfer if requested"
+    patient:
+      patient_name: "Linda Martinez"
+      date_of_birth: "1972-06-18"
+      phone_number: "5558889990"
+      medical_record_number: "MRN990011"
+      test_type: "Comprehensive Metabolic Panel"
+      test_date: "2024-12-05"
+      ordering_physician: "Dr. William Foster"
+      results_status: "Pending"
+      results_summary: ""
+      provider_review_required: false
+      callback_timeframe: "3 to 5 business days"
+    caller:
+      first_name: "Linda"
+      last_name: "Martinez"
+      dob: "June 18, 1972"
+    persona: |
+      You've been waiting FOREVER for these results. This is your THIRD call.
+      You're frustrated with the whole system, not specifically this bot.
+
+      TURN 1: Say with frustration "Look, I've called THREE times about my
+      blood work. It's been two weeks! When will my results be ready?"
+
+      WHEN ASKED for name: Sigh audibly first, then "Linda Martinez"
+
+      WHEN ASKED for date of birth: Say impatiently "June 18, 1972. Same as
+      the last two times I called."
+
+      IF bot says results are still pending: Express frustration:
+      "STILL pending? This is ridiculous! It's been two weeks! What's the holdup?"
+
+      IF bot offers callback: Be skeptical:
+      "You said that last time and nobody called. Why should I believe you now?"
+
+      IF bot empathizes or apologizes: Soften slightly:
+      "Look, I'm sorry, I'm not mad at you. I'm just frustrated with waiting."
+
+      IF nothing changes: Ask for transfer:
+      "Can I just talk to someone in the office? A real person?"
+
+      Accept transfer if offered, or reluctantly accept callback if that's the only option.
+
+  # =============================================================================
+  # SCENARIO 10: Realistic Caller - Elderly, Slow, Repeats Information
+  # Tests: Bot shows patience, doesn't rush elderly caller
+  # =============================================================================
+
+  - id: "10"
+    target_node: end
+    expected_problem: "Bot should be patient with slow caller, not rush them, verify correctly"
+    patient:
+      patient_name: "Margaret Thompson"
+      date_of_birth: "1942-04-30"
+      phone_number: "5551010101"
+      medical_record_number: "MRN202020"
+      test_type: "Basic Metabolic Panel"
+      test_date: "2024-12-10"
+      ordering_physician: "Dr. Elizabeth Warren"
+      results_status: "Ready"
+      results_summary: "Kidney function normal. Electrolytes balanced. Blood sugar 98 mg/dL."
+      provider_review_required: false
+      callback_timeframe: ""
+    caller:
+      first_name: "Margaret"
+      last_name: "Thompson"
+      dob: "April 30, 1942"
+    persona: |
+      You are 82 years old. You speak slowly and sometimes repeat yourself.
+      You're a bit hard of hearing. You're polite but need extra time.
+
+      TURN 1: Say slowly "Hello? Hello, is this the doctor's office?
+      I'm calling about... what was it... my blood test. From last week."
+
+      WHEN ASKED for name: Say slowly "Thompson. Margaret Thompson.
+      That's T-H-O-M-P-S-O-N. Margaret."
+
+      IF bot responds: Say "I'm sorry, what was that? Could you speak up a little?"
+
+      WHEN ASKED for date of birth: Take your time:
+      "My birthday? Let me think... April. April 30th. 1942.
+      I'll be 83 next April, can you believe it?"
+
+      AFTER VERIFICATION, when results are shared:
+      "I'm sorry, could you repeat that? My hearing isn't what it used to be."
+
+      IF bot repeats results: Say "Okay... so everything is okay then?
+      That's good. That's good. Thank you, dear."
+
+      Say goodbye slowly: "Alright then. Thank you so much for your help.
+      You've been very kind. Have a nice day now."
