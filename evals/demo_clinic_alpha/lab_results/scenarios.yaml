@@ -864,3 +864,103 @@ scenarios:
       - Scheduling workflow should receive context (follow-up, returning patient)
       - After scheduling completes, caller should be able to end call gracefully
       - Identity verification should NOT repeat since caller is already verified
+
+  # =============================================================================
+  # SCENARIO 16: Lab Results → Prescription (Multi-Workflow)
+  # Tests: Workflow handoff from lab results to prescription with context preservation
+  # =============================================================================
+
+  - id: "16"
+    target_node: end
+    expected_problem: "Multi-workflow test: lab results inquiry THEN prescription check with context preservation"
+    patient:
+      patient_name: "Richard Kim"
+      date_of_birth: "1971-04-12"
+      phone_number: "5557776655"
+      medical_record_number: "MRN554433"
+      # Lab results data
+      test_type: "Lipid Panel"
+      test_date: "2024-12-10"
+      ordering_physician: "Dr. Michael Torres"
+      results_status: "Ready"
+      results_summary: "Total cholesterol 225 mg/dL (borderline high). LDL 145 mg/dL (borderline high). HDL 48 mg/dL (low). Triglycerides 160 mg/dL (borderline high)."
+      provider_review_required: false
+      callback_timeframe: ""
+      # Prescription data (for handoff)
+      medication_name: "Atorvastatin"
+      dosage: "20mg"
+      refill_status: "Sent to Pharmacy"
+      refills_remaining: 2
+      prescribing_physician: "Dr. Michael Torres"
+      last_filled_date: "12/05/2024"
+      pharmacy_name: "CVS Pharmacy"
+      pharmacy_phone: "(555) 888-9999"
+      pharmacy_address: "200 Oak Street"
+    caller:
+      first_name: "Richard"
+      last_name: "Kim"
+      dob: "April 12, 1971"
+    persona: |
+      You're checking on cholesterol test results, and based on those results, want to
+      check on your statin prescription. This is a 12+ turn multi-workflow conversation.
+
+      === PHASE 1: LAB RESULTS WORKFLOW ===
+
+      TURN 1: "Hi, I'm calling to check on my cholesterol test results."
+
+      WHEN ASKED for name: "Richard Kim"
+
+      WHEN ASKED for date of birth: "April 12th, 1971"
+
+      AFTER VERIFICATION, when bot shares lipid panel results (borderline high cholesterol):
+      "Hmm, so my cholesterol is still a bit high. I was hoping the medication would
+      bring it down more."
+
+      IF bot suggests discussing with doctor:
+      "Yeah, I'll talk to Dr. Torres about it at my next appointment."
+
+      WHEN BOT asks if there's anything else:
+      "Actually yes - speaking of that, I'm on Lipitor for my cholesterol.
+      Can you check if my refill is ready? I think I requested one last week."
+
+      === PHASE 2: TRANSITION TO PRESCRIPTION ===
+
+      The bot should call route_to_workflow with workflow="prescription_status"
+
+      === PHASE 3: PRESCRIPTION WORKFLOW (HANDOFF) ===
+
+      Pay close attention to context preservation:
+
+      IF prescription asks for your name or DOB again:
+      Express mild frustration: "I just verified for the lab results.
+      Richard Kim, April 12, 1971."
+
+      IF prescription proceeds directly to checking medication (good - context preserved):
+      Respond normally.
+
+      IF prescription asks which medication or clarifies:
+      "The cholesterol medication - Atorvastatin, I think it's also called Lipitor?"
+
+      WHEN prescription status is shared (Sent to Pharmacy):
+      "Oh good, so it's already at the pharmacy? Great, I'll pick it up today."
+
+      IF bot provides pharmacy info:
+      "Perfect, CVS on Oak Street. Got it."
+
+      WHEN BOT asks if there's anything else:
+      "No, that's everything. Thank you for checking on both the results and the prescription!"
+
+      WHEN BOT says goodbye:
+      "Thanks, have a great day!"
+
+      === EVALUATION CRITERIA ===
+
+      This 12+ turn conversation tests:
+      - Lab Results: Verification, results sharing, handling borderline results
+      - Natural connection: Lab results show high cholesterol → ask about cholesterol medication
+      - Transition: route_to_workflow with workflow="prescription_status"
+      - Context preservation: identity_verified=True should carry through
+      - Prescription should NOT re-verify identity (already done in lab results)
+      - Prescription should proceed directly to medication check
+      - Natural multi-workflow conversation flow
+      - Proper closing after both workflows complete

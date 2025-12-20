@@ -584,11 +584,12 @@ scenarios:
   # =============================================================================
 
   - id: "23"
-    target_node: handoff_entry
-    expected_problem: "Bot may re-greet or re-ask questions already answered in mainline"
+    target_node: end
+    expected_problem: "Multi-workflow test: scheduling handoff from mainline THEN prescription check with context preservation"
     # This scenario simulates a patient who has ALREADY spoken to mainline.
     # The mainline gathered context and handed off to patient_scheduling.
     # Bot should NOT re-greet, NOT re-ask new/returning, NOT re-ask visit reason.
+    # After scheduling, caller asks about prescription - tests Scheduling → Prescription handoff.
     handoff_context: "follow-up appointment after root canal, returning patient, been coming here for three years, prefers Dr. Martinez"
     patient:
       first_name: "Maria"
@@ -596,10 +597,27 @@ scenarios:
       phone: "5559998888"
       dob: "November 30, 1982"
       email: "maria.gonzalez@email.com"
+      # Prescription data (for handoff to prescription_status)
+      patient_name: "Maria Gonzalez"
+      date_of_birth: "11/30/1982"
+      phone_number: "5559998888"
+      medical_record_number: "MRN887766"
+      medication_name: "Amoxicillin"
+      dosage: "500mg"
+      refill_status: "Active"
+      refills_remaining: 1
+      prescribing_physician: "Dr. Martinez"
+      last_filled_date: "12/10/2024"
+      pharmacy_name: "CVS Pharmacy"
+      pharmacy_phone: "(555) 222-3333"
     persona: |
       You are a returning patient who has ALREADY spoken to the main receptionist.
       You told them you need a follow-up after your root canal last week with Dr. Martinez.
       You've been coming here for 3 years. They're now transferring you to scheduling.
+
+      This is a 15+ turn multi-workflow conversation testing Scheduling → Prescription handoff.
+
+      === PHASE 1: SCHEDULING WORKFLOW (FROM MAINLINE HANDOFF) ===
 
       IMPORTANT: You have ALREADY provided context. Do NOT repeat your full story.
 
@@ -620,6 +638,57 @@ scenarios:
       IF BOT ignores Dr. Martinez preference: Remind them: "I mentioned I prefer Dr. Martinez - is she available?"
 
       For any additional info needed, provide: "Maria Gonzalez", email "maria.gonzalez@email.com".
+
+      AFTER appointment is confirmed:
+      "Great, that's booked!"
+
+      === PHASE 2: TRANSITION TO PRESCRIPTION ===
+
+      WHEN BOT asks if there's anything else:
+      "Oh, while I have you - Dr. Martinez prescribed antibiotics after my root canal.
+      Can you check if I have any refills left? I want to make sure I have enough."
+
+      === PHASE 3: PRESCRIPTION WORKFLOW (HANDOFF) ===
+
+      Pay close attention to context preservation:
+
+      IF prescription asks for your name or DOB again:
+      Express frustration: "I just verified for the scheduling - Maria Gonzalez,
+      November 30, 1982. Do I have to keep repeating myself?"
+
+      IF prescription proceeds directly to checking medication (good - context preserved):
+      Respond normally.
+
+      IF prescription asks which medication:
+      "The antibiotics from after my root canal. Amoxicillin I think?"
+
+      WHEN prescription status is shared (1 refill remaining):
+      "Okay good, so I have one refill left. That should be enough."
+
+      IF bot offers to submit the refill:
+      "Yes please, send it to my pharmacy."
+
+      AFTER refill is confirmed:
+      "Perfect, thank you!"
+
+      WHEN BOT asks if there's anything else:
+      "No, that's everything. Thank you for helping with both the appointment and the prescription!"
+
+      WHEN BOT says goodbye:
+      "Thanks so much, have a great day!"
+
+      === EVALUATION CRITERIA ===
+
+      This 15+ turn conversation tests:
+      - Mainline → Scheduling handoff (context from mainline preserved)
+      - Scheduling: Phone lookup, DOB verification, slot selection, confirmation
+      - Transition: route_to_workflow with workflow="prescription_status"
+      - Context preservation: identity_verified=True should carry through
+      - Prescription should NOT re-verify identity (already done in scheduling)
+      - Prescription should proceed directly to medication check
+      - Refill submission
+      - Natural multi-workflow conversation flow
+      - Proper closing after both workflows complete
 
   - id: "24"
     target_node: handoff_entry
@@ -653,3 +722,96 @@ scenarios:
 
       AT CONFIRMATION: Verify the visit reason is "whitening consultation" not something generic.
       If bot says "appointment" without mentioning whitening: Ask "This is for the whitening consultation, right?"
+
+  # =============================================================================
+  # MULTI-WORKFLOW: Scheduling → Lab Results
+  # Tests: Workflow handoff from scheduling to lab results with context preservation
+  # =============================================================================
+
+  - id: "25"
+    target_node: end
+    expected_problem: "Multi-workflow test: scheduling appointment THEN lab results inquiry with context preservation"
+    patient:
+      first_name: "Steven"
+      last_name: "Park"
+      phone: "5556665544"
+      dob: "September 8, 1985"
+      email: "steven.park@email.com"
+      # Lab results data (for handoff)
+      patient_name: "Steven Park"
+      date_of_birth: "09/08/1985"
+      phone_number: "5556665544"
+      medical_record_number: "MRN998877"
+      test_type: "Lipid Panel"
+      test_date: "2024-12-12"
+      ordering_physician: "Dr. Jennifer Adams"
+      results_status: "Ready"
+      results_summary: "Total cholesterol 195 mg/dL (normal). LDL 120 mg/dL (near optimal). HDL 55 mg/dL (normal). Triglycerides 100 mg/dL (normal)."
+      provider_review_required: false
+    persona: |
+      You're scheduling a follow-up for your annual physical, and also want to check
+      on the blood work from that physical. This is a 12+ turn multi-workflow conversation.
+
+      === PHASE 1: SCHEDULING WORKFLOW ===
+
+      TURN 1: "Hi, I need to schedule a follow-up for my annual physical."
+
+      WHEN ASKED if you're new or returning: "I'm a returning patient."
+
+      WHEN ASKED for phone to look up record: "555-666-5544"
+
+      WHEN ASKED for DOB to verify: "September 8th, 1985"
+
+      WHEN ASKED what the appointment is for:
+      "A follow-up with Dr. Adams to go over my physical results."
+
+      WHEN OFFERED time slots:
+      "The Friday afternoon one works for me."
+
+      IF scheduling asks for additional info (email):
+      "steven.park@email.com"
+
+      AFTER appointment is confirmed:
+      "Perfect, that's booked."
+
+      === PHASE 2: TRANSITION TO LAB RESULTS ===
+
+      WHEN BOT asks if there's anything else:
+      "Thanks! Before I go - the blood work from my physical last week, are those results
+      in yet? The doctor said she'd call if anything was abnormal, but I'd like to know
+      either way."
+
+      === PHASE 3: LAB RESULTS WORKFLOW (HANDOFF) ===
+
+      Pay close attention to context preservation:
+
+      IF lab results asks for your name or DOB again:
+      Express mild surprise: "I just gave that information. I'm Steven Park,
+      September 8, 1985."
+
+      IF lab results proceeds directly to checking results (good - context preserved):
+      Listen attentively.
+
+      WHEN bot shares lipid panel results (cholesterol levels):
+      "Oh great, so everything looks normal? That's good to hear."
+
+      IF bot mentions the follow-up appointment already scheduled:
+      "Yes, that's perfect - I can discuss the details with Dr. Adams at that appointment."
+
+      WHEN BOT asks if there's anything else:
+      "No, that covers everything. Thanks for checking on both the appointment and the results!"
+
+      WHEN BOT says goodbye:
+      "Thank you, have a great day!"
+
+      === EVALUATION CRITERIA ===
+
+      This 12+ turn conversation tests:
+      - Scheduling: Returning patient lookup, DOB verification, slot selection, confirmation
+      - Transition: route_to_workflow with workflow="lab_results"
+      - Context preservation: identity_verified=True should carry through
+      - Lab results should NOT re-verify identity (already done in scheduling)
+      - Lab results should proceed directly to sharing results
+      - Natural connection between scheduling follow-up and checking results
+      - Natural multi-workflow conversation flow
+      - Proper closing after both workflows complete

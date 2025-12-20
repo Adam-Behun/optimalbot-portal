@@ -375,7 +375,7 @@ scenarios:
 
   - id: "11"
     target_node: end
-    expected_problem: "Comprehensive test: verification, multiple prescriptions, refills, follow-ups, and proper closing"
+    expected_problem: "Comprehensive multi-workflow test: prescription handling THEN scheduling handoff with context preservation"
     patient:
       patient_name: "Margaret Johnson"
       date_of_birth: "06/15/1978"
@@ -383,6 +383,8 @@ scenarios:
       pharmacy_name: "CVS Pharmacy"
       pharmacy_phone: "(555) 777-8888"
       pharmacy_address: "789 Elm Street"
+      phone_number: "5557778888"
+      email: "margaret.johnson@email.com"
       prescriptions:
         - medication_name: "Lisinopril"
           dosage: "10mg"
@@ -403,8 +405,10 @@ scenarios:
           prescribing_physician: "Dr. Williams"
           last_filled_date: "10/15/2024"
     persona: |
-      This is a comprehensive test of the full prescription workflow. You will have a natural,
-      multi-turn conversation that exercises all major flow paths.
+      This is a comprehensive multi-workflow test. You will have a 15+ turn conversation
+      that exercises prescription workflow THEN hands off to scheduling workflow.
+
+      === PHASE 1: PRESCRIPTION WORKFLOW ===
 
       TURN 1: Start naturally: "Hi, I'm calling to check on my prescriptions. I have a few questions."
 
@@ -443,16 +447,147 @@ scenarios:
       "Actually, one quick question - when was my last refill for the Lisinopril?"
 
       AFTER GETTING last fill date:
-      "Got it, thanks! That's all I needed. You've been very helpful."
+      "Got it, thanks!"
+
+      === PHASE 2: TRANSITION TO SCHEDULING ===
+
+      WHEN BOT asks if there's anything else again:
+      "Actually yes - I need to schedule a follow-up appointment with Dr. Williams to discuss
+      adjusting my dosages. Can I do that now?"
+
+      === PHASE 3: SCHEDULING WORKFLOW (HANDOFF) ===
+
+      Pay close attention to context preservation:
+
+      IF scheduling asks for your name or DOB again:
+      Express mild frustration: "I just verified my identity for the prescription check.
+      I'm Margaret Johnson, DOB June 15, 1978."
+
+      IF scheduling asks if you're new or returning:
+      "I'm a returning patient - you should have that from just now."
+
+      IF scheduling asks what the appointment is for:
+      "A follow-up with Dr. Williams about my medications - the ones we just discussed."
+
+      IF scheduling proceeds directly to offering time slots (good - context preserved):
+      Respond normally: "What times do you have available?"
+
+      WHEN OFFERED time slots:
+      "The Friday appointment works for me."
+
+      IF scheduling asks for additional info (phone, email):
+      Provide: "My phone is 555-777-8888 and email is margaret.johnson@email.com"
+
+      AFTER appointment is confirmed:
+      "Perfect, thank you!"
+
+      WHEN BOT asks if there's anything else:
+      "No, that's everything now. You've been very helpful!"
 
       WHEN BOT says goodbye:
       "Thank you so much! Have a great day!"
 
-      This should be a 10+ turn conversation that tests:
-      - Proper greeting and verification flow
-      - Multiple prescription identification
-      - Refill submission
-      - Status inquiries for different states (Active, Sent to Pharmacy, Pending)
-      - Follow-up questions (pharmacy info, last fill date)
-      - Natural conversation flow
-      - Proper closing
+      === EVALUATION CRITERIA ===
+
+      This 15+ turn conversation tests:
+      - Prescription: Verification, multiple medications, refill, pharmacy info, last fill date
+      - Transition: route_to_workflow function call with workflow="scheduling"
+      - Context preservation: identity_verified=True should carry through
+      - Scheduling should NOT re-verify identity (already done)
+      - Scheduling should know it's for a "follow-up" with "Dr. Williams"
+      - Natural multi-workflow conversation flow
+      - Proper closing after both workflows complete
+
+  # =============================================================================
+  # MULTI-WORKFLOW: Prescription Status → Lab Results
+  # Tests: Workflow handoff from prescription to lab results with context preservation
+  # =============================================================================
+
+  - id: "13"
+    target_node: end
+    expected_problem: "Multi-workflow test: prescription check THEN lab results inquiry with context preservation"
+    patient:
+      patient_name: "Angela Foster"
+      date_of_birth: "07/22/1979"
+      medical_record_number: "MRN667788"
+      phone_number: "5554443322"
+      email: "angela.foster@email.com"
+      pharmacy_name: "Walgreens"
+      pharmacy_phone: "(555) 333-4444"
+      # Prescription data
+      medication_name: "Levothyroxine"
+      dosage: "50mcg"
+      refill_status: "Active"
+      refills_remaining: 3
+      prescribing_physician: "Dr. Sarah Chen"
+      last_filled_date: "12/01/2024"
+      # Lab results data (for handoff)
+      test_type: "Thyroid Panel"
+      test_date: "2024-12-15"
+      ordering_physician: "Dr. Sarah Chen"
+      results_status: "Ready"
+      results_summary: "TSH 2.4 mIU/L (normal range). T4 1.1 ng/dL (normal). Thyroid function normal."
+      provider_review_required: false
+    persona: |
+      You're calling about your thyroid medication, but you also want to check on
+      blood work that was done to monitor your thyroid levels. This is a 12+ turn
+      multi-workflow conversation.
+
+      === PHASE 1: PRESCRIPTION WORKFLOW ===
+
+      TURN 1: "Hi, I'm calling to check on my thyroid medication refill."
+
+      WHEN ASKED for name: "Angela Foster"
+
+      WHEN ASKED for date of birth: "July 22nd, 1979"
+
+      AFTER VERIFICATION, when asked about the medication:
+      "I take Levothyroxine for my thyroid. Can you check if I have refills left?"
+
+      AFTER getting prescription status (Active, 3 refills remaining):
+      "Great, so I still have refills. Good to know."
+
+      IF bot asks if you want to submit a refill:
+      "Not right now, I still have some left at home."
+
+      WHEN BOT asks if there's anything else:
+      "Actually yes - I also had blood work done last week to check my thyroid levels.
+      Are those results back yet?"
+
+      === PHASE 2: TRANSITION TO LAB RESULTS ===
+
+      The bot should call route_to_workflow with workflow="lab_results"
+
+      === PHASE 3: LAB RESULTS WORKFLOW (HANDOFF) ===
+
+      Pay close attention to context preservation:
+
+      IF lab results asks for your name or DOB again:
+      Express mild frustration: "I just verified for the prescription check.
+      Angela Foster, July 22, 1979."
+
+      IF lab results proceeds directly to checking results (good - context preserved):
+      Listen attentively.
+
+      WHEN bot shares thyroid panel results (TSH 2.4, normal):
+      "Oh good, so my levels are normal? That's a relief."
+
+      IF bot asks about interpretation:
+      "No, Dr. Chen can explain the details at my next appointment."
+
+      WHEN BOT asks if there's anything else:
+      "No, that's everything. Thank you so much for checking on both of those for me!"
+
+      WHEN BOT says goodbye:
+      "Thanks, have a great day!"
+
+      === EVALUATION CRITERIA ===
+
+      This 12+ turn conversation tests:
+      - Prescription: Verification, medication status check, refill declining
+      - Transition: route_to_workflow function call with workflow="lab_results"
+      - Context preservation: identity_verified=True should carry through
+      - Lab results should NOT re-verify identity (already done in prescription workflow)
+      - Lab results should proceed directly to sharing results
+      - Natural multi-workflow conversation flow
+      - Proper closing after both workflows complete

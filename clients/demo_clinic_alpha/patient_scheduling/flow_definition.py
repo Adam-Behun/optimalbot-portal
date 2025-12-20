@@ -614,12 +614,40 @@ DO NOT list or summarize other details. Just the one sentence above.
 - If no/goodbye → call end_call
 - If correction → call correct_info
 - If they want to continue via text/SMS → call continue_via_text
+- If they ask about LAB RESULTS → call route_to_workflow with workflow="lab_results"
+- If they ask about PRESCRIPTIONS/REFILLS → call route_to_workflow with workflow="prescription_status"
 - If question → answer briefly, ask "Anything else?"
 
 If they seem done but you want to offer text: "Would you like me to send you a text? You can reply anytime if questions come up." """,
                 }
             ],
             functions=[
+                FlowsFunctionSchema(
+                    name="route_to_workflow",
+                    description="""Route caller to an AI-powered workflow.
+
+WHEN TO USE: Caller asks about lab results or prescriptions.
+RESULT: Hands off to specialized AI workflow (no phone transfer).
+
+IMPORTANT: The caller is already verified - context carries through.
+
+EXAMPLES:
+- workflow="lab_results", reason="checking on blood work after scheduling"
+- workflow="prescription_status", reason="refill inquiry after scheduling" """,
+                    properties={
+                        "workflow": {
+                            "type": "string",
+                            "enum": ["lab_results", "prescription_status"],
+                            "description": "Workflow: lab_results (test results) or prescription_status (refills/medications)",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief context for the next workflow",
+                        },
+                    },
+                    required=["workflow", "reason"],
+                    handler=self._route_to_workflow_handler,
+                ),
                 FlowsFunctionSchema(
                     name="correct_info",
                     description="Patient wants to correct information. For appointment_date, ONLY accept dates after TODAY shown above. If they suggest a past date, politely clarify the correct year.",
@@ -1380,6 +1408,69 @@ Once they provide DOB, call verify_dob.""",
         """Return to the previous conversation node if they decline transfer."""
         logger.info("Flow: returning to confirmation node")
         return "No problem, let me continue helping you.", self.create_confirmation_node()
+
+    async def _route_to_workflow_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Route to an AI workflow (same call, no phone transfer)."""
+        workflow = args.get("workflow", "")
+        reason = args.get("reason", "")
+
+        flow_manager.state["routed_to"] = f"{workflow} (AI)"
+
+        logger.info(f"Flow: Routing to {workflow} workflow - reason: {reason}")
+
+        if workflow == "lab_results":
+            return await self._handoff_to_lab_results(flow_manager, reason)
+        elif workflow == "prescription_status":
+            return await self._handoff_to_prescription_status(flow_manager, reason)
+        else:
+            logger.warning(f"Unknown workflow: {workflow}")
+            return "I'm not sure how to help with that. Let me transfer you to someone who can.", self.create_transfer_failed_node()
+
+    async def _handoff_to_lab_results(
+        self, flow_manager: FlowManager, reason: str
+    ) -> tuple[str, NodeConfig]:
+        """Hand off to LabResultsFlow with gathered context."""
+        from clients.demo_clinic_alpha.lab_results.flow_definition import LabResultsFlow
+
+        lab_results_flow = LabResultsFlow(
+            patient_data=self.patient_data,
+            flow_manager=flow_manager,
+            main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator,
+            transport=self.transport,
+            pipeline=self.pipeline,
+            organization_id=self.organization_id,
+            cold_transfer_config=self.cold_transfer_config,
+        )
+
+        logger.info(f"Flow: Handing off to LabResultsFlow with context: {reason}")
+
+        # Use handoff entry point with context (no greeting, context-aware)
+        return None, lab_results_flow.create_handoff_entry_node(context=reason)
+
+    async def _handoff_to_prescription_status(
+        self, flow_manager: FlowManager, reason: str
+    ) -> tuple[str, NodeConfig]:
+        """Hand off to PrescriptionStatusFlow with gathered context."""
+        from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
+
+        prescription_flow = PrescriptionStatusFlow(
+            patient_data=self.patient_data,
+            flow_manager=flow_manager,
+            main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator,
+            transport=self.transport,
+            pipeline=self.pipeline,
+            organization_id=self.organization_id,
+            cold_transfer_config=self.cold_transfer_config,
+        )
+
+        logger.info(f"Flow: Handing off to PrescriptionStatusFlow with context: {reason}")
+
+        # Use handoff entry point with context (no greeting, context-aware)
+        return None, prescription_flow.create_handoff_entry_node(context=reason)
 
     def _get_request_staff_function(self) -> FlowsFunctionSchema:
         """Return the request_staff function schema for use in multiple nodes."""
