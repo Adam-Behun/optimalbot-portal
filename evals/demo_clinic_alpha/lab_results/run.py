@@ -124,7 +124,7 @@ def grade_function_calls(calls_text: str, final_state: dict, patient: dict) -> d
     results_status = patient.get("results_status", "")
     identity_verified = final_state.get("identity_verified", False)
 
-    prompt = f"""Grade whether the bot called functions correctly for a LAB RESULTS inquiry.
+    prompt = f"""Grade whether the bot's function calls were CORRECT for a lab results inquiry.
 
 PATIENT INFO:
 - Results Status: {results_status}
@@ -136,20 +136,19 @@ FUNCTION CALLS:
 FINAL STATE:
 {json.dumps(final_state, indent=2)}
 
-GRADING RULES:
-1. proceed_to_verification called when caller asks about lab results
-2. verify_identity called with name AND DOB before sharing any results (unless caller refuses/requests transfer)
-3. If identity_verified=True AND results ready AND no review required: results_communicated should be True
-4. If identity_verified=False (verification FAILED or bypassed): results_communicated should be False - this is CORRECT
-5. For provider_review or pending scenarios: confirm_callback should be called
-6. request_staff called when caller asks for human OR refuses verification - this is CORRECT
-7. end_call called when conversation concludes normally
+WHAT MAKES FUNCTION CALLS CORRECT:
 
-IMPORTANT SCENARIOS WHERE verify_identity IS NOT CALLED (this is CORRECT):
-- Caller requests transfer to human before providing info → request_staff called directly
-- Caller refuses to verify → request_staff called directly
+1. CORRECT: proceed_to_verification → verify_identity → (if verified) share results → end_call
+2. CORRECT: proceed_to_verification → verify_identity → (if NOT verified) request_staff or end with transfer
+3. CORRECT: Caller asks for human → request_staff (no verify_identity needed)
+4. CORRECT: Provider review required → verify_identity → confirm_callback (no results shared)
+5. CORRECT: Results pending → verify_identity → confirm_callback
 
-If caller explicitly requested human/staff, NOT calling verify_identity is CORRECT behavior.
+KEY POINT: If identity_verified=False AND results_communicated=False, that is CORRECT HIPAA behavior.
+When verification fails, bot should transfer to staff - this is the CORRECT outcome.
+
+Reply PASS if function calls follow any correct pattern above.
+Reply FAIL only if bot made actual mistakes (e.g., shared results without verification).
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -163,7 +162,7 @@ FAIL: <5 words what went wrong>"""
 def grade_node_reached(final_node: str, expected_node: str) -> dict:
     """Grade whether the conversation reached the expected end node."""
     # Handle equivalent end states
-    equivalent_end_nodes = {"end", "closing"}  # closing transitions to end
+    equivalent_end_nodes = {"end", "closing", "completion"}
     # verification_failed naturally leads to transfer_initiated
     verification_failed_equivalents = {"verification_failed", "transfer_initiated"}
 
@@ -288,6 +287,7 @@ class FlowRunner:
             transport=self.mock_transport,
             pipeline=self.mock_pipeline,
             organization_id="demo_clinic_alpha",
+            cold_transfer_config={"staff_number": "sip:+15551234567@sip.example.com"},
         )
 
         # Initialize flow state

@@ -118,9 +118,9 @@ class LabResultsFlow:
         self.flow_manager.state["provider_review_required"] = self.patient_data.get("provider_review_required", False)
         self.flow_manager.state["callback_timeframe"] = self.patient_data.get("callback_timeframe", "24 to 48 hours")
 
-        # Call outcome tracking
-        self.flow_manager.state["identity_verified"] = False
-        self.flow_manager.state["results_communicated"] = False
+        # Call outcome tracking (preserve if already set from another workflow)
+        self.flow_manager.state["identity_verified"] = self.flow_manager.state.get("identity_verified", False)
+        self.flow_manager.state["results_communicated"] = self.flow_manager.state.get("results_communicated", False)
 
     def _normalize_name(self, name: str) -> str:
         """Normalize name for comparison (lowercase, handle 'Last, First' format)."""
@@ -370,7 +370,12 @@ EXAMPLES:
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""# Context
+                    "content": f"""# CRITICAL RULE: NO REPETITION
+NEVER ask the same question twice. If caller doesn't answer a question directly, move forward:
+- If you already asked about callback and they didn't answer → call confirm_callback with confirmed=true
+- If you already explained doctor will call → don't explain again, just confirm callback and move on
+
+# Context
 The patient has been verified. Handle their lab results inquiry.
 
 # Lab Order Information
@@ -390,8 +395,10 @@ If provider_review_required is True:
 → Explain: "{ordering_physician} needs to review these results before they can be shared."
 → Tell them: "The doctor will call you within {callback_timeframe} to discuss."
 → If worried: "Provider review is standard procedure for certain results."
-→ Confirm callback: "Is the number ending in {phone_last4} still the best to reach you?"
-→ Call confirm_callback after they respond
+→ Ask ONCE: "Is the number ending in {phone_last4} still the best to reach you?"
+→ If they answer YES/NO or give new number: call confirm_callback
+→ If they DON'T answer callback question (ask about results instead): acknowledge briefly, then call confirm_callback with confirmed=true (ASSUME they want callback)
+→ NEVER ask about callback number more than once
 
 ## Results Pending
 If results_status is "Pending":
@@ -399,10 +406,17 @@ If results_status is "Pending":
 → Offer callback: "Would you like us to call you when they're ready?"
 → If yes, confirm phone and call confirm_callback
 
-# Example Flow (Provider Review)
+# Example Flow (Provider Review - Normal)
 You: "I can see your results have been received. However, {ordering_physician} needs to review them before I can share the details. The doctor will call you within {callback_timeframe}. Is the number ending in {phone_last4} the best to reach you?"
 Patient: "Yes, that's my cell."
 → Call confirm_callback with confirmed=true
+
+# Example Flow (Provider Review - Anxious Caller)
+You: "...The doctor will call you within {callback_timeframe}. Is the number ending in {phone_last4} the best to reach you?"
+Patient: "Is it bad news? Just tell me if it's serious!"
+You: "I understand this is stressful. The doctor will discuss everything when they call."
+→ IMMEDIATELY call confirm_callback with confirmed=true
+(DO NOT ask about phone number again - assume they want callback)
 
 # Example Flow (Pending)
 You: "Your {test_type} is still being processed. Would you like us to call when it's ready?"
@@ -414,7 +428,16 @@ Patient: "Yes."
 # Guardrails
 - NEVER share results when provider_review_required is True. This step is important.
 - If caller presses for details: "I understand, but the doctor needs to review first."
-- If frustrated, offer transfer: call request_staff
+- If frustrated or very distressed: immediately call request_staff to transfer
+- Do NOT keep repeating the same callback question - if they don't answer it directly after ONE attempt, proceed to confirm_callback with confirmed=true (assume they want the callback)
+
+# Handling Emotional Callers
+If caller is worried/anxious/upset and doesn't answer the callback question:
+→ Acknowledge their feelings briefly: "I understand this is stressful."
+→ Assume they want the callback: call confirm_callback with confirmed=true
+→ Do NOT ask the same question multiple times
+
+If caller explicitly asks for human/transfer: immediately call request_staff
 
 # Error Handling
 If you miss what caller said: "I'm sorry, could you repeat that?"
@@ -505,6 +528,11 @@ RESULT: Ends the call gracefully.""",
 
     def create_completion_node(self) -> NodeConfig:
         """After delivering results, ask if there's anything else and handle follow-up requests."""
+        state = self.flow_manager.state
+        test_type = state.get("test_type", "lab test")
+        test_date = state.get("test_date", "")
+        results_summary = state.get("results_summary", "")
+
         # Get practice info for simple questions
         practice_info = self.patient_data.get("practice_info", {})
         office_hours = practice_info.get("office_hours", "Monday through Friday, 8 AM to 5 PM")
@@ -522,6 +550,16 @@ RESULT: Ends the call gracefully.""",
 
         practice_info_text = "\n".join(practice_facts) if practice_facts else "- Contact the front desk for practice information"
 
+        # Build results info for repeat requests
+        results_info = ""
+        if results_summary:
+            results_info = f"""# Lab Results Already Shared (for repeat requests)
+- Test: {test_type}
+- Date: {test_date}
+- Results: {results_summary}
+
+"""
+
         return NodeConfig(
             name="completion",
             role_messages=[
@@ -536,10 +574,14 @@ RESULT: Ends the call gracefully.""",
                     "content": f"""# Goal
 The lab results inquiry is complete. Thank the caller and check if they need anything else.
 
-# Questions You CAN Answer Directly
+{results_info}# Questions You CAN Answer Directly
 {practice_info_text}
 
 # Scenario Handling
+
+If patient asks to REPEAT the results:
+→ Repeat the results in a SHORTER form (just the key findings)
+→ Then ask "Is there anything else?"
 
 If patient says NO / GOODBYE:
 → Say something warm like "Take care!"
@@ -580,7 +622,10 @@ Caller: "No, that's all. Thank you!"
 - Keep responses brief and warm
 - The caller's identity is already verified - no need to re-verify for scheduling or prescriptions
 - Include relevant context in the reason field when routing (e.g., "follow-up after lab results")
-- If caller is frustrated or asks for a human, route to front_desk immediately""",
+- If caller is frustrated or asks for a human, route to front_desk immediately
+- NEVER interpret results or give medical advice (e.g., "don't worry", "you're healthy", "this is good/bad")
+- If asked "what does this mean?" or "should I be worried?": say "Your doctor can explain what these results mean for your specific situation."
+- Do NOT repeat the same information if already stated""",
                 }
             ],
             functions=[
@@ -650,9 +695,9 @@ EXAMPLES:
                     handler=self._end_call_handler,
                 ),
             ],
-            respond_immediately=True,
+            respond_immediately=False,  # Wait for caller's response after asking "anything else?"
             pre_actions=[
-                {"type": "tts_say", "text": "Thanks for your patience with that. Is there anything else I can help you with today?"},
+                {"type": "tts_say", "text": "Is there anything else I can help you with today?"},
             ],
         )
 
