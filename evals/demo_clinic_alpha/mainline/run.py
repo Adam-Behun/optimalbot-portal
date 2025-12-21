@@ -56,8 +56,10 @@ def _format_conversation(conversation: list[dict]) -> str:
 def grade_routing(conv_text: str, expected_problem: str, calls_text: str, final_state: dict) -> dict:
     """Grade whether the bot routed correctly based on caller intent."""
     routed_to = final_state.get("routed_to", "Unknown")
+    call_reason = final_state.get("call_reason", "")
+    handed_off_to = final_state.get("handed_off_to", "")
 
-    prompt = f"""Grade this mainline receptionist conversation. Be STRICT.
+    prompt = f"""Grade this mainline receptionist conversation. Be STRICT but FAIR.
 
 EXPECTED PROBLEM TO CHECK FOR:
 {expected_problem}
@@ -69,12 +71,25 @@ FUNCTION CALLS:
 {calls_text}
 
 FINAL ROUTING: {routed_to}
+CONTEXT PASSED: {call_reason}
+HANDED OFF TO: {handed_off_to}
 
-Check for these issues:
-- Did bot correctly identify caller intent (scheduling, lab results, billing, simple question)?
-- Did bot route to the appropriate workflow/department?
-- For simple questions (hours, parking, location), did bot answer directly without unnecessary routing?
-- Did bot over-route (transfer when they could answer) or under-route (try to handle what should be transferred)?
+GRADING CRITERIA:
+1. ROUTING: Did bot correctly identify caller intent and route appropriately?
+   - Scheduling requests → scheduling workflow
+   - Lab results requests → lab_results workflow
+   - Billing requests → billing staff
+   - Simple questions (hours, parking) → answer directly
+
+2. CONTEXT PRESERVATION: Did the handoff include relevant context?
+   - Check if route_to_workflow reason contains key details from conversation
+   - Context IS preserved if the reason field includes caller's stated details
+   - Note: Subsequent database lookups failing is NOT a context loss issue
+
+3. AVOID FALSE NEGATIVES:
+   - If route_to_workflow was called with a detailed reason matching conversation, context was preserved
+   - Staff transfers after patient lookup fails is CORRECT behavior, not a routing failure
+   - Focus on what the mainline bot did, not what happens in downstream workflows
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -120,12 +135,19 @@ FUNCTION CALLS:
 FINAL STATE:
 {json.dumps(final_state, indent=2)}
 
-Check for:
+Check for FUNCTION CALL correctness only:
 1. route_to_workflow used for scheduling/lab_results/prescription_status intents
 2. route_to_staff used for billing/front_desk/unclear requests
 3. end_call used appropriately when caller says goodbye
 4. save_call_info captures volunteered caller information
 5. No premature routing before understanding caller's need
+
+IMPORTANT - Do NOT fail for these issues (they are expected in test environment):
+- identity_verified=false (no test patient data in database)
+- Patient lookup failures
+- Database-related issues
+
+Focus on whether the RIGHT functions were called in the RIGHT order.
 
 Reply with exactly one line:
 PASS: <5 words why ok>

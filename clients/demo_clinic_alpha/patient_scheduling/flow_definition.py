@@ -395,7 +395,8 @@ If they describe URGENT symptoms (severe pain, swelling, bleeding, can't eat/sle
 → Call request_staff with urgent=true (this transfers immediately)
 
 For routine visits (cleaning, checkup, consultation, follow-up):
-→ Call save_visit_reason with brief summary""",
+→ Call save_visit_reason with brief summary
+→ If they mention a specific provider (e.g., "I'd like to see Dr. Smith"), capture that in provider_preference""",
                 }
             ],
             functions=[
@@ -406,7 +407,11 @@ For routine visits (cleaning, checkup, consultation, follow-up):
                         "reason": {
                             "type": "string",
                             "description": "Brief summary: 'routine checkup', 'cleaning', 'consultation', etc.",
-                        }
+                        },
+                        "provider_preference": {
+                            "type": "string",
+                            "description": "If patient mentioned a specific provider (e.g., 'Dr. Smith'), include here. Leave empty if none mentioned.",
+                        },
                     },
                     required=["reason"],
                     handler=self._save_visit_reason_handler,
@@ -449,7 +454,7 @@ Only call request_staff if they EXPLICITLY want to speak with staff.""",
             functions=[
                 FlowsFunctionSchema(
                     name="schedule_appointment",
-                    description="Call after patient confirms date AND time. Include any info they volunteered.",
+                    description="Call after patient confirms date AND time. Only include patient info if they explicitly stated it in THIS conversation.",
                     properties={
                         "appointment_date": {
                             "type": "string",
@@ -461,23 +466,23 @@ Only call request_staff if they EXPLICITLY want to speak with staff.""",
                         },
                         "first_name": {
                             "type": "string",
-                            "description": "Patient's first name if volunteered.",
+                            "description": "Patient's actual first name ONLY if they explicitly said it (e.g., 'I'm John'). NEVER use 'new' or placeholder values.",
                         },
                         "last_name": {
                             "type": "string",
-                            "description": "Patient's last name if volunteered.",
+                            "description": "Patient's actual last name ONLY if they explicitly said it. NEVER use 'patient' or placeholder values.",
                         },
                         "phone_number": {
                             "type": "string",
-                            "description": "Phone number if volunteered (digits only).",
+                            "description": "Phone number ONLY if patient explicitly provided it (digits only).",
                         },
                         "date_of_birth": {
                             "type": "string",
-                            "description": "Date of birth if volunteered (Month Day, Year format).",
+                            "description": "Date of birth ONLY if patient explicitly provided it (Month Day, Year format).",
                         },
                         "email": {
                             "type": "string",
-                            "description": "Email if volunteered.",
+                            "description": "Email ONLY if patient explicitly provided it. NEVER use 'not yet collected' or placeholders.",
                         },
                     },
                     required=["appointment_date", "appointment_time"],
@@ -906,13 +911,25 @@ Once they provide DOB, call verify_dob.""",
 
     # ========== Function Handlers ==========
 
+    # Placeholder values that should be rejected (LLM hallucinations)
+    PLACEHOLDER_VALUES = {
+        "new", "patient", "unknown", "none", "n/a", "na", "not yet collected",
+        "not provided", "not available", "tbd", "pending", "null", "undefined",
+    }
+
+    def _is_valid_value(self, value: str) -> bool:
+        """Check if a value is valid (not a placeholder or empty)."""
+        if not value:
+            return False
+        return value.lower().strip() not in self.PLACEHOLDER_VALUES
+
     def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
         """Store any volunteered info in state. Returns list of captured fields."""
         captured = []
 
         for field in ["first_name", "last_name", "phone_number", "email"]:
             value = args.get(field, "").strip()
-            if value and value.lower() not in ["unknown", ""]:
+            if self._is_valid_value(value):
                 flow_manager.state[field] = value
                 captured.append(field)
 
@@ -989,10 +1006,16 @@ Once they provide DOB, call verify_dob.""",
     async def _save_visit_reason_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
-        """Save visit reason and proceed to scheduling."""
+        """Save visit reason and provider preference, then proceed to scheduling."""
         appointment_reason = args.get("reason", "").strip()
+        provider_preference = args.get("provider_preference", "").strip()
+
         flow_manager.state["appointment_reason"] = appointment_reason
-        logger.info(f"Flow: Visit reason - {appointment_reason}")
+        if provider_preference:
+            flow_manager.state["provider_preference"] = provider_preference
+            logger.info(f"Flow: Visit reason - {appointment_reason}, provider preference - {provider_preference}")
+        else:
+            logger.info(f"Flow: Visit reason - {appointment_reason}")
         return "Let's get you scheduled.", self.create_scheduling_node()
 
     # ========== Returning Patient Lookup Handlers ==========
@@ -1149,6 +1172,26 @@ Once they provide DOB, call verify_dob.""",
         phone_number = args.get("phone_number", "").strip()
         raw_dob = args.get("date_of_birth", "").strip()
         email = args.get("email", "").strip()
+
+        # Validate no placeholder values
+        fields_to_check = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "phone_number": phone_number,
+            "date_of_birth": raw_dob,
+            "email": email,
+        }
+
+        # Filter out placeholder values and identify missing fields
+        missing_fields = []
+        for field, value in fields_to_check.items():
+            if not self._is_valid_value(value):
+                missing_fields.append(field)
+
+        if missing_fields:
+            logger.warning(f"Flow: save_patient_info called with missing/invalid fields: {missing_fields}")
+            # Return to collect_info to gather missing fields
+            return f"I still need your {missing_fields[0].replace('_', ' ')}.", self.create_collect_info_node()
 
         # Normalize date of birth to ISO format
         date_of_birth = parse_natural_date(raw_dob) or raw_dob

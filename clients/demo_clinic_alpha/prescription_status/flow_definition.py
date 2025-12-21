@@ -367,11 +367,15 @@ Response: "For privacy reasons, I can only discuss prescription information dire
 4. Call verify_identity with the information they provide
 
 # Example Flow
-You: "For privacy and security, I need to verify your identity first. May I have your first and last name?"
+The pre-action already asked for their name.
 Caller: "Jennifer Martinez"
 You: "Thank you, Jennifer. And what is your date of birth?"
 Caller: "September 12, 1980"
 → Call verify_identity with name="Jennifer Martinez" and date_of_birth="September 12, 1980"
+
+# If caller already provided BOTH name and DOB
+Caller: "I'm Jennifer Martinez, born September 12, 1980"
+→ Call verify_identity immediately with name="Jennifer Martinez" and date_of_birth="September 12, 1980"
 
 # Data Normalization
 **Dates** (spoken → written):
@@ -712,21 +716,44 @@ Wrap up the call professionally.
 # Closing Flow
 1. Ask: "Is there anything else I can help you with?"
 2. If no → thank them and say goodbye
-3. If yes → handle the request or transfer to staff
+3. If yes → handle the request appropriately
 
-# Example
+# CRITICAL: Another Medication/Prescription Question
+If patient asks about ANOTHER MEDICATION, PRESCRIPTION, REFILL, or any medicine:
+→ Call check_another_prescription IMMEDIATELY
+
+Examples that require check_another_prescription:
+- "Can you check on my other prescription?"
+- "What about my fluoride rinse?"
+- "Can you also look at my blood pressure medication?"
+- "I also need to ask about [any medication name]"
+
+# CRITICAL: Scheduling/Appointment Requests
+If patient asks to SCHEDULE an APPOINTMENT or FOLLOW-UP:
+→ Call route_to_workflow with workflow="scheduling" IMMEDIATELY
+
+Examples that require route_to_workflow(scheduling):
+- "I need to schedule a follow-up appointment"
+- "Can I schedule an appointment with Dr. Williams?"
+- "I want to book a visit"
+
+DO NOT use request_staff for scheduling - use route_to_workflow instead.
+
+# Lab Results Requests
+If they ask about LAB RESULTS or BLOOD WORK (test results, not medications):
+→ Call route_to_workflow with workflow="lab_results"
+
+# Example Goodbye
 You: "Is there anything else I can help you with today?"
 Patient: "No, that's everything. Thank you."
 You: "You're welcome{', ' + first_name if first_name else ''}. Thank you for calling {self.organization_name}. Have a great day."
 → Call end_call
 
-# Routing to Other Workflows
-- If they ask about LAB RESULTS → call route_to_workflow with workflow="lab_results"
-- If they ask about SCHEDULING/APPOINTMENTS → call route_to_workflow with workflow="scheduling"
-
 # Guardrails
 - Always ask if there's anything else before ending
-- If patient has additional requests outside prescription scope, route to appropriate workflow or transfer to staff
+- If patient asks about another medication → check_another_prescription
+- If patient asks about scheduling or appointments → route_to_workflow(scheduling)
+- If patient asks about lab results → route_to_workflow(lab_results)
 - Keep the closing warm and professional
 
 # Error Handling
@@ -738,21 +765,26 @@ If you don't understand the patient's response:
             functions=[
                 FlowsFunctionSchema(
                     name="route_to_workflow",
-                    description="""Route caller to an AI-powered workflow.
+                    description="""Route to scheduling or lab results workflow.
 
-WHEN TO USE: Caller asks about lab results or scheduling.
-RESULT: Hands off to specialized AI workflow (no phone transfer).
+WHEN TO USE:
+- Caller asks to SCHEDULE an APPOINTMENT → workflow="scheduling"
+- Caller asks about LAB RESULTS or test results → workflow="lab_results"
 
-IMPORTANT: The caller is already verified - context carries through.
+SCHEDULING EXAMPLES (use workflow="scheduling"):
+- "I need to schedule a follow-up appointment" → scheduling
+- "Can I book an appointment with Dr. Williams?" → scheduling
+- "I want to schedule a visit" → scheduling
 
-EXAMPLES:
-- workflow="lab_results", reason="checking on blood work after prescription call"
-- workflow="scheduling", reason="follow-up appointment after prescription call" """,
+LAB RESULTS EXAMPLES (use workflow="lab_results"):
+- "Are my blood test results back?" → lab_results
+
+IMPORTANT: Use this for scheduling, NOT request_staff.""",
                     properties={
                         "workflow": {
                             "type": "string",
                             "enum": ["lab_results", "scheduling"],
-                            "description": "Workflow: lab_results (test results) or scheduling (appointments)",
+                            "description": "Workflow: scheduling (appointments) or lab_results (test results)",
                         },
                         "reason": {
                             "type": "string",
@@ -763,30 +795,36 @@ EXAMPLES:
                     handler=self._route_to_workflow_handler,
                 ),
                 FlowsFunctionSchema(
+                    name="check_another_prescription",
+                    description="""Patient wants to check status of another medication/prescription.
+
+WHEN TO USE:
+- Patient asks about ANOTHER medication, prescription, refill, or medicine
+- Patient mentions a different drug name
+- ANY prescription/medication question
+
+EXAMPLES:
+- "What about my fluoride rinse?" → call this
+- "Can you check my other prescription?" → call this
+- "I also need my blood pressure medication" → call this
+
+RESULT: Returns to medication identification node.""",
+                    properties={},
+                    required=[],
+                    handler=self._check_another_prescription_handler,
+                ),
+                FlowsFunctionSchema(
                     name="end_call",
                     description="""End the call gracefully.
 
 WHEN TO USE:
-- Patient confirms they have no more questions
+- Patient confirms NO more questions
 - Patient says goodbye or thanks
 
 RESULT: Call ends with goodbye message.""",
                     properties={},
                     required=[],
                     handler=self._end_call_handler,
-                ),
-                FlowsFunctionSchema(
-                    name="check_another_prescription",
-                    description="""Patient wants to check status of another medication.
-
-WHEN TO USE:
-- Patient mentions another prescription when asked if there's anything else
-- Patient wants to check on an additional medication
-
-RESULT: Returns to medication identification node if multiple prescriptions exist.""",
-                    properties={},
-                    required=[],
-                    handler=self._check_another_prescription_handler,
                 ),
                 self._get_request_staff_function(),
             ],
@@ -821,6 +859,31 @@ RESULT: Returns to medication identification node if multiple prescriptions exis
 
     def create_transfer_failed_node(self) -> NodeConfig:
         """Node shown when transfer fails."""
+        # Get transfer reason for context
+        transfer_reason = self.flow_manager.state.get("transfer_reason", "")
+
+        # Build alternative suggestions based on reason
+        if transfer_reason == "expedite":
+            alternatives = """PROACTIVELY OFFER THESE ALTERNATIVES:
+1. "I can note on your file that this is urgent, so when the doctor reviews it they'll see the priority."
+2. "You can also call the clinic directly at your convenience and ask to speak with the prescription team."
+3. "Would you like me to make a note about the urgency, or is there anything else I can help with?"
+
+Do NOT keep offering to retry the transfer. Proactively suggest one of the alternatives above."""
+        elif transfer_reason == "pharmacy_change":
+            alternatives = """PROACTIVELY OFFER THESE ALTERNATIVES:
+1. "You can call the clinic directly to update your pharmacy on file."
+2. "Would you like me to make a note that you need a pharmacy change, so staff can follow up?"
+
+Do NOT keep offering to retry the transfer. Proactively suggest one of the alternatives above."""
+        else:
+            alternatives = """PROACTIVELY OFFER THESE ALTERNATIVES:
+1. "You can call the clinic directly during business hours."
+2. "I can make a note on your file for staff to follow up."
+3. "Is there anything else I can help you with in the meantime?"
+
+Do NOT keep offering to retry the transfer. Proactively suggest one of the alternatives above."""
+
         return NodeConfig(
             name="transfer_failed",
             role_messages=[
@@ -832,10 +895,12 @@ RESULT: Returns to medication identification node if multiple prescriptions exis
             task_messages=[
                 {
                     "role": "system",
-                    "content": """The transfer didn't go through. Apologize and offer alternatives.
+                    "content": f"""The transfer didn't go through. Apologize and offer alternatives.
 
-If caller wants to try the transfer again:
-→ Call retry_transfer
+{alternatives}
+
+If caller accepts an alternative (note on file, callback, etc.):
+→ Acknowledge and call end_call
 
 If caller says goodbye or wants to end call:
 → Call end_call
@@ -846,20 +911,10 @@ If caller has a question you can answer:
             ],
             functions=[
                 FlowsFunctionSchema(
-                    name="retry_transfer",
-                    description="""Retry the failed transfer.
-
-WHEN TO USE: Caller wants to try the transfer again.
-RESULT: Attempts SIP transfer again.""",
-                    properties={},
-                    required=[],
-                    handler=self._retry_transfer_handler,
-                ),
-                FlowsFunctionSchema(
                     name="end_call",
                     description="""End the call gracefully.
 
-WHEN TO USE: Caller says goodbye or confirms no more questions.
+WHEN TO USE: Caller says goodbye, confirms no more questions, or accepts an alternative.
 RESULT: Ends the call.""",
                     properties={},
                     required=[],

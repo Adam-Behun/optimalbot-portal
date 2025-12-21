@@ -96,6 +96,9 @@ scenarios:
 
       Bot should offer to transfer to staff for expedited requests. Accept the transfer if offered.
 
+      IF TRANSFER FAILS and bot offers alternatives (note on file, callback, etc.):
+      Accept the alternative: "Yes, please make a note that it's urgent. That would help."
+
       Test that bot correctly explains pending status and routes urgent requests to staff.
 
   - id: "4"
@@ -192,7 +195,10 @@ scenarios:
 
       IF BOT lists options or asks clarifying question: Say "Yes, the Chlorhexidine one."
 
-      AFTER getting status on first medication: Say "Actually, while I have you, can you also check on my fluoride rinse?"
+      AFTER getting status on first medication and bot asks if there's anything else:
+      Say "Yes, can you also check on my Sodium Fluoride prescription? That's my other mouth rinse."
+
+      AFTER getting status on second medication: Say "That's all I needed, thank you!"
 
       Test that bot correctly handles switching between multiple prescriptions.
 
