@@ -257,42 +257,15 @@ RESULT: Transitions to identity verification before sharing any information.""",
         )
 
     def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
-        """Entry point when handed off from mainline flow. No greeting, uses gathered context."""
+        """Entry point when handed off from another flow. Stores context and goes directly to verification."""
         # Store context in state
         self.flow_manager.state["test_type"] = "biopsy" if "biopsy" in context.lower() else ""
         self.flow_manager.state["caller_anxious"] = "anxious" in context.lower() or "worried" in context.lower()
 
-        return NodeConfig(
-            name="handoff_entry",
-            role_messages=[
-                {
-                    "role": "system",
-                    "content": self._get_global_instructions(),
-                }
-            ],
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": f"""CONTEXT: {context}
+        logger.info(f"Flow: Handoff entry - context stored, proceeding to verification")
 
-The caller already explained they're checking on lab results. The previous assistant acknowledged it.
-IMMEDIATELY call proceed_to_verification (do NOT speak first - no greeting, no acknowledgment).
-
-The context shows: {context}
-Note any urgency or anxiety for when you communicate with them.""",
-                }
-            ],
-            functions=[
-                FlowsFunctionSchema(
-                    name="proceed_to_verification",
-                    description="Proceed immediately to identity verification.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_verification_handler,
-                ),
-            ],
-            respond_immediately=True,
-        )
+        # Go directly to verification - no intermediate LLM call needed
+        return self.create_verification_node()
 
     def create_verification_node(self) -> NodeConfig:
         """Verify patient identity with name and DOB."""
@@ -305,9 +278,16 @@ Note any urgency or anxiety for when you communicate with them.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""# CRITICAL RULE: CALL verify_identity AS SOON AS YOU HAVE NAME + DOB
+                    "content": f"""# YOUR FIRST MESSAGE
+Start by asking for the caller's name. Do NOT say:
+- "I've initiated the process" or "I've routed your request"
+- "Please hold" or "one moment"
+- "Let me connect you" or "someone will help you"
+
+Just ask: "I can help you with that. Can I have your full name?"
+
+# CRITICAL RULE: CALL verify_identity AS SOON AS YOU HAVE NAME + DOB
 The moment you have both name and date of birth, YOU MUST call verify_identity.
-Do NOT speak without calling the function. No "hold on", no "let me check", no "one moment".
 
 WRONG: Say "Let me check your records" and stop (NEVER DO THIS)
 RIGHT: Call verify_identity(name="David Chen", date_of_birth="November 2, 1958") immediately
@@ -345,8 +325,9 @@ Always normalize dates before calling verify_identity.
 - Do NOT say whether the name or DOB matches until both are collected
 - Be patient if caller needs to repeat information
 - ONLY call ONE function per turn - either verify_identity OR request_staff, never both
-- ONLY call request_staff if caller explicitly says "transfer me" or "I want to talk to a person"
-- Do NOT call request_staff just because caller sounds anxious or impatient - verify first, then help them
+- Do NOT call request_staff just because caller sounds anxious, impatient, or says "urgent" - verify FIRST, then help them
+- Phrases like "I don't want to wait" or "this is urgent" are NOT requests for human transfer - they're expressing concern
+- ONLY call request_staff if caller explicitly says "transfer me", "I want to talk to a person", or "give me a human"
 
 # When to use each function
 - verify_identity: After you have BOTH name AND date of birth → always try this first
@@ -776,13 +757,40 @@ EXAMPLES:
                     "role": "system",
                     "content": """The information provided doesn't match our records.
 
-Apologize and offer to transfer to staff who can help:
-"I'm sorry, but I wasn't able to verify your identity with the information provided. For your security, let me connect you with a staff member who can assist you further."
+Say: "I'm sorry, I wasn't able to verify your identity. Let me connect you with someone who can help."
 
-Then call request_staff.""",
+Then listen to what caller says next:
+- If caller mentions "schedule", "appointment", "book" → call route_to_workflow with workflow="scheduling"
+- If caller mentions "prescription", "medication", "refill" → call route_to_workflow with workflow="prescription_status"
+- If caller accepts the transfer, says "okay", or asks for a human → call request_staff
+
+Do NOT say "transferring" or "please hold" - the transfer system handles that.""",
                 }
             ],
             functions=[
+                FlowsFunctionSchema(
+                    name="route_to_workflow",
+                    description="""Route caller to a different AI workflow.
+
+WHEN TO USE: Caller changes their mind and wants scheduling or prescriptions instead.
+
+EXAMPLES:
+- workflow="scheduling", reason="caller wants to schedule instead"
+- workflow="prescription_status", reason="caller wants prescription help instead" """,
+                    properties={
+                        "workflow": {
+                            "type": "string",
+                            "enum": ["scheduling", "prescription_status"],
+                            "description": "Workflow: scheduling (appointments) or prescription_status (refills/medications)",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief context for the next workflow",
+                        },
+                    },
+                    required=["workflow", "reason"],
+                    handler=self._route_to_workflow_handler,
+                ),
                 self._get_request_staff_function(),
             ],
             respond_immediately=True,

@@ -337,67 +337,41 @@ Capture any info they ALREADY volunteered in the function call, but don't ask fo
         )
 
     def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
-        """Entry point when handed off from mainline flow. No greeting, uses gathered context."""
+        """Entry point when handed off from another flow. Stores context and routes directly."""
         # Parse context to extract key info
         context_lower = context.lower()
         is_returning = any(word in context_lower for word in ["returning", "follow-up", "been coming", "three years", "existing"])
 
-        # Extract visit reason and doctor preference from context
+        # Extract visit reason from context
         visit_reason = context.split(",")[0] if context else ""  # First part is usually the reason
 
         # Pre-populate state with extracted context
         if visit_reason:
             self.flow_manager.state["appointment_reason"] = visit_reason
 
-        # Pre-set state based on context (the mainline already acknowledged)
+        # Route based on parsed context - no intermediate LLM call needed
         if is_returning:
             self.flow_manager.state["appointment_type"] = "Returning Patient"
+            logger.info(f"Flow: Handoff entry - returning patient, context stored")
 
-        return NodeConfig(
-            name="handoff_entry",
-            role_messages=[
-                {
-                    "role": "system",
-                    "content": self._get_global_instructions(),
-                }
-            ],
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": f"""CONTEXT: {context}
+            # Check if already verified (from another flow)
+            if self.flow_manager.state.get("identity_verified"):
+                first_name = self.flow_manager.state.get("first_name", "")
+                logger.info(f"Flow: Caller already verified as {first_name}, skipping lookup")
+                if self.flow_manager.state.get("appointment_reason"):
+                    return self.create_scheduling_node()
+                return self.create_visit_reason_node()
 
-CRITICAL: Do NOT generate any text. Only call the function. No acknowledgment, no greeting, no words at all.
+            # Go to lookup flow to verify patient identity
+            return self.create_returning_patient_lookup_node()
+        else:
+            # New patient or unclear - treat as new
+            self.flow_manager.state["appointment_type"] = "New Patient"
+            logger.info(f"Flow: Handoff entry - new patient, context stored")
 
-Call the appropriate function immediately based on context:
-- "returning" / "follow-up" / "been here" → set_returning_patient
-- "new" / "first time" → set_new_patient
-
-Include visit_reason and doctor_preference in the function arguments.""",
-                }
-            ],
-            functions=[
-                FlowsFunctionSchema(
-                    name="set_new_patient",
-                    description="Patient is new. Include volunteered info.",
-                    properties={
-                        "visit_reason": {"type": "string", "description": "Why they're coming in"},
-                    },
-                    required=[],
-                    handler=self._set_new_patient_handler,
-                ),
-                FlowsFunctionSchema(
-                    name="set_returning_patient",
-                    description="Patient has been here before. Include all context.",
-                    properties={
-                        "visit_reason": {"type": "string", "description": "Why they're coming in"},
-                        "doctor_preference": {"type": "string", "description": "Preferred doctor if mentioned"},
-                    },
-                    required=[],
-                    handler=self._set_returning_patient_handler,
-                ),
-            ],
-            respond_immediately=True,
-        )
+            if self.flow_manager.state.get("appointment_reason"):
+                return self.create_scheduling_node()
+            return self.create_visit_reason_node()
 
     def create_visit_reason_node(self) -> NodeConfig:
         appointment_type = self.flow_manager.state.get("appointment_type", "")

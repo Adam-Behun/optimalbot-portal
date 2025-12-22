@@ -294,7 +294,7 @@ RESULT: Transitions to identity verification before sharing any information.""",
         )
 
     def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
-        """Entry point when handed off from mainline flow. No greeting, uses gathered context."""
+        """Entry point when handed off from another flow. Stores context and goes directly to verification."""
         # Store context in state
         context_lower = context.lower()
         if "lisinopril" in context_lower:
@@ -309,37 +309,10 @@ RESULT: Transitions to identity verification before sharing any information.""",
             # Go directly to status node
             return self.create_status_node()
 
-        return NodeConfig(
-            name="handoff_entry",
-            role_messages=[
-                {
-                    "role": "system",
-                    "content": self._get_global_instructions(),
-                }
-            ],
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": f"""CONTEXT: {context}
+        logger.info(f"Flow: Handoff entry - context stored, proceeding to verification")
 
-The caller already explained their prescription issue. The previous assistant acknowledged it.
-IMMEDIATELY call proceed_to_verification (do NOT speak first - no greeting, no acknowledgment).
-
-The context shows: {context}
-Note any medication names or complications for later.""",
-                }
-            ],
-            functions=[
-                FlowsFunctionSchema(
-                    name="proceed_to_verification",
-                    description="Proceed immediately to identity verification.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_verification_handler,
-                ),
-            ],
-            respond_immediately=True,
-        )
+        # Go directly to verification - no intermediate LLM call needed
+        return self.create_verification_node()
 
     def create_verification_node(self) -> NodeConfig:
         """Verify patient identity with name and DOB."""
@@ -696,17 +669,21 @@ RESULT: Returns to medication identification node if multiple prescriptions exis
                     handler=self._check_another_prescription_handler,
                 ),
                 FlowsFunctionSchema(
-                    name="end_call",
-                    description="""End the call gracefully.
+                    name="proceed_to_completion",
+                    description="""Proceed to completion when prescription questions are resolved.
 
 WHEN TO USE:
-- Patient confirms they have no more questions
-- Patient indicates they're done ("that's all", "thank you, goodbye")
+- Patient says "thank you" or indicates satisfaction with prescription info
+- Patient says "that's all I needed" about prescriptions
+- No more prescription questions remain
 
-RESULT: Transition to closing node to thank patient and end call.""",
+NOTE: This transitions to completion which asks "Is there anything else?"
+Do NOT use for explicit goodbyes - those are handled in completion node.
+
+RESULT: Transitions to completion node which asks "Is there anything else?".""",
                     properties={},
                     required=[],
-                    handler=self._end_call_handler,
+                    handler=self._proceed_to_completion_handler,
                 ),
                 self._get_request_staff_function(),
             ],
@@ -842,6 +819,153 @@ RESULT: Call ends with goodbye message.""",
                 self._get_request_staff_function(),
             ],
             respond_immediately=False,
+        )
+
+    def create_completion_node(self) -> NodeConfig:
+        """After delivering prescription status, ask if there's anything else and handle follow-up requests."""
+        state = self.flow_manager.state
+        first_name = state.get("first_name", "")
+
+        # Get prescription info for repeat requests
+        medication_name = state.get("medication_name", "")
+        refill_status = state.get("refill_status", "")
+        pharmacy_name = state.get("pharmacy_name", "")
+
+        return NodeConfig(
+            name="completion",
+            role_messages=[
+                {
+                    "role": "system",
+                    "content": self._get_global_instructions(),
+                }
+            ],
+            task_messages=[
+                {
+                    "role": "system",
+                    "content": f"""# Goal
+The prescription inquiry is complete. Check if the caller needs anything else.
+
+# Prescription Info Already Shared (for reference if asked to repeat)
+- Medication: {medication_name}
+- Status: {refill_status}
+- Pharmacy: {pharmacy_name}
+
+# Scenario Handling
+
+If patient says GOODBYE / "that's all" / "bye" / "that's everything" / "no, thanks":
+→ Say something warm like "You're welcome{', ' + first_name if first_name else ''}. Take care!"
+→ Call end_call IMMEDIATELY
+
+NOTE: "Thank you" or "Great, thank you" alone is NOT a goodbye signal.
+→ After "thank you", ask: "Is there anything else I can help with?"
+→ Only end_call if they respond with clear goodbye like "No, that's all" or "Bye"
+
+If patient asks about ANOTHER MEDICATION, PRESCRIPTION, REFILL:
+→ Call check_another_prescription IMMEDIATELY
+
+Examples:
+- "What about my other prescription?" → check_another_prescription
+- "Can you also check my [medication]?" → check_another_prescription
+
+If patient asks to SCHEDULE an APPOINTMENT or FOLLOW-UP:
+→ Call route_to_workflow with workflow="scheduling" IMMEDIATELY
+→ Do NOT speak first - the scheduling workflow will handle it
+
+Examples:
+- "I need to schedule a follow-up appointment" → route_to_workflow(scheduling)
+- "Can I book an appointment with Dr. Williams?" → route_to_workflow(scheduling)
+
+If patient asks about LAB RESULTS or BLOOD WORK:
+→ Call route_to_workflow with workflow="lab_results" IMMEDIATELY
+
+If patient asks for a HUMAN or has BILLING questions:
+→ Say "Let me connect you with someone who can help."
+→ Call request_staff
+
+# Example Flow
+You: "Is there anything else I can help you with today?"
+
+Caller: "Actually yes, I need to schedule a follow-up appointment with Dr. Williams."
+→ Call route_to_workflow with workflow="scheduling", reason="follow-up to discuss medications"
+
+Caller: "No, that's everything. Thank you!"
+→ "You're welcome{', ' + first_name if first_name else ''}. Thank you for calling {self.organization_name}. Take care!"
+→ Call end_call
+
+# Guardrails
+- The caller's identity is already verified - no need to re-verify for scheduling or lab results
+- Include relevant context in the reason field when routing
+- Keep responses brief and warm
+- If caller is frustrated or asks for a human, call request_staff""",
+                }
+            ],
+            functions=[
+                FlowsFunctionSchema(
+                    name="route_to_workflow",
+                    description="""Route caller to an AI-powered workflow.
+
+WHEN TO USE: Caller asks about scheduling or lab results.
+RESULT: Hands off to specialized AI workflow (no phone transfer).
+
+IMPORTANT: The caller is already verified - context carries through.
+
+EXAMPLES:
+- workflow="scheduling", reason="follow-up to discuss medications"
+- workflow="lab_results", reason="check on blood work" """,
+                    properties={
+                        "workflow": {
+                            "type": "string",
+                            "enum": ["lab_results", "scheduling"],
+                            "description": "Workflow: scheduling (appointments) or lab_results (test results)",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief context for the next workflow",
+                        },
+                    },
+                    required=["workflow", "reason"],
+                    handler=self._route_to_workflow_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="check_another_prescription",
+                    description="""Patient wants to check status of another medication/prescription.
+
+WHEN TO USE:
+- Patient asks about ANOTHER medication, prescription, refill, or medicine
+- Patient mentions a different drug name
+
+EXAMPLES:
+- "What about my fluoride rinse?" → call this
+- "Can you check my other prescription?" → call this
+
+RESULT: Returns to medication identification node.""",
+                    properties={},
+                    required=[],
+                    handler=self._check_another_prescription_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="end_call",
+                    description="""End the call gracefully.
+
+WHEN TO USE: Caller says goodbye or confirms no more questions.
+RESULT: Saves transcript and ends the call.
+
+EXAMPLES:
+- "No, that's all, thanks!" → call end_call
+- "Bye!" → call end_call
+- "That's everything, thank you!" → call end_call
+
+DO NOT USE for just "thank you" alone - ask "anything else?" first.""",
+                    properties={},
+                    required=[],
+                    handler=self._end_call_handler,
+                ),
+                self._get_request_staff_function(),
+            ],
+            respond_immediately=False,  # Wait for caller's response after asking "anything else?"
+            pre_actions=[
+                {"type": "tts_say", "text": "Is there anything else I can help you with today?"},
+            ],
         )
 
     def _create_end_node(self) -> NodeConfig:
@@ -1101,18 +1225,17 @@ EXAMPLES:
                 message = f"Thank you, {caller_first_name}. I found your record. Your refill for {medication_name} has already been sent to {pharmacy_name}."
                 if pharmacy_phone:
                     message += f" You can reach them at {pharmacy_phone} to check if it's ready for pickup."
-                message += " Is there anything else I can help you with?"
-                return message, self.create_closing_node()
+                return message, self.create_completion_node()
 
             elif status_lower == "pending doctor approval":
-                message = f"Thank you, {caller_first_name}. I found your record. I see your refill request for {medication_name} is currently awaiting approval from {prescribing_physician}. The doctor's office typically reviews these within 1 to 2 business days. Is there anything else I can help you with?"
-                return message, self.create_closing_node()
+                message = f"Thank you, {caller_first_name}. I found your record. I see your refill request for {medication_name} is currently awaiting approval from {prescribing_physician}. The doctor's office typically reviews these within 1 to 2 business days."
+                return message, self.create_completion_node()
 
             elif status_lower == "too early":
                 message = f"Thank you, {caller_first_name}. I found your record. Based on your last fill date, it's a bit early for a refill of {medication_name}."
                 if next_refill_date:
                     message += f" You'll be eligible for a refill on {next_refill_date}."
-                message += " If you need an exception, I can connect you with our staff. Is there anything else I can help you with?"
+                message += " If you need an exception, I can connect you with our staff."
                 # Go to status node so caller can request exception and transfer to staff
                 return message, self.create_status_node()
 
@@ -1120,8 +1243,7 @@ EXAMPLES:
                 message = f"Thank you, {caller_first_name}. I found your record. Your prescription for {medication_name} is ready for pickup at {pharmacy_name}."
                 if pharmacy_phone:
                     message += f" You can reach them at {pharmacy_phone}."
-                message += " Is there anything else I can help you with?"
-                return message, self.create_closing_node()
+                return message, self.create_completion_node()
 
             else:
                 # Active/other status - go to status node for LLM to handle refill/renewal offers
@@ -1170,12 +1292,12 @@ EXAMPLES:
             return message, self.create_status_node()
         elif status_lower == "completed":
             message = f"Your {med_name} prescription has been completed. You would need a new prescription from your doctor for more."
-            return message, self.create_closing_node()
+            return message, self.create_completion_node()
         elif status_lower == "sent to pharmacy":
             message = f"Your {med_name} has already been sent to {pharmacy_name}."
             if pharmacy_phone:
                 message += f" You can reach them at {pharmacy_phone} to check if it's ready."
-            return message, self.create_closing_node()
+            return message, self.create_completion_node()
         else:
             message = f"Your {med_name} prescription status is: {refill_status}."
             return message, self.create_status_node()
@@ -1207,7 +1329,7 @@ EXAMPLES:
         except Exception as e:
             logger.error(f"Error saving refill request: {e}")
 
-        return f"I've submitted the refill request to {pharmacy_name}. They should have it ready within 2 to 4 hours. Is there anything else I can help you with?", self.create_closing_node()
+        return f"I've submitted the refill request to {pharmacy_name}. They should have it ready within 2 to 4 hours.", self.create_completion_node()
 
     async def _submit_renewal_request_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -1237,7 +1359,7 @@ EXAMPLES:
         except Exception as e:
             logger.error(f"Error saving renewal request: {e}")
 
-        return f"I've submitted the refill request to {physician} for review. Once approved, the prescription will be sent to {pharmacy_name}. You should hear back within 1 to 2 business days. Is there anything else I can help you with?", self.create_closing_node()
+        return f"I've submitted the refill request to {physician} for review. Once approved, the prescription will be sent to {pharmacy_name}. You should hear back within 1 to 2 business days.", self.create_completion_node()
 
     async def _check_another_prescription_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -1251,7 +1373,14 @@ EXAMPLES:
             # This prevents duplicate responses when select_medication is called in same turn
             return "", self.create_medication_identification_node()
         else:
-            return "I only see one prescription on file for you. Is there something else I can help you with?", self.create_closing_node()
+            return "I only see one prescription on file for you. Is there something else I can help you with?", self.create_completion_node()
+
+    async def _proceed_to_completion_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, NodeConfig]:
+        """Transition to completion node to ask if there's anything else."""
+        logger.info("Flow: Proceeding to completion")
+        return None, self.create_completion_node()
 
     async def _end_call_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
