@@ -144,14 +144,19 @@ class PrescriptionStatusFlow:
         self._init_state()
 
     def _init_state(self):
-        """Initialize flow_manager state with patient data."""
-        # Patient record (from clinic database)
-        self.flow_manager.state["patient_id"] = self.patient_data.get("patient_id")
-        self.flow_manager.state["first_name"] = self.patient_data.get("first_name", "")
-        self.flow_manager.state["last_name"] = self.patient_data.get("last_name", "")
-        self.flow_manager.state["date_of_birth"] = self.patient_data.get("date_of_birth", "")
-        self.flow_manager.state["medical_record_number"] = self.patient_data.get("medical_record_number", "")
-        self.flow_manager.state["phone_number"] = self.patient_data.get("phone_number", "")
+        """Initialize flow_manager state with patient data.
+
+        Uses 'preserve if already set' pattern for identity fields to support
+        cross-workflow handoffs where caller is already verified.
+        """
+        # Patient record (from clinic database) - preserve existing values for cross-workflow support
+        self.flow_manager.state["patient_id"] = self.flow_manager.state.get("patient_id") or self.patient_data.get("patient_id")
+        self.flow_manager.state["patient_name"] = self.flow_manager.state.get("patient_name") or self.patient_data.get("patient_name", "")
+        self.flow_manager.state["first_name"] = self.flow_manager.state.get("first_name") or self.patient_data.get("first_name", "")
+        self.flow_manager.state["last_name"] = self.flow_manager.state.get("last_name") or self.patient_data.get("last_name", "")
+        self.flow_manager.state["date_of_birth"] = self.flow_manager.state.get("date_of_birth") or self.patient_data.get("date_of_birth", "")
+        self.flow_manager.state["medical_record_number"] = self.flow_manager.state.get("medical_record_number") or self.patient_data.get("medical_record_number", "")
+        self.flow_manager.state["phone_number"] = self.flow_manager.state.get("phone_number") or self.patient_data.get("phone_number", "")
 
         # Prescription information
         self.flow_manager.state["medication_name"] = self.patient_data.get("medication_name", "")
@@ -170,8 +175,8 @@ class PrescriptionStatusFlow:
         # Multiple prescriptions (if patient has more than one)
         self.flow_manager.state["prescriptions"] = self.patient_data.get("prescriptions", [])
 
-        # Verification state
-        self.flow_manager.state["identity_verified"] = False
+        # Verification state (preserve if already set from another workflow)
+        self.flow_manager.state["identity_verified"] = self.flow_manager.state.get("identity_verified", False)
 
     def _get_full_name(self) -> str:
         """Get patient's full name from first_name and last_name."""
@@ -296,6 +301,13 @@ RESULT: Transitions to identity verification before sharing any information.""",
             self.flow_manager.state["medication_name"] = "lisinopril"
         if "prior auth" in context_lower:
             self.flow_manager.state["issue_type"] = "prior_authorization"
+
+        # Check if caller is already verified (handed off from another flow)
+        if self.flow_manager.state.get("identity_verified"):
+            first_name = self.flow_manager.state.get("first_name", "")
+            logger.info(f"Flow: Caller already verified as {first_name}, skipping verification")
+            # Go directly to status node
+            return self.create_status_node()
 
         return NodeConfig(
             name="handoff_entry",
@@ -429,7 +441,7 @@ EXAMPLES:
     def create_medication_identification_node(self) -> NodeConfig:
         """Identify which medication the patient is asking about."""
         state = self.flow_manager.state
-        first_name = state.get("verified_first_name", state.get("first_name", "there"))
+        first_name = state.get("first_name", "there")
         prescriptions = state.get("prescriptions", [])
 
         # Build prescription list for prompt
@@ -526,7 +538,7 @@ WHEN TO USE: Caller says goodbye or indicates they're done.""",
     def create_status_node(self) -> NodeConfig:
         """Communicate prescription status to patient."""
         state = self.flow_manager.state
-        first_name = state.get("verified_first_name", state.get("first_name", "there"))
+        first_name = state.get("first_name", "there")
 
         # Get prescription details
         medication_name = state.get("medication_name", "Unknown")
@@ -547,8 +559,9 @@ WHEN TO USE: Caller says goodbye or indicates they're done.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""# Goal
-Share prescription status and handle refill requests appropriately. This step is important.
+                    "content": f"""# CRITICAL: SPEAK FIRST
+You MUST immediately share the prescription status below. Do NOT call any function before speaking.
+Say the status info FIRST, then ask if there's anything else you can help with.
 
 # Current Prescription Information
 - Medication: {medication_name} {dosage}
@@ -697,13 +710,13 @@ RESULT: Transition to closing node to thank patient and end call.""",
                 ),
                 self._get_request_staff_function(),
             ],
-            respond_immediately=False,
+            respond_immediately=True,
         )
 
     def create_closing_node(self) -> NodeConfig:
         """Thank patient and end call."""
         state = self.flow_manager.state
-        first_name = state.get("verified_first_name", state.get("first_name", ""))
+        first_name = state.get("first_name", "")
 
         return NodeConfig(
             name="closing",
@@ -844,6 +857,38 @@ RESULT: Call ends with goodbye message.""",
             functions=[],
             post_actions=[{"type": "end_conversation"}],
         )
+
+    def create_post_scheduling_node(self, scheduling_flow, transition_message: str = "") -> NodeConfig:
+        self._scheduling_flow = scheduling_flow
+        return NodeConfig(
+            name="post_scheduling",
+            task_messages=[{"role": "system", "content": "Call proceed_to_scheduling immediately."}],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_scheduling", description="Proceed to scheduling.", properties={}, required=[],
+                handler=self._proceed_to_scheduling_handler,
+            )],
+            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": transition_message}] if transition_message else None,
+        )
+
+    async def _proceed_to_scheduling_handler(self, args: dict, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        return None, self._scheduling_flow.create_scheduling_node()
+
+    def create_post_lab_results_node(self, lab_results_flow, transition_message: str = "") -> NodeConfig:
+        self._lab_results_flow = lab_results_flow
+        return NodeConfig(
+            name="post_lab_results",
+            task_messages=[{"role": "system", "content": "Call proceed_to_lab_results immediately."}],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_lab_results", description="Proceed to lab results.", properties={}, required=[],
+                handler=self._proceed_to_lab_results_handler,
+            )],
+            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": transition_message}] if transition_message else None,
+        )
+
+    async def _proceed_to_lab_results_handler(self, args: dict, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        return None, self._lab_results_flow.create_results_node()
 
     def create_transfer_initiated_node(self) -> NodeConfig:
         """Node shown while transfer is in progress."""
@@ -1015,8 +1060,23 @@ EXAMPLES:
 
         if name_match and dob_match:
             flow_manager.state["identity_verified"] = True
-            flow_manager.state["verified_first_name"] = caller_first_name
-            flow_manager.state["verified_name"] = provided_name
+
+            # Parse and store first_name/last_name for cross-workflow compatibility
+            if "," in provided_name:
+                parts = [p.strip() for p in provided_name.split(",")]
+                if len(parts) == 2:
+                    flow_manager.state["last_name"] = parts[0]
+                    flow_manager.state["first_name"] = parts[1]
+            else:
+                parts = provided_name.strip().split()
+                if len(parts) >= 2:
+                    flow_manager.state["first_name"] = parts[0]
+                    flow_manager.state["last_name"] = " ".join(parts[1:])
+                elif len(parts) == 1:
+                    flow_manager.state["first_name"] = parts[0]
+
+            flow_manager.state["patient_name"] = provided_name
+            flow_manager.state["date_of_birth"] = stored_dob
 
             logger.info(f"Flow: Identity verified for {caller_first_name}")
 
@@ -1331,44 +1391,38 @@ EXAMPLES:
 
     async def _handoff_to_lab_results(
         self, flow_manager: FlowManager, reason: str
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to LabResultsFlow with gathered context."""
+    ) -> tuple[None, NodeConfig]:
         from clients.demo_clinic_alpha.lab_results.flow_definition import LabResultsFlow
 
         lab_results_flow = LabResultsFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
+            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
+        logger.info(f"Flow: Handing off to LabResultsFlow - {reason}")
 
-        logger.info(f"Flow: Handing off to LabResultsFlow with context: {reason}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
+        if flow_manager.state.get("identity_verified"):
+            first_name = flow_manager.state.get("first_name", "")
+            msg = f"Let me check on that for you, {first_name}." if first_name else "Let me check on that for you."
+            return None, self.create_post_lab_results_node(lab_results_flow, msg)
         return None, lab_results_flow.create_handoff_entry_node(context=reason)
 
     async def _handoff_to_scheduling(
         self, flow_manager: FlowManager, reason: str
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to PatientSchedulingFlow with gathered context."""
+    ) -> tuple[None, NodeConfig]:
         from clients.demo_clinic_alpha.patient_scheduling.flow_definition import PatientSchedulingFlow
 
         scheduling_flow = PatientSchedulingFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
+            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
+        logger.info(f"Flow: Handing off to PatientSchedulingFlow - {reason}")
 
-        logger.info(f"Flow: Handing off to PatientSchedulingFlow with context: {reason}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
+        if flow_manager.state.get("identity_verified"):
+            first_name = flow_manager.state.get("first_name", "")
+            flow_manager.state["appointment_reason"] = reason
+            flow_manager.state["appointment_type"] = "Returning Patient"
+            msg = f"I can help with that, {first_name}!" if first_name else "I can help with that!"
+            return None, self.create_post_scheduling_node(scheduling_flow, msg)
         return None, scheduling_flow.create_handoff_entry_node(context=reason)

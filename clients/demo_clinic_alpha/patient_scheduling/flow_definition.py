@@ -142,6 +142,9 @@ class PatientSchedulingFlow:
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
         self.cold_transfer_config = cold_transfer_config or {}
 
+        # Initialize flow state
+        self._init_state()
+
         # Set current date and available slots in state for reference across flow
         self.today = date.today()
         self.flow_manager.state["today"] = self.today.strftime("%B %d, %Y")
@@ -149,6 +152,23 @@ class PatientSchedulingFlow:
         # Generate available slots (will come from EHR integration later)
         self.available_slots = self._generate_available_slots()
         self.flow_manager.state["available_slots"] = self.available_slots
+
+    def _init_state(self):
+        """Initialize flow_manager state with patient data.
+
+        Uses 'preserve if already set' pattern for identity fields to support
+        cross-workflow handoffs where caller is already verified.
+        """
+        # Patient record (from clinic database) - preserve existing values for cross-workflow support
+        self.flow_manager.state["patient_id"] = self.flow_manager.state.get("patient_id") or self.patient_data.get("patient_id")
+        self.flow_manager.state["patient_name"] = self.flow_manager.state.get("patient_name") or self.patient_data.get("patient_name", "")
+        self.flow_manager.state["first_name"] = self.flow_manager.state.get("first_name") or self.patient_data.get("first_name", "")
+        self.flow_manager.state["last_name"] = self.flow_manager.state.get("last_name") or self.patient_data.get("last_name", "")
+        self.flow_manager.state["date_of_birth"] = self.flow_manager.state.get("date_of_birth") or self.patient_data.get("date_of_birth", "")
+        self.flow_manager.state["phone_number"] = self.flow_manager.state.get("phone_number") or self.patient_data.get("phone_number", "")
+
+        # Verification state (preserve if already set from another workflow)
+        self.flow_manager.state["identity_verified"] = self.flow_manager.state.get("identity_verified", False)
 
     def _generate_available_slots(self) -> list[str]:
         """Generate available appointment slots. Will be replaced by EHR integration."""
@@ -691,15 +711,42 @@ EXAMPLES:
     def _create_end_node(self) -> NodeConfig:
         return NodeConfig(
             name="end",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": "Thank the patient and say goodbye.",
-                }
-            ],
+            task_messages=[{"role": "system", "content": "Thank the patient and say goodbye."}],
             functions=[],
             post_actions=[{"type": "end_conversation"}],
         )
+
+    def create_post_prescription_node(self, prescription_flow, transition_message: str = "") -> NodeConfig:
+        self._prescription_flow = prescription_flow
+        return NodeConfig(
+            name="post_prescription",
+            task_messages=[{"role": "system", "content": "Call proceed_to_prescription immediately."}],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_prescription", description="Proceed to prescription status.", properties={}, required=[],
+                handler=self._proceed_to_prescription_handler,
+            )],
+            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": transition_message}] if transition_message else None,
+        )
+
+    async def _proceed_to_prescription_handler(self, args: dict, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        return None, self._prescription_flow.create_status_node()
+
+    def create_post_lab_results_node(self, lab_results_flow, transition_message: str = "") -> NodeConfig:
+        self._lab_results_flow = lab_results_flow
+        return NodeConfig(
+            name="post_lab_results",
+            task_messages=[{"role": "system", "content": "Call proceed_to_lab_results immediately."}],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_lab_results", description="Proceed to lab results.", properties={}, required=[],
+                handler=self._proceed_to_lab_results_handler,
+            )],
+            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": transition_message}] if transition_message else None,
+        )
+
+    async def _proceed_to_lab_results_handler(self, args: dict, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        return None, self._lab_results_flow.create_results_node()
 
     def create_staff_confirmation_node(self) -> NodeConfig:
         """Ask patient to confirm they want to speak with a staff member."""
@@ -1066,8 +1113,11 @@ Once they provide DOB, call verify_dob.""",
         if provided_dob_normalized and provided_dob_normalized == stored_dob:
             # DOB matches - copy verified info to state
             first_name = lookup_record.get("first_name", "")
+            last_name = lookup_record.get("last_name", "")
+            flow_manager.state["identity_verified"] = True
             flow_manager.state["first_name"] = first_name
-            flow_manager.state["last_name"] = lookup_record.get("last_name", "")
+            flow_manager.state["last_name"] = last_name
+            flow_manager.state["patient_name"] = f"{first_name} {last_name}".strip()
             flow_manager.state["phone_number"] = lookup_record.get("phone_number", "")
             flow_manager.state["date_of_birth"] = stored_dob
             flow_manager.state["email"] = lookup_record.get("email", "")
@@ -1154,12 +1204,17 @@ Once they provide DOB, call verify_dob.""",
 
         # Check if we already have all required patient info (e.g., verified returning patient)
         required_fields = ["first_name", "last_name", "phone_number", "date_of_birth", "email"]
-        has_all_info = all(flow_manager.state.get(field) for field in required_fields)
+        missing_fields = [f for f in required_fields if not flow_manager.state.get(f)]
 
-        if has_all_info:
-            # Skip collect_info for verified returning patients
+        if not missing_fields:
+            # Skip collect_info for verified returning patients with all info
             logger.info("Flow: All patient info already present, skipping to confirmation")
             return "Perfect! Let me confirm your appointment.", self.create_confirmation_node()
+
+        # Tailor message based on what's missing (handoff scenario - identity already verified)
+        if flow_manager.state.get("identity_verified") and missing_fields == ["email"]:
+            logger.info("Flow: Identity verified, only missing email")
+            return "Perfect! I just need your email address to send the confirmation.", self.create_collect_info_node()
 
         return "Perfect! Now I just need a few details to complete your booking.", self.create_collect_info_node()
 
@@ -1473,46 +1528,38 @@ Once they provide DOB, call verify_dob.""",
 
     async def _handoff_to_lab_results(
         self, flow_manager: FlowManager, reason: str
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to LabResultsFlow with gathered context."""
+    ) -> tuple[None, NodeConfig]:
         from clients.demo_clinic_alpha.lab_results.flow_definition import LabResultsFlow
 
         lab_results_flow = LabResultsFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
+            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
+        logger.info(f"Flow: Handing off to LabResultsFlow - {reason}")
 
-        logger.info(f"Flow: Handing off to LabResultsFlow with context: {reason}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
+        if flow_manager.state.get("identity_verified"):
+            first_name = flow_manager.state.get("first_name", "")
+            msg = f"Let me check on that for you, {first_name}." if first_name else "Let me check on that for you."
+            return None, self.create_post_lab_results_node(lab_results_flow, msg)
         return None, lab_results_flow.create_handoff_entry_node(context=reason)
 
     async def _handoff_to_prescription_status(
         self, flow_manager: FlowManager, reason: str
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to PrescriptionStatusFlow with gathered context."""
+    ) -> tuple[None, NodeConfig]:
         from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
 
         prescription_flow = PrescriptionStatusFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
+            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
+        logger.info(f"Flow: Handing off to PrescriptionStatusFlow - {reason}")
 
-        logger.info(f"Flow: Handing off to PrescriptionStatusFlow with context: {reason}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
+        if flow_manager.state.get("identity_verified"):
+            first_name = flow_manager.state.get("first_name", "")
+            msg = f"Let me check on that for you, {first_name}." if first_name else "Let me check on that for you."
+            return None, self.create_post_prescription_node(prescription_flow, msg)
         return None, prescription_flow.create_handoff_entry_node(context=reason)
 
     def _get_request_staff_function(self) -> FlowsFunctionSchema:

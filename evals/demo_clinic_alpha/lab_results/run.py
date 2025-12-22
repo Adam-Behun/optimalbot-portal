@@ -101,8 +101,9 @@ CONVERSATION:
 {conv_text}
 
 Check for these problems:
-1. REPETITION: Bot says same thing multiple times
-2. OVER-TALKING: Bot keeps talking after caller says goodbye
+1. REPETITION: Bot says same thing multiple times in a row
+2. OVER-TALKING: Bot keeps talking AFTER caller says goodbye AND caller doesn't respond.
+   NOTE: If caller extends the goodbye ("thanks, have a great day!") and bot responds briefly, that's FINE.
 3. ROBOTIC: Unnatural phrasing, lists, or overly formal language
 4. INSENSITIVE: Not empathetic when caller is worried about results
 5. IGNORED REQUEST: Bot doesn't acknowledge caller's stated need or concern
@@ -123,6 +124,7 @@ def grade_function_calls(calls_text: str, final_state: dict, patient: dict) -> d
     provider_review_required = patient.get("provider_review_required", False)
     results_status = patient.get("results_status", "")
     identity_verified = final_state.get("identity_verified", False)
+    routed_to = final_state.get("routed_to", "")
 
     prompt = f"""Grade whether the bot's function calls were CORRECT for a lab results inquiry.
 
@@ -143,9 +145,14 @@ WHAT MAKES FUNCTION CALLS CORRECT:
 3. CORRECT: Caller asks for human → request_staff (no verify_identity needed)
 4. CORRECT: Provider review required → verify_identity → confirm_callback (no results shared)
 5. CORRECT: Results pending → verify_identity → confirm_callback
+6. CORRECT: Multi-workflow: verify_identity → share results → route_to_workflow (if caller asks about scheduling/prescription) → end_call
 
 KEY POINT: If identity_verified=False AND results_communicated=False, that is CORRECT HIPAA behavior.
 When verification fails, bot should transfer to staff - this is the CORRECT outcome.
+
+MULTI-WORKFLOW: If route_to_workflow was called AFTER verify_identity succeeded and results were shared,
+that is CORRECT behavior for handling caller's additional request (scheduling, prescription, etc.).
+The final state routed_to="{routed_to}" shows where the call was routed.
 
 Reply PASS if function calls follow any correct pattern above.
 Reply FAIL only if bot made actual mistakes (e.g., shared results without verification).
@@ -291,7 +298,7 @@ class FlowRunner:
         )
 
         # Initialize flow state
-        self.flow._init_flow_state()
+        self.flow._init_state()
 
         self.current_node = self.flow.create_greeting_node()
         self.current_node_name = "greeting"  # Track node name for grading

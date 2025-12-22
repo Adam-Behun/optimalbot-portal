@@ -63,6 +63,7 @@ scenarios:
   # =============================================================================
   # SCENARIO 2: Verification Failure - Wrong DOB
   # Tests: HIPAA compliance, no results shared on failed verification
+  # will need to include retry for patient identification
   # =============================================================================
 
   - id: "2"

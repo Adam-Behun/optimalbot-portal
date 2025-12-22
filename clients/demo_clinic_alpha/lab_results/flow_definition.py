@@ -98,16 +98,22 @@ class LabResultsFlow:
         self.cold_transfer_config = cold_transfer_config or {}
 
         # Initialize flow state directly in constructor
-        self._init_flow_state()
+        self._init_state()
 
-    def _init_flow_state(self):
-        """Initialize flow_manager state with patient data."""
-        # Patient record (from clinic database)
-        self.flow_manager.state["patient_id"] = self.patient_data.get("patient_id")
-        self.flow_manager.state["patient_name"] = self.patient_data.get("patient_name", "")
-        self.flow_manager.state["date_of_birth"] = self.patient_data.get("date_of_birth", "")
-        self.flow_manager.state["medical_record_number"] = self.patient_data.get("medical_record_number", "")
-        self.flow_manager.state["phone_number"] = self.patient_data.get("phone_number", "")
+    def _init_state(self):
+        """Initialize flow_manager state with patient data.
+
+        Uses 'preserve if already set' pattern for identity fields to support
+        cross-workflow handoffs where caller is already verified.
+        """
+        # Patient record (from clinic database) - preserve existing values for cross-workflow support
+        self.flow_manager.state["patient_id"] = self.flow_manager.state.get("patient_id") or self.patient_data.get("patient_id")
+        self.flow_manager.state["patient_name"] = self.flow_manager.state.get("patient_name") or self.patient_data.get("patient_name", "")
+        self.flow_manager.state["first_name"] = self.flow_manager.state.get("first_name") or self.patient_data.get("first_name", "")
+        self.flow_manager.state["last_name"] = self.flow_manager.state.get("last_name") or self.patient_data.get("last_name", "")
+        self.flow_manager.state["date_of_birth"] = self.flow_manager.state.get("date_of_birth") or self.patient_data.get("date_of_birth", "")
+        self.flow_manager.state["medical_record_number"] = self.flow_manager.state.get("medical_record_number") or self.patient_data.get("medical_record_number", "")
+        self.flow_manager.state["phone_number"] = self.flow_manager.state.get("phone_number") or self.patient_data.get("phone_number", "")
 
         # Lab order information
         self.flow_manager.state["test_type"] = self.patient_data.get("test_type", "")
@@ -189,7 +195,17 @@ Determine what the caller needs and route appropriately.
 
 # Scenario Handling
 If caller asks about LAB RESULTS, TEST RESULTS, or BLOOD WORK:
+→ Respond naturally and briefly: "Sounds good!" or "Of course!" or "Sure thing!"
+→ Call proceed_to_verification immediately (the verification node will ask for their name)
+→ Do NOT say "I need to verify your identity" - that sounds robotic
+
+If caller is frustrated about lab results:
+→ Acknowledge briefly: "I understand, let me help you with that."
 → Call proceed_to_verification immediately
+
+If caller EXPLICITLY asks for a human/person/transfer:
+→ "Let me connect you with someone who can help."
+→ Call request_staff
 
 If caller needs something ELSE (appointments, billing, prescriptions, etc.):
 → Say "Let me connect you with someone who can help with that."
@@ -197,16 +213,25 @@ If caller needs something ELSE (appointments, billing, prescriptions, etc.):
 
 # Example Flow
 Caller: "I'm calling to check on my lab results."
-→ Call proceed_to_verification
+→ Say "Sounds good!" and call proceed_to_verification
 
-Caller: "I need to schedule an appointment."
-→ "Let me connect you with someone who can help with that."
+Caller: "Hi, I need my blood work results."
+→ Say "Of course!" and call proceed_to_verification
+
+Caller frustrated: "I've called THREE times about my blood work!"
+→ Say "I understand, let me help you with that." and call proceed_to_verification
+
+Caller: "Can I speak to a person?"
+→ "Let me connect you with someone."
 → Call request_staff
 
 # Guardrails
-- Do NOT ask for any personal information yet
+- Do NOT ask for any personal information yet - the verification node handles that
 - Do NOT discuss lab results until identity is verified
+- Do NOT say "First, I need to verify your identity" - sounds unnatural
 - Route to verification as soon as caller mentions lab/test results
+- Frustrated callers asking about lab results should STILL go through verification (not transfer)
+- Only transfer if caller explicitly asks for a human
 
 # Error Handling
 If you miss what the caller said:
@@ -280,25 +305,31 @@ Note any urgency or anxiety for when you communicate with them.""",
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""# Goal
-Verify the caller's identity before sharing any lab results. This step is important.
+                    "content": f"""# CRITICAL RULE: CALL verify_identity AS SOON AS YOU HAVE NAME + DOB
+The moment you have both name and date of birth, YOU MUST call verify_identity.
+Do NOT speak without calling the function. No "hold on", no "let me check", no "one moment".
+
+WRONG: Say "Let me check your records" and stop (NEVER DO THIS)
+RIGHT: Call verify_identity(name="David Chen", date_of_birth="November 2, 1958") immediately
+
+If caller is anxious while you have their info, call verify_identity FIRST, then you can help them.
 
 # Patient Record on File
 - Name: {stored_name}
 - Date of Birth: {stored_dob}
 
-# Verification Steps
-1. Ask for their first and last name
-2. Ask for their date of birth
-3. Compare against the record on file
-4. Call verify_identity with the information they provide
-
 # Example Flow
-You: "For privacy and security, I need to verify your identity first. May I have your first and last name?"
-Caller: "Maria Santos"
-You: "Thank you, Maria. And what is your date of birth?"
-Caller: "March 22nd, 1978"
-→ Call verify_identity with name="Maria Santos" and date_of_birth="March 22, 1978"
+You: "Can I have your first and last name?"
+Caller: "David Chen"
+You: "Thanks, David. And your date of birth?"
+Caller: "November 2nd, 1958"
+→ Call verify_identity(name="David Chen", date_of_birth="November 2, 1958")
+
+# Anxious Caller Example
+You: "And your date of birth?"
+Caller: "November 2nd, 1958... but please, I need to know!"
+→ STILL call verify_identity(name="David Chen", date_of_birth="November 2, 1958") FIRST
+→ The function will handle the next step - don't worry about their anxiety until after verification
 
 # Data Normalization
 **Dates** (spoken → written):
@@ -313,7 +344,13 @@ Always normalize dates before calling verify_identity.
 - Do NOT reveal any patient information during verification
 - Do NOT say whether the name or DOB matches until both are collected
 - Be patient if caller needs to repeat information
-- If caller refuses to verify, explain it's required for privacy and offer to transfer to staff
+- ONLY call ONE function per turn - either verify_identity OR request_staff, never both
+- ONLY call request_staff if caller explicitly says "transfer me" or "I want to talk to a person"
+- Do NOT call request_staff just because caller sounds anxious or impatient - verify first, then help them
+
+# When to use each function
+- verify_identity: After you have BOTH name AND date of birth → always try this first
+- request_staff: ONLY if caller explicitly refuses to verify AND asks for human transfer
 
 # Error Handling
 If you miss information:
@@ -370,78 +407,53 @@ EXAMPLES:
             task_messages=[
                 {
                     "role": "system",
-                    "content": f"""# CRITICAL RULE: NO REPETITION
-NEVER ask the same question twice. If caller doesn't answer a question directly, move forward:
-- If you already asked about callback and they didn't answer → call confirm_callback with confirmed=true
-- If you already explained doctor will call → don't explain again, just confirm callback and move on
-
-# Context
-The patient has been verified. Handle their lab results inquiry.
+                    "content": f"""# Goal
+Handle provider review or pending results. Never share results when provider_review_required is True. This step is important.
 
 # Lab Order Information
 - Test Type: {test_type}
-- Test Date: {test_date}
 - Ordering Physician: {ordering_physician}
 - Results Status: {results_status}
 - Provider Review Required: {provider_review_required}
 - Callback Timeframe: {callback_timeframe}
 - Phone on File (last 4): {phone_last4}
 
-# Scenario Handling
+# Provider Review Required (provider_review_required=True)
+Explain that the doctor needs to review, then ask about callback ONCE:
+→ "{ordering_physician} needs to review these results. The doctor will call you within {callback_timeframe}. Is {phone_last4} still good to reach you?"
 
-## Provider Review Required
-If provider_review_required is True:
-→ Do NOT share any results. This step is important.
-→ Explain: "{ordering_physician} needs to review these results before they can be shared."
-→ Tell them: "The doctor will call you within {callback_timeframe} to discuss."
-→ If worried: "Provider review is standard procedure for certain results."
-→ Ask ONCE: "Is the number ending in {phone_last4} still the best to reach you?"
-→ If they answer YES/NO or give new number: call confirm_callback
-→ If they DON'T answer callback question (ask about results instead): acknowledge briefly, then call confirm_callback with confirmed=true (ASSUME they want callback)
-→ NEVER ask about callback number more than once
+When caller confirms phone or gives new number → call confirm_callback immediately
+When caller asks about results instead of answering → empathize briefly, then call confirm_callback(confirmed=true)
+When caller asks "when will they call?" → answer "{callback_timeframe}" and call confirm_callback(confirmed=true)
 
-## Results Pending
-If results_status is "Pending":
-→ Explain: "Your {test_type} from {test_date} is still being processed."
-→ Offer callback: "Would you like us to call you when they're ready?"
-→ If yes, confirm phone and call confirm_callback
+# Results Pending
+→ "Your {test_type} is still being processed. Would you like us to call when ready?"
+When caller says yes → confirm phone number, then call confirm_callback
+When caller asks "how long?" → answer with timeframe, wait for callback answer
 
-# Example Flow (Provider Review - Normal)
-You: "I can see your results have been received. However, {ordering_physician} needs to review them before I can share the details. The doctor will call you within {callback_timeframe}. Is the number ending in {phone_last4} the best to reach you?"
-Patient: "Yes, that's my cell."
-→ Call confirm_callback with confirmed=true
+# Examples
 
-# Example Flow (Provider Review - Anxious Caller)
-You: "...The doctor will call you within {callback_timeframe}. Is the number ending in {phone_last4} the best to reach you?"
-Patient: "Is it bad news? Just tell me if it's serious!"
-You: "I understand this is stressful. The doctor will discuss everything when they call."
-→ IMMEDIATELY call confirm_callback with confirmed=true
-(DO NOT ask about phone number again - assume they want callback)
+You: "The doctor will call you within {callback_timeframe}. Is {phone_last4} still good?"
+Caller: "Is it bad news? Just tell me!"
+→ "I understand how stressful this is. I can't share until the doctor reviews, but I'll make sure they call you."
+→ call confirm_callback(confirmed=true)
 
-# Example Flow (Pending)
-You: "Your {test_type} is still being processed. Would you like us to call when it's ready?"
-Patient: "Yes please."
-You: "Is the number ending in {phone_last4} still good?"
-Patient: "Yes."
-→ Call confirm_callback with confirmed=true
+Caller: "When will they call me?"
+→ "Within {callback_timeframe}."
+→ call confirm_callback(confirmed=true)
+
+Caller: "Yes, that's my cell."
+→ call confirm_callback(confirmed=true)
+
+Caller: "Call my cell instead: 555-999-7777"
+→ call confirm_callback(confirmed=true, new_number="5559997777")
 
 # Guardrails
 - NEVER share results when provider_review_required is True. This step is important.
-- If caller presses for details: "I understand, but the doctor needs to review first."
-- If frustrated or very distressed: immediately call request_staff to transfer
-- Do NOT keep repeating the same callback question - if they don't answer it directly after ONE attempt, proceed to confirm_callback with confirmed=true (assume they want the callback)
-
-# Handling Emotional Callers
-If caller is worried/anxious/upset and doesn't answer the callback question:
-→ Acknowledge their feelings briefly: "I understand this is stressful."
-→ Assume they want the callback: call confirm_callback with confirmed=true
-→ Do NOT ask the same question multiple times
-
-If caller explicitly asks for human/transfer: immediately call request_staff
-
-# Error Handling
-If you miss what caller said: "I'm sorry, could you repeat that?"
-If caller gives new number you didn't catch: "Could you say that number again?" """,
+- NEVER repeat information already said (callback timeframe, doctor will call, etc.)
+- Ask about callback phone number only ONCE
+- After anxious caller deflects TWICE: call confirm_callback(confirmed=true) - don't keep talking. This step is important.
+- Only transfer if caller explicitly asks: "transfer me" or "speak to someone" """,
                 }
             ],
             functions=[
@@ -583,25 +595,33 @@ If patient asks to REPEAT the results:
 → Repeat the results in a SHORTER form (just the key findings)
 → Then ask "Is there anything else?"
 
-If patient says NO / GOODBYE:
-→ Say something warm like "Take care!"
-→ Call end_call
+If patient says GOODBYE / "that's all" / "bye" / "that's everything":
+→ Say something warm and brief like "Take care!" or "You're welcome, take care!"
+→ Call end_call IMMEDIATELY
+
+NOTE: "Thank you" or "Great, thank you" alone is NOT a goodbye signal.
+→ After "thank you", ask: "Is there anything else I can help with?"
+→ Only end_call if they respond with clear goodbye like "No, that's all" or "Bye"
 
 If patient asks a SIMPLE QUESTION (hours, location, parking):
 → Answer directly
 → Ask "Is there anything else I can help with?"
 
 If patient needs SCHEDULING (book, cancel, reschedule appointment):
-→ Say "I can help with that."
-→ Call route_to_workflow with workflow="scheduling"
+→ Call route_to_workflow with workflow="scheduling" IMMEDIATELY
+→ Do NOT speak - the scheduling workflow will greet and offer slots
 
 If patient needs PRESCRIPTION help (refill, medication status):
-→ Say "Let me connect you with someone who can help with that."
-→ Call route_to_workflow with workflow="prescription_status"
+→ Call route_to_workflow with workflow="prescription_status" IMMEDIATELY
+→ Do NOT speak - the function will share the prescription status directly
 
 If patient needs BILLING or asks for a HUMAN:
-→ Say "Let me transfer you to our billing team." or "Let me connect you with someone."
-→ Call request_staff with appropriate department
+→ Say "Let me connect you with someone who can help."
+→ Call request_staff
+
+If patient provides a DIFFERENT CALLBACK NUMBER (e.g., "call my cell at 555-1234"):
+→ MUST call update_callback_number(new_number="5551234") - the function will respond with confirmation
+→ Do NOT say "I've updated" without calling the function - the update won't happen unless you call it
 
 # Example Flow
 You: "Thanks for your patience with that. Is there anything else I can help you with today?"
@@ -622,9 +642,14 @@ Caller: "No, that's all. Thank you!"
 - Keep responses brief and warm
 - The caller's identity is already verified - no need to re-verify for scheduling or prescriptions
 - Include relevant context in the reason field when routing (e.g., "follow-up after lab results")
-- If caller is frustrated or asks for a human, route to front_desk immediately
+- If caller is frustrated or asks for a human, call request_staff to transfer them
 - NEVER interpret results or give medical advice (e.g., "don't worry", "you're healthy", "this is good/bad")
-- If asked "what does this mean?" or "should I be worried?": say "Your doctor can explain what these results mean for your specific situation."
+- If caller expresses CONCERN, WORRY, or DISAPPOINTMENT about results (e.g., "still high", "was hoping", "worried about"):
+  → First acknowledge their feelings: "I understand" or "I can see why you'd want to know more"
+  → Then explain: "Unfortunately, I'm not able to answer questions about what your results mean. Your doctor can explain what these mean for your specific situation."
+  → Offer: "Would you like me to transfer you to someone who can help?"
+  → If they say YES to transfer: call request_staff
+  → If they say NO, "thank you", or anything else: ask "Is there anything else I can help with?" (do NOT end call yet)
 - Do NOT repeat the same information if already stated""",
                 }
             ],
@@ -655,31 +680,7 @@ EXAMPLES:
                     required=["workflow", "reason"],
                     handler=self._route_to_workflow_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="request_staff",
-                    description="""Transfer caller to human staff via phone.
-
-WHEN TO USE: Caller needs billing help, asks for a human, or has unclear/complex needs.
-RESULT: Initiates SIP transfer to staff phone number.
-
-EXAMPLES:
-- "I have a billing question" → department="billing"
-- "Can I speak to someone?" → department="front_desk"
-- Unclear request → department="front_desk" """,
-                    properties={
-                        "department": {
-                            "type": "string",
-                            "enum": ["billing", "front_desk"],
-                            "description": "Department: billing (payments/insurance), front_desk (general/complex/unclear)",
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Brief reason for transfer",
-                        },
-                    },
-                    required=["department"],
-                    handler=self._request_staff_handler,
-                ),
+                self._get_request_staff_function(),
                 FlowsFunctionSchema(
                     name="end_call",
                     description="""End the call gracefully.
@@ -694,12 +695,63 @@ EXAMPLES:
                     required=[],
                     handler=self._end_call_handler,
                 ),
+                FlowsFunctionSchema(
+                    name="update_callback_number",
+                    description="""Update the callback phone number.
+
+WHEN TO USE: Caller provides a different phone number for callback after callback was already confirmed.
+RESULT: Updates the callback number and stays in completion node.
+
+EXAMPLES:
+- "Actually, call my cell instead. It's 555-1234" → call with new_number="5551234"
+- "Use this number: 555-999-7777" → call with new_number="5559997777" """,
+                    properties={
+                        "new_number": {
+                            "type": "string",
+                            "description": "The new phone number (digits only or with common separators)",
+                        },
+                    },
+                    required=["new_number"],
+                    handler=self._update_callback_number_handler,
+                ),
             ],
             respond_immediately=False,  # Wait for caller's response after asking "anything else?"
             pre_actions=[
                 {"type": "tts_say", "text": "Is there anything else I can help you with today?"},
             ],
         )
+
+    def create_post_prescription_node(self, prescription_flow, transition_message: str = "") -> NodeConfig:
+        self._prescription_flow = prescription_flow
+        return NodeConfig(
+            name="post_prescription",
+            task_messages=[{"role": "system", "content": "Call proceed_to_prescription immediately."}],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_prescription", description="Proceed to prescription status.", properties={}, required=[],
+                handler=self._proceed_to_prescription_handler,
+            )],
+            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": transition_message}] if transition_message else None,
+        )
+
+    async def _proceed_to_prescription_handler(self, args: dict, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        return None, self._prescription_flow.create_status_node()
+
+    def create_post_scheduling_node(self, scheduling_flow, transition_message: str = "") -> NodeConfig:
+        self._scheduling_flow = scheduling_flow
+        return NodeConfig(
+            name="post_scheduling",
+            task_messages=[{"role": "system", "content": "Call proceed_to_scheduling immediately."}],
+            functions=[FlowsFunctionSchema(
+                name="proceed_to_scheduling", description="Proceed to scheduling.", properties={}, required=[],
+                handler=self._proceed_to_scheduling_handler,
+            )],
+            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": transition_message}] if transition_message else None,
+        )
+
+    async def _proceed_to_scheduling_handler(self, args: dict, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        return None, self._scheduling_flow.create_scheduling_node()
 
     def _create_end_node(self) -> NodeConfig:
         """Terminal node that ends the conversation."""
@@ -727,7 +779,7 @@ EXAMPLES:
 Apologize and offer to transfer to staff who can help:
 "I'm sorry, but I wasn't able to verify your identity with the information provided. For your security, let me connect you with a staff member who can assist you further."
 
-Then call request_staff with patient_confirmed=true.""",
+Then call request_staff.""",
                 }
             ],
             functions=[
@@ -837,6 +889,25 @@ RESULT: Ends the call.""",
             # Verification successful
             flow_manager.state["identity_verified"] = True
 
+            # Parse and store first_name/last_name for cross-workflow compatibility
+            if "," in provided_name:
+                parts = [p.strip() for p in provided_name.split(",")]
+                if len(parts) == 2:
+                    flow_manager.state["last_name"] = parts[0]
+                    flow_manager.state["first_name"] = parts[1]
+            else:
+                parts = provided_name.strip().split()
+                if len(parts) >= 2:
+                    flow_manager.state["first_name"] = parts[0]
+                    flow_manager.state["last_name"] = " ".join(parts[1:])
+                elif len(parts) == 1:
+                    flow_manager.state["first_name"] = parts[0]
+
+            flow_manager.state["patient_name"] = provided_name
+            flow_manager.state["date_of_birth"] = stored_dob
+
+            first_name = flow_manager.state.get("first_name", "there")
+
             # Write to database immediately
             patient_id = flow_manager.state.get("patient_id")
             if patient_id:
@@ -846,10 +917,7 @@ RESULT: Ends the call.""",
                 except Exception as e:
                     logger.error(f"Error updating identity_verified: {e}")
 
-            # Extract first name for personalized response
-            first_name = provided_name.strip().split()[0].title() if provided_name.strip() else "there"
-
-            logger.info(f"Flow: Identity verified for {first_name}")
+            logger.info(f"Flow: Identity verified for {first_name} {flow_manager.state.get('last_name', '')}")
 
             # Check results status and route appropriately
             results_status = flow_manager.state.get("results_status", "")
@@ -915,12 +983,41 @@ RESULT: Ends the call.""",
                 except Exception as e:
                     logger.error(f"Error updating callback info: {e}")
 
-            response = f"I've confirmed your callback number. You should expect a call within {callback_timeframe}."
+            if new_number:
+                response = f"I've updated your callback number to the one ending in {new_number_digits[-4:]}."
+            else:
+                response = "I've confirmed your callback number."
         else:
             logger.info("Flow: Patient declined callback")
             response = "Understood. You can always call us back to check on your results."
 
         return response, self.create_completion_node()
+
+    async def _update_callback_number_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[str, NodeConfig]:
+        """Update the callback phone number after callback was already confirmed."""
+        new_number = args.get("new_number", "").strip()
+
+        if new_number:
+            # Normalize to digits only
+            new_number_digits = ''.join(c for c in new_number if c.isdigit())
+            flow_manager.state["phone_number"] = new_number_digits
+
+            logger.info(f"Flow: Callback number updated to {new_number_digits[-4:]}")
+
+            # Write to database immediately
+            patient_id = flow_manager.state.get("patient_id")
+            if patient_id:
+                try:
+                    db = get_async_patient_db()
+                    await db.update_patient(patient_id, {"caller_phone_number": new_number_digits}, self.organization_id)
+                except Exception as e:
+                    logger.error(f"Error updating callback number: {e}")
+
+            return f"I've updated your callback number to the one ending in {new_number_digits[-4:]}. Is there anything else I can help with?", None
+        else:
+            return "I didn't catch the number. Could you repeat it?", None
 
     async def _end_call_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -956,11 +1053,9 @@ RESULT: Ends the call.""",
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
         """Transfer to staff member via cold transfer."""
-        urgent = args.get("urgent", False)
-        patient_confirmed = args.get("patient_confirmed", False)
-        reason = args.get("reason", "general inquiry")
+        reason = args.get("reason", "caller requested transfer")
 
-        logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
+        logger.info(f"Flow: Staff transfer requested - reason: {reason}")
 
         # Store reason for potential retry
         flow_manager.state["transfer_reason"] = reason
@@ -1050,77 +1145,59 @@ RESULT: Ends the call.""",
 
     async def _handoff_to_scheduling(
         self, flow_manager: FlowManager, reason: str
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to PatientSchedulingFlow with gathered context."""
+    ) -> tuple[None, NodeConfig]:
         from clients.demo_clinic_alpha.patient_scheduling.flow_definition import PatientSchedulingFlow
 
         scheduling_flow = PatientSchedulingFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
+            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
 
-        logger.info(f"Flow: Handing off to PatientSchedulingFlow with context: {reason}")
+        logger.info(f"Flow: Handing off to PatientSchedulingFlow - {reason}")
 
-        # Use handoff entry point with context (no greeting, context-aware)
+        if flow_manager.state.get("identity_verified"):
+            first_name = flow_manager.state.get("first_name", "")
+            flow_manager.state["appointment_reason"] = reason
+            flow_manager.state["appointment_type"] = "Returning Patient"
+            msg = f"I can help with that, {first_name}!" if first_name else "I can help with that!"
+            return None, self.create_post_scheduling_node(scheduling_flow, msg)
         return None, scheduling_flow.create_handoff_entry_node(context=reason)
 
     async def _handoff_to_prescription_status(
         self, flow_manager: FlowManager, reason: str
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to PrescriptionStatusFlow with gathered context."""
+    ) -> tuple[None, NodeConfig]:
         from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
 
         prescription_flow = PrescriptionStatusFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
+            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
+            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
+        logger.info(f"Flow: Handing off to PrescriptionStatusFlow - {reason}")
 
-        logger.info(f"Flow: Handing off to PrescriptionStatusFlow with context: {reason}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
+        if flow_manager.state.get("identity_verified"):
+            first_name = flow_manager.state.get("first_name", "")
+            msg = f"Let me check on that for you, {first_name}." if first_name else "Let me check on that for you."
+            return None, self.create_post_prescription_node(prescription_flow, msg)
         return None, prescription_flow.create_handoff_entry_node(context=reason)
 
     def _get_request_staff_function(self) -> FlowsFunctionSchema:
-        """Return the request_staff function schema for use in multiple nodes."""
+        """Return the unified request_staff function schema for all nodes."""
         return FlowsFunctionSchema(
             name="request_staff",
-            description="""Transfer call to human staff member.
+            description="""Transfer call to the office (cold transfer).
 
 WHEN TO USE:
-- Caller needs help with something other than lab results
-- Caller explicitly asks for a human
-- Caller is frustrated
+- Caller explicitly asks for a human / "real person" / to speak with someone
+- Caller needs help with billing, scheduling, or anything we can't handle
 - Verification failed
 
-EXAMPLES:
-- Caller asks about appointments → call with reason="scheduling"
-- Caller says "I want to talk to a person" → call with patient_confirmed=true
-- Urgent medical concern → call with urgent=true
-- Caller needs billing help → call with reason="billing" """,
+Do NOT use this just because caller is frustrated or anxious - try to help them first.""",
             properties={
-                "urgent": {
-                    "type": "boolean",
-                    "description": "Set true for urgent requests that need immediate attention (medical concerns, frustrated caller). Transfers immediately.",
-                },
-                "patient_confirmed": {
-                    "type": "boolean",
-                    "description": "Set true if patient explicitly asked for human/staff transfer. Transfers immediately.",
-                },
                 "reason": {
                     "type": "string",
-                    "description": "Brief reason for transfer (e.g., 'scheduling', 'billing', 'frustrated', 'verification_failed')",
+                    "description": "Brief reason for transfer (e.g., 'caller requested human', 'billing question')",
                 },
             },
             required=[],
