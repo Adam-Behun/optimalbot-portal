@@ -1,3 +1,3 @@
-from .flow_definition import PatientIntakeFlow
+from .flow_definition import PatientSchedulingFlow
 
-__all__ = ["PatientIntakeFlow"]
+__all__ = ["PatientSchedulingFlow"]

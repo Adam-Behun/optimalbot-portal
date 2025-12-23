@@ -20,23 +20,24 @@ for arg in "$@"; do
     esac
 done
 
-# Run pre-flight validation (quiet mode - only show errors)
-if [ "$SKIP_VALIDATE" = false ] && [ -f "validate-local.sh" ]; then
-    if ! ./validate-local.sh > "$LOG_DIR/validate.log" 2>&1; then
+# Quick checks first
+[ ! -d "$PORTAL_DIR/.venv" ] && echo -e "${RED}.venv not found. Run: ./setup-local.sh${NC}" && exit 1
+[ ! -d "$PORTAL_DIR/frontend/node_modules" ] && echo -e "${RED}frontend/node_modules not found. Run: cd frontend && npm install${NC}" && exit 1
+[ ! -d "$PORTAL_DIR/../marketing/node_modules" ] && echo -e "${RED}marketing/node_modules not found. Run: cd ../marketing && npm install${NC}" && exit 1
+
+# Run validation
+if [ "$SKIP_VALIDATE" = false ]; then
+    source "$PORTAL_DIR/.venv/bin/activate"
+    if ! python validate.py --quick > "$LOG_DIR/validate.log" 2>&1; then
         echo -e "${RED}Validation failed${NC}"
-        # Show only ERROR lines
         grep -E "\[ERROR\]" "$LOG_DIR/validate.log" 2>/dev/null || cat "$LOG_DIR/validate.log"
         echo ""
         echo "Full log: $LOG_DIR/validate.log"
         echo "Or run: ./dev.sh --skip-validate"
         exit 1
     fi
+    deactivate 2>/dev/null || true
 fi
-
-# Quick checks
-[ ! -d "$PORTAL_DIR/.venv" ] && echo -e "${RED}.venv not found. Run: ./setup-local.sh${NC}" && exit 1
-[ ! -d "$PORTAL_DIR/frontend/node_modules" ] && echo -e "${RED}frontend/node_modules not found. Run: cd frontend && npm install${NC}" && exit 1
-[ ! -d "$PORTAL_DIR/../marketing/node_modules" ] && echo -e "${RED}marketing/node_modules not found. Run: cd ../marketing && npm install${NC}" && exit 1
 
 source "$PORTAL_DIR/.venv/bin/activate"
 cd "$PORTAL_DIR"

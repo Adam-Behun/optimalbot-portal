@@ -1,35 +1,25 @@
 # CLAUDE.md
 
-Healthcare voice AI for automated eligibility verification. Uses Pipecat AI with Pipecat Flows to orchestrate real-time voice conversations with insurance companies.
-
 ## Quick Reference
 
 ```bash
-# Backend (Terminal 1) - requires venv
-source .venv/bin/activate && python app.py     # localhost:8000
-
-# Bot (Terminal 2) - requires venv
-source .venv/bin/activate && python bot.py     # localhost:7860
-
-# Frontend
-cd frontend && npm start                       # localhost:3000
-
-# Tests
-python -m pytest                               # all tests
-python -m pytest path/to/test_file.py          # single file
-cd frontend && npm test                        # frontend tests
-```
+# Local development
+./dev.sh                          # validates, then starts 
+# First-time setup
+./setup-local.sh                  # create .venv with uv
+cd frontend && npm install        # install frontend deps
+cd ../marketing && npm install    # install marketing deps
 
 ## Deployment
 
 ```bash
-# Backend → Fly.io
-fly deploy && fly logs
+# Deploy to test
+./deploy.sh test
+./deploy.sh test backend
+./deploy.sh test bot
 
-# Bot → Pipecat Cloud
-docker buildx build --platform linux/arm64 -f Dockerfile.bot -t adambehun/healthcare-bot:latest --push .
-pipecatcloud deploy
-pipecatcloud agent logs healthcare-voice-ai
+# Deploy to production
+./deploy.sh prod
 
 # Frontend → Vercel
 cd frontend && vercel --prod

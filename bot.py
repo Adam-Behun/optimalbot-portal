@@ -127,7 +127,7 @@ if __name__ == "__main__":
     import asyncio
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel
-    from bot_validation import validate_bot_startup
+    from validate import validate_bot_startup
 
     # Check if running in Pipecat runner mode (e.g., uv run bot.py -t daily)
     if any(arg.startswith("-") for arg in sys.argv[1:]):

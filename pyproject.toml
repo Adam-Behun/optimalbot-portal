@@ -25,6 +25,7 @@ dependencies = [
     # Web framework
     "uvicorn",
     "fastapi",
+    "python-multipart",
 
     # HTTP clients
     "aiohttp",
