@@ -101,7 +101,13 @@ TAIL_PID=$!
 cleanup() {
     echo ""
     echo "Stopping..."
-    kill $TAIL_PID $BACKEND_PID $BOT_PID $MARKETING_PID $FRONTEND_PID 2>/dev/null
+    # Kill process trees (parent + children)
+    for pid in $TAIL_PID $BACKEND_PID $BOT_PID $MARKETING_PID $FRONTEND_PID; do
+        pkill -P $pid 2>/dev/null
+        kill $pid 2>/dev/null
+    done
+    # Kill any remaining processes on dev ports
+    lsof -ti :8000,:7860,:3000,:3001,:4321,:4322 2>/dev/null | xargs -r kill -9 2>/dev/null
     rm -rf "$LOG_DIR"
     exit 0
 }
