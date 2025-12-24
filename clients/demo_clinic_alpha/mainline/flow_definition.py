@@ -12,99 +12,45 @@ from loguru import logger
 from backend.models import get_async_patient_db
 from handlers.transcript import save_transcript_to_db
 
+class _MockFlowManager:
+    def __init__(self):
+        self.state = {}
 
-async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
-    """Warm up OpenAI with system prompt prefix for cache hits.
 
-    OpenAI caches prompt prefixes of 1024+ tokens. We send a request
-    with the same system prompt structure to prime the cache.
-    """
+async def warmup_openai(patient_data: dict = None):
     try:
+        patient_data = patient_data or {"organization_name": "Demo Clinic Alpha"}
+        flow = MainlineFlow(
+            patient_data=patient_data,
+            flow_manager=_MockFlowManager(),
+            main_llm=None,
+        )
+        greeting_node = flow.create_greeting_node()
+
+        messages = []
+        for msg in greeting_node.role_messages or []:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        for msg in greeting_node.task_messages or []:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": "Hi"})
+
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-        global_instructions = f"""You are Monica, answering the main phone line for {organization_name}.
-
-# Your Role
-You answer simple questions directly and route complex issues to the right place.
-Be helpful, friendly, and efficient. Most callers just need quick information.
-
-# Questions You CAN Answer Directly
-- Office hours: Monday through Friday, 8 AM to 5 PM
-- Location: Contact the front desk for address
-- Parking: Available on-site
-- New patients: We are accepting new patients
-
-# When to Route (do NOT answer these yourself)
-- SCHEDULING: "schedule/book/cancel/reschedule appointment" → route to scheduling
-- LAB RESULTS: "lab results/test results/biopsy/pathology" → route to lab_results
-- PRESCRIPTIONS: "prescription/refill/medication" → route to prescription_status
-- BILLING: "bill/payment/insurance claim/costs" → route to billing
-- UNCLEAR or COMPLEX: Anything you're not sure about → route to front_desk
-
-# Voice Conversation Style
-You are having a real-time phone conversation. Your responses will be converted to speech:
-- Speak naturally like a human would on the phone
-- Keep responses short and direct. One or two sentences max.
-- NEVER use bullet points, numbered lists, asterisks, or markdown
-- Say "Got it" or "Sure thing" instead of formal phrases
-- Use natural filler when appropriate: "Let me see..." or "Okay, so..."
-
-# Handling Speech Recognition
-The input you receive is transcribed from speech and may contain errors:
-- Silently correct obvious transcription mistakes based on context
-- If truly unclear, ask them to repeat naturally: "Sorry, I didn't catch that"
-
-# Guardrails
-- If the caller is frustrated or asks for a human: route to front_desk immediately
-- Never guess at specific information like appointment availability or account details
-- Keep the conversation moving - don't over-explain"""
-
-        task_context = """# Goal
-Determine what the caller needs and route appropriately. This step is important.
-
-# Scenario Handling
-If caller asks a SIMPLE QUESTION (hours, location, parking):
-→ Answer directly, then ask "Is there anything else I can help with?"
-
-If caller needs SCHEDULING (appointments):
-→ Call route_to_workflow with workflow="scheduling"
-
-If caller needs LAB RESULTS:
-→ Call route_to_workflow with workflow="lab_results"
-
-If caller needs PRESCRIPTION help:
-→ Call route_to_workflow with workflow="prescription_status"
-
-If caller needs BILLING or asks for a HUMAN:
-→ Call route_to_staff with appropriate department"""
-
         await client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": global_instructions},
-                {"role": "system", "content": task_context},
-                {"role": "user", "content": "Hi, I'm calling to check on my lab results"},
-                {"role": "assistant", "content": "I can help you with that. Let me connect you to our lab results line."},
-            ],
+            messages=messages,
             max_tokens=1,
         )
-        logger.info("OpenAI connection warmed up with mainline prompt prefix")
+        logger.info("OpenAI cache warmed with mainline prompt prefix")
     except Exception as e:
         logger.warning(f"OpenAI warmup failed (non-critical): {e}")
 
 
 class MainlineFlow:
-    """Main phone line - answer patient questions or route to appropriate workflow/department.
-
-    Routes to AI workflows (same call, no transfer):
-    - scheduling → PatientSchedulingFlow
-    - lab_results → LabResultsFlow
-    - prescription_status → PrescriptionStatusFlow
-
-    Routes via SIP transfer (cold transfer to phone number):
-    - billing → Billing department phone
-    - front_desk → Front desk phone (fallback)
-    """
+    WORKFLOW_FLOWS = {
+        "scheduling": ("clients.demo_clinic_alpha.patient_scheduling.flow_definition", "PatientSchedulingFlow"),
+        "lab_results": ("clients.demo_clinic_alpha.lab_results.flow_definition", "LabResultsFlow"),
+        "prescription_status": ("clients.demo_clinic_alpha.prescription_status.flow_definition", "PrescriptionStatusFlow"),
+    }
 
     def __init__(
         self,
@@ -126,53 +72,27 @@ class MainlineFlow:
         self.organization_id = organization_id
         self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
         self.cold_transfer_config = cold_transfer_config or {}
-
-        # Practice info from schema/organization config
-        practice_info = patient_data.get("practice_info", {})
-        self.office_hours = practice_info.get("office_hours", "Monday through Friday, 8 AM to 5 PM")
-        self.location = practice_info.get("location", "")
-        self.parking = practice_info.get("parking", "")
-        self.website = practice_info.get("website", "")
-        self.new_patient_info = practice_info.get("new_patient_info", "")
-        self.accepted_insurance = practice_info.get("accepted_insurance", "")
-        self.wait_times = practice_info.get("wait_times", "")
-
-        # Initialize flow state
+        self.practice_info = patient_data.get("practice_info", {})
         self._init_state()
 
     def _init_state(self):
-        """Initialize flow_manager state with default values."""
-        # Call tracking
-        self.flow_manager.state["caller_name"] = ""
-        self.flow_manager.state["call_type"] = ""
-        self.flow_manager.state["call_reason"] = ""
-        self.flow_manager.state["routed_to"] = ""
-        self.flow_manager.state["resolution"] = ""
-
-        # For retry transfer
-        self.flow_manager.state["pending_department"] = ""
+        self.flow_manager.state.update({k: "" for k in [
+            "caller_name", "call_type", "call_reason", "routed_to", "resolution"
+        ]})
 
     def _get_global_instructions(self) -> str:
-        """Global behavioral rules for main line interactions."""
-        # Build practice info section from configured values
+        facts_map = [
+            ("office_hours", "Office hours", "Monday through Friday, 8 AM to 5 PM"),
+            ("location", "Location", None), ("parking", "Parking", None),
+            ("new_patient_info", "New patient info", None), ("wait_times", "General wait times", None),
+            ("website", "Website", None), ("accepted_insurance", "Accepted insurance", None),
+        ]
         practice_facts = []
-        if self.office_hours:
-            practice_facts.append(f"- Office hours: {self.office_hours}")
-        if self.location:
-            practice_facts.append(f"- Location: {self.location}")
-        if self.parking:
-            practice_facts.append(f"- Parking: {self.parking}")
-        if self.new_patient_info:
-            practice_facts.append(f"- New patient info: {self.new_patient_info}")
-        if self.wait_times:
-            practice_facts.append(f"- General wait times: {self.wait_times}")
-        if self.website:
-            practice_facts.append(f"- Website: {self.website}")
-        if self.accepted_insurance:
-            practice_facts.append(f"- Accepted insurance: {self.accepted_insurance}")
-
+        for key, label, default in facts_map:
+            value = self.practice_info.get(key) or default
+            if value:
+                practice_facts.append(f"- {label}: {value}")
         practice_info_text = "\n".join(practice_facts) if practice_facts else "- Contact the front desk for practice information"
-
         return f"""You are Monica, answering the main phone line for {self.organization_name}.
 
 # Your Role
@@ -186,9 +106,9 @@ Be helpful, friendly, and efficient. Most callers just need quick information.
 - SCHEDULING: "schedule/book/cancel/reschedule appointment" → route to scheduling
 - LAB RESULTS: "lab results/test results/biopsy/pathology" → route to lab_results
 - PRESCRIPTIONS: "prescription/refill/medication" → route to prescription_status
-- BILLING: "bill/payment/insurance claim/costs" → route to billing
-- CHECK-IN: "check in/arrived/here for appointment" → route to front_desk immediately
-- UNCLEAR or COMPLEX: Anything you're not sure about → route to front_desk
+- BILLING: "bill/payment/insurance claim/costs" → route to staff
+- CHECK-IN: "check in/arrived/here for appointment" → route to staff immediately
+- UNCLEAR or COMPLEX: Anything you're not sure about → route to staff
 
 # Voice Conversation Style
 You are having a real-time phone conversation. Your responses will be converted to speech, so:
@@ -204,14 +124,20 @@ The input you receive is transcribed from speech and may contain errors:
 - If truly unclear, ask them to repeat naturally: "Sorry, I didn't catch that"
 
 # Other Guidelines
-- If the caller is frustrated or asks for a human: route to front_desk immediately
+- If the caller is frustrated or asks for a human: route to staff immediately
 - Never guess at specific information like appointment availability or account details
 - Keep the conversation moving - don't over-explain"""
 
-    # ========== Node Creation Functions ==========
+    def _end_call_schema(self) -> FlowsFunctionSchema:
+        return FlowsFunctionSchema(
+            name="end_call",
+            description="End the call when caller says goodbye or confirms no more questions.",
+            properties={},
+            required=[],
+            handler=self._end_call_handler,
+        )
 
     def create_greeting_node(self) -> NodeConfig:
-        """Initial greeting - detect what the caller needs."""
         greeting_text = f"Hello, this is Monica at {self.organization_name}. How can I help you?"
 
         return NodeConfig(
@@ -253,26 +179,31 @@ If caller needs PRESCRIPTION (refill, medication status, pharmacy issues):
 → Ask which medication if not mentioned
 → Note any complications they mention (pharmacy issues, prior auth, etc.)
 → Call route_to_workflow with workflow="prescription_status", include details in reason
-→ NOTE: Use route_to_workflow, NOT route_to_staff for prescriptions
+→ NOTE: Use route_to_workflow, NOT request_staff for prescriptions
 
 If caller needs BILLING (payment, bill question, insurance claim, costs):
-→ Say "Let me get you to our billing team."
-→ Call request_staff with department="billing"
+→ Say "Let me get you to someone who can help with that."
+→ Call request_staff with reason="billing question"
 
 If caller needs to CHECK IN for an existing appointment:
-→ Say "Let me connect you with the front desk for check-in."
-→ Call request_staff with department="front_desk", reason="check-in for appointment"
+→ Say "Let me connect you with the front desk."
+→ Call request_staff with reason="check-in for appointment"
 → NOTE: Check-in is NOT scheduling - transfer immediately, don't ask questions
 
 If caller ASKS FOR HUMAN (says "real person", "someone", "transfer me"):
 → Say "Let me transfer you to someone who can help."
-→ Call request_staff with department="front_desk"
+→ Call request_staff with reason="caller requested human"
 
 If TRULY UNCLEAR (you genuinely don't understand what they need):
 → Ask one clarifying question first
 → Only transfer if still unclear after that
 
-NOTE: Multiple intents is NOT "complex" - handle them in sequence (e.g., lab results first, then scheduling)
+# Multiple Intents
+If caller mentions multiple needs (scheduling AND labs AND billing):
+→ Route to the FIRST intent mentioned
+→ Include ALL intents in the reason field so the next workflow knows what else is needed
+→ Example: reason="annual physical, ALSO: lab results from Tuesday, billing question"
+→ The next workflow will handle remaining intents through its own route_to_workflow
 
 # Context Gathering Examples
 
@@ -288,6 +219,10 @@ Caller: "Skin biopsy. I'm pretty worried about it."
 → "I understand. Let me get you to someone who can look that up."
 → Call route_to_workflow with workflow="lab_results", reason="skin biopsy from last week, caller is anxious about results"
 
+Caller: "I need to schedule a physical, check my lab results from Tuesday, and ask about a bill."
+→ "Got it! Let me help you with all of that, starting with the physical."
+→ Call route_to_workflow with workflow="scheduling", reason="annual physical, ALSO NEEDS: lab results from Tuesday, billing question"
+
 # Guardrails
 - Gather context naturally, don't interrogate. ONE question max before routing.
 - NEVER repeat a question you already asked - even if the caller changes their mind and comes back to the same topic. Track what was discussed:
@@ -296,7 +231,7 @@ Caller: "Skin biopsy. I'm pretty worried about it."
   - If caller says "I already told you" or repeats info → acknowledge and move forward
 - Be conversational. Don't announce what you're about to do.
 - Never guess at specific information like appointment availability or account details.
-- If caller is frustrated or asks for a human, route to front_desk immediately.
+- If caller is frustrated or asks for a human, call request_staff immediately.
 - Include ALL mentioned details in the reason field - this context transfers to the next workflow.
 
 # Error Handling
@@ -308,108 +243,34 @@ If you don't understand the caller:
             functions=[
                 FlowsFunctionSchema(
                     name="route_to_workflow",
-                    description="""Route caller to an AI-powered workflow.
-
-WHEN TO USE: Caller asks about scheduling, lab results, or prescriptions.
-RESULT: Hands off to specialized AI workflow (no phone transfer).
-
-IMPORTANT:
-- Include ALL gathered context in the reason field
-- Do NOT say "someone will be with you", "I've routed your request", or "please hold" - the transition is seamless
-- The next workflow will speak directly to the caller
-
-EXAMPLES:
-- workflow="scheduling", reason="follow-up for back pain, prefers Dr. Chen, returning patient"
-- workflow="lab_results", reason="skin biopsy from last week, caller anxious, results overdue"
-- workflow="prescription_status", reason="lisinopril 10mg refill, CVS says prior auth needed" """,
+                    description="Route caller to AI workflow. Include ALL context in reason.",
                     properties={
-                        "workflow": {
-                            "type": "string",
-                            "enum": ["scheduling", "lab_results", "prescription_status"],
-                            "description": "Workflow: scheduling (appointments), lab_results (test/biopsy results), prescription_status (refills/medications)",
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Detailed context: include appointment type, doctor preference, test type, urgency, complications - everything the next workflow needs",
-                        },
+                        "workflow": {"type": "string", "enum": ["scheduling", "lab_results", "prescription_status"]},
+                        "reason": {"type": "string", "description": "All context: appointment type, doctor, test type, urgency, etc."},
                     },
                     required=["workflow", "reason"],
                     handler=self._route_to_workflow_handler,
                 ),
                 FlowsFunctionSchema(
                     name="request_staff",
-                    description="""Transfer caller to human staff via phone.
-
-WHEN TO USE: Caller needs billing help, asks for a human, or has unclear/complex needs.
-RESULT: Initiates SIP transfer to staff phone number.
-
-IMPORTANT: Always include a reason, even for direct transfer requests.
-
-EXAMPLES:
-- "I have a question about my bill" → department="billing", reason="billing question"
-- "Can I speak to someone?" → department="front_desk", patient_confirmed=true, reason="caller requested human"
-- Urgent/frustrated caller → department="front_desk", urgent=true, reason="caller frustrated"
-- Unclear request → department="front_desk", reason="unclear request" """,
+                    description="Transfer to human staff. Use for billing, human requests, or unclear needs.",
                     properties={
-                        "urgent": {
-                            "type": "boolean",
-                            "description": "Set true for urgent requests that need immediate attention (frustrated caller, medical concerns). Transfers immediately.",
-                        },
-                        "patient_confirmed": {
-                            "type": "boolean",
-                            "description": "Set true if caller explicitly asked for human/staff transfer. Transfers immediately.",
-                        },
-                        "department": {
-                            "type": "string",
-                            "enum": ["billing", "front_desk"],
-                            "description": "Department: billing (payments/insurance), front_desk (general/complex/unclear)",
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Brief reason for transfer",
-                        },
+                        "reason": {"type": "string", "description": "Brief reason for transfer"},
                     },
-                    required=["department"],
+                    required=["reason"],
                     handler=self._request_staff_handler,
                 ),
                 FlowsFunctionSchema(
                     name="save_call_info",
-                    description="""Save information the caller volunteers.
-
-WHEN TO USE: Caller provides their name or explains why they're calling.
-RESULT: Stores info in state for later use/logging.
-
-EXAMPLES:
-- "This is John Smith calling" → caller_name="John Smith"
-- "I'm calling about my appointment" → call_reason="appointment inquiry" """,
+                    description="Save caller's name or reason when volunteered.",
                     properties={
-                        "caller_name": {
-                            "type": "string",
-                            "description": "Caller's name if they provide it",
-                        },
-                        "call_reason": {
-                            "type": "string",
-                            "description": "Brief summary of why they called",
-                        },
+                        "caller_name": {"type": "string"},
+                        "call_reason": {"type": "string"},
                     },
                     required=[],
                     handler=self._save_call_info_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="end_call",
-                    description="""End the call gracefully.
-
-WHEN TO USE: Caller says goodbye, thanks you, or confirms no more questions.
-RESULT: Transitions to goodbye message and ends conversation.
-
-EXAMPLES:
-- "That's all, thank you" → call end_call
-- "Bye!" → call end_call
-- "No, I'm good" (after asking if anything else) → call end_call""",
-                    properties={},
-                    required=[],
-                    handler=self._end_call_handler,
-                ),
+                self._end_call_schema(),
             ],
             respond_immediately=False,
             pre_actions=[
@@ -417,20 +278,7 @@ EXAMPLES:
             ],
         )
 
-    def create_transfer_initiated_node(self) -> NodeConfig:
-        """Node shown while SIP transfer is in progress."""
-        return NodeConfig(
-            name="transfer_initiated",
-            task_messages=[],
-            functions=[],
-            pre_actions=[
-                {"type": "tts_say", "text": "Transferring you now, please hold."}
-            ],
-            post_actions=[{"type": "end_conversation"}],
-        )
-
     def create_transfer_failed_node(self) -> NodeConfig:
-        """Node shown when SIP transfer fails."""
         return NodeConfig(
             name="transfer_failed",
             role_messages=[
@@ -477,56 +325,19 @@ If you don't understand the caller:
             functions=[
                 FlowsFunctionSchema(
                     name="retry_transfer",
-                    description="""Retry the failed transfer.
-
-WHEN TO USE: Caller wants to try the transfer again.
-RESULT: Attempts SIP transfer to the same department.
-
-EXAMPLES:
-- "Yes, please try again" → call retry_transfer
-- "Can you transfer me again?" → call retry_transfer""",
+                    description="Retry the failed transfer when caller requests.",
                     properties={},
                     required=[],
                     handler=self._retry_transfer_handler,
                 ),
-                FlowsFunctionSchema(
-                    name="end_call",
-                    description="""End the call gracefully.
-
-WHEN TO USE: Caller says goodbye or confirms no more questions.
-RESULT: Transitions to goodbye message and ends conversation.
-
-EXAMPLES:
-- "That's okay, I'll call back" → call end_call
-- "No thanks, bye" → call end_call""",
-                    properties={},
-                    required=[],
-                    handler=self._end_call_handler,
-                ),
+                self._end_call_schema(),
             ],
             respond_immediately=True,
         )
 
-    def _create_end_node(self) -> NodeConfig:
-        """End the call with a friendly goodbye."""
-        return NodeConfig(
-            name="end",
-            task_messages=[
-                {
-                    "role": "system",
-                    "content": "Say a brief, friendly goodbye. Example: 'Thanks for calling! Have a great day.'",
-                }
-            ],
-            functions=[],
-            post_actions=[{"type": "end_conversation"}],
-        )
-
-    # ========== Function Handlers ==========
-
     async def _save_call_info_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, None]:
-        """Save caller information to state."""
         caller_name = args.get("caller_name", "").strip()
         call_reason = args.get("call_reason", "").strip()
 
@@ -536,47 +347,27 @@ EXAMPLES:
             flow_manager.state["call_reason"] = call_reason
 
         logger.info(f"Flow: Saved call info - name={caller_name}, reason={call_reason}")
-
-        # Stay in current node
         return None, None
 
     async def _route_to_workflow_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[str, NodeConfig]:
-        """Route to an AI workflow (same call, no phone transfer)."""
         workflow = args.get("workflow", "")
         reason = args.get("reason", "")
-
         flow_manager.state["call_type"] = workflow.replace("_", " ").title()
         flow_manager.state["call_reason"] = reason
         flow_manager.state["routed_to"] = f"{workflow} (AI)"
+        flow_manager.state["handed_off_to"] = workflow
 
-        logger.info(f"Flow: Routing to {workflow} workflow - reason: {reason}")
-
-        # ========== WORKFLOW HANDOFFS ==========
-        # Each workflow handoff creates a new flow instance with the same
-        # flow_manager (preserving state) and returns a node from that flow.
-
-        if workflow == "scheduling":
-            return await self._handoff_to_scheduling(flow_manager)
-
-        elif workflow == "lab_results":
-            return await self._handoff_to_lab_results(flow_manager)
-
-        elif workflow == "prescription_status":
-            return await self._handoff_to_prescription_status(flow_manager)
-
-        else:
+        if workflow not in self.WORKFLOW_FLOWS:
             logger.warning(f"Unknown workflow: {workflow}")
             return "I'm not sure how to help with that. Let me transfer you to someone who can.", self.create_transfer_failed_node()
 
-    async def _handoff_to_scheduling(
-        self, flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to PatientSchedulingFlow with gathered context."""
-        from clients.demo_clinic_alpha.patient_scheduling.flow_definition import PatientSchedulingFlow
+        module_path, class_name = self.WORKFLOW_FLOWS[workflow]
+        module = __import__(module_path, fromlist=[class_name])
+        FlowClass = getattr(module, class_name)
 
-        scheduling_flow = PatientSchedulingFlow(
+        flow = FlowClass(
             patient_data=self.patient_data,
             flow_manager=flow_manager,
             main_llm=self.main_llm,
@@ -587,97 +378,25 @@ EXAMPLES:
             cold_transfer_config=self.cold_transfer_config,
         )
 
-        # Get context from mainline conversation
-        context = flow_manager.state.get("call_reason", "")
-        logger.info(f"Flow: Handing off to PatientSchedulingFlow with context: {context}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
-        return None, scheduling_flow.create_handoff_entry_node(context=context)
-
-    async def _handoff_to_lab_results(
-        self, flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to LabResultsFlow with gathered context."""
-        from clients.demo_clinic_alpha.lab_results.flow_definition import LabResultsFlow
-
-        lab_results_flow = LabResultsFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
-        )
-
-        # Get context from mainline conversation
-        context = flow_manager.state.get("call_reason", "")
-        logger.info(f"Flow: Handing off to LabResultsFlow with context: {context}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
-        return None, lab_results_flow.create_handoff_entry_node(context=context)
-
-    async def _handoff_to_prescription_status(
-        self, flow_manager: FlowManager
-    ) -> tuple[str, NodeConfig]:
-        """Hand off to PrescriptionStatusFlow with gathered context."""
-        from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
-
-        prescription_flow = PrescriptionStatusFlow(
-            patient_data=self.patient_data,
-            flow_manager=flow_manager,
-            main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator,
-            transport=self.transport,
-            pipeline=self.pipeline,
-            organization_id=self.organization_id,
-            cold_transfer_config=self.cold_transfer_config,
-        )
-
-        # Get context from mainline conversation
-        context = flow_manager.state.get("call_reason", "")
-        logger.info(f"Flow: Handing off to PrescriptionStatusFlow with context: {context}")
-
-        # Use handoff entry point with context (no greeting, context-aware)
-        return None, prescription_flow.create_handoff_entry_node(context=context)
+        logger.info(f"Flow: Handing off to {class_name} with context: {reason}")
+        return None, flow.create_handoff_entry_node(context=reason)
 
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Route to human staff via SIP transfer."""
-        urgent = args.get("urgent", False)
-        patient_confirmed = args.get("patient_confirmed", False)
-        department = args.get("department", "front_desk")
         reason = args.get("reason", "")
-
-        flow_manager.state["call_type"] = department.replace("_", " ").title()
+        flow_manager.state["call_type"] = "Staff Transfer"
         flow_manager.state["call_reason"] = reason
-        flow_manager.state["routed_to"] = f"{department.replace('_', ' ').title()} (staff)"
-        flow_manager.state["transfer_reason"] = reason
-
-        logger.info(f"Flow: Routing to {department} staff - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
-
-        return await self._initiate_sip_transfer(flow_manager, department)
+        flow_manager.state["routed_to"] = "Staff"
+        logger.info(f"Flow: Routing to staff - reason: {reason}")
+        return await self._initiate_sip_transfer(flow_manager)
 
     async def _initiate_sip_transfer(
-        self, flow_manager: FlowManager, department: str
+        self, flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Initiate SIP transfer to a phone number."""
-        # Store department for retry attempts
-        flow_manager.state["pending_department"] = department
-
-        # Map department to phone number
-        phone_numbers = {
-            "billing": self.cold_transfer_config.get("billing_number"),
-            "front_desk": self.cold_transfer_config.get("staff_number"),
-            "medical": self.cold_transfer_config.get("medical_number"),
-        }
-
-        transfer_number = phone_numbers.get(department) or self.cold_transfer_config.get("staff_number")
-
+        transfer_number = self.cold_transfer_config.get("staff_number")
         if not transfer_number:
-            logger.warning(f"No transfer number configured for {department}")
+            logger.warning("No staff transfer number configured")
             return None, self.create_transfer_failed_node()
 
         try:
@@ -686,39 +405,39 @@ EXAMPLES:
 
             if self.transport:
                 await self.transport.sip_call_transfer({"toEndPoint": transfer_number})
-                logger.info(f"SIP transfer initiated to {department}: {transfer_number}")
+                logger.info(f"SIP transfer initiated: {transfer_number}")
 
-            # Update call status
-            try:
-                patient_id = self.patient_data.get("patient_id")
-                if patient_id:
+            patient_id = self.patient_data.get("patient_id")
+            if patient_id:
+                try:
                     db = get_async_patient_db()
                     await db.update_call_status(patient_id, "Transferred", self.organization_id)
-            except Exception as e:
-                logger.error(f"Error updating call status: {e}")
+                except Exception as e:
+                    logger.error(f"Error updating call status: {e}")
 
-            return None, self.create_transfer_initiated_node()
+            return None, NodeConfig(
+                name="transfer_initiated",
+                task_messages=[],
+                functions=[],
+                pre_actions=[{"type": "tts_say", "text": "Transferring you now, please hold."}],
+                post_actions=[{"type": "end_conversation"}],
+            )
 
         except Exception as e:
-            logger.exception(f"SIP transfer to {department} failed")
-
+            logger.exception("SIP transfer failed")
             if self.pipeline:
                 self.pipeline.transfer_in_progress = False
-
             return None, self.create_transfer_failed_node()
 
     async def _retry_transfer_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """Retry a failed SIP transfer."""
-        department = flow_manager.state.get("pending_department", "front_desk")
-        logger.info(f"Flow: Retrying SIP transfer to {department}")
-        return await self._initiate_sip_transfer(flow_manager, department)
+        logger.info("Flow: Retrying SIP transfer")
+        return await self._initiate_sip_transfer(flow_manager)
 
     async def _end_call_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
-        """End the call - save transcript and update status."""
         logger.info("Flow: Call ended - transitioning to end node")
         patient_id = self.patient_data.get("patient_id")
         db = get_async_patient_db() if patient_id else None
@@ -729,7 +448,6 @@ EXAMPLES:
                 logger.info("Transcript saved")
 
             if patient_id and db:
-                # Update with final call info
                 update_fields = {
                     "call_status": "Completed",
                     "caller_name": flow_manager.state.get("caller_name"),
@@ -738,7 +456,6 @@ EXAMPLES:
                     "routed_to": flow_manager.state.get("routed_to", "Answered Directly"),
                     "resolution": flow_manager.state.get("resolution", "Call completed"),
                 }
-                # Filter out None values
                 update_fields = {k: v for k, v in update_fields.items() if v is not None}
                 await db.update_patient(patient_id, update_fields, self.organization_id)
                 logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
@@ -752,4 +469,9 @@ EXAMPLES:
                 except Exception as db_error:
                     logger.error(f"Failed to update status to Failed: {db_error}")
 
-        return None, self._create_end_node()
+        return None, NodeConfig(
+            name="end",
+            task_messages=[{"role": "system", "content": "Say a brief, friendly goodbye."}],
+            functions=[],
+            post_actions=[{"type": "end_conversation"}],
+        )

@@ -75,32 +75,32 @@ class ConversationPipeline:
             # Mainline routes to multiple workflows - warm up all of them
             try:
                 from clients.demo_clinic_alpha.mainline.flow_definition import warmup_openai as warmup_mainline
-                warmup_tasks.append(warmup_mainline(organization_name))
+                warmup_tasks.append(warmup_mainline(self.patient_data))
             except ImportError:
                 logger.debug("Mainline warmup not available")
 
             try:
                 from clients.demo_clinic_alpha.patient_scheduling.flow_definition import warmup_openai as warmup_scheduling
-                warmup_tasks.append(warmup_scheduling(organization_name))
+                warmup_tasks.append(warmup_scheduling(self.patient_data))
             except ImportError:
                 logger.debug("Scheduling warmup not available")
 
             try:
                 from clients.demo_clinic_alpha.lab_results.flow_definition import warmup_openai as warmup_lab
-                warmup_tasks.append(warmup_lab(organization_name))
+                warmup_tasks.append(warmup_lab(self.patient_data))
             except ImportError:
                 logger.debug("Lab results warmup not available")
 
             try:
                 from clients.demo_clinic_alpha.prescription_status.flow_definition import warmup_openai as warmup_rx
-                warmup_tasks.append(warmup_rx(organization_name))
+                warmup_tasks.append(warmup_rx(self.patient_data))
             except ImportError:
                 logger.debug("Prescription status warmup not available")
 
         elif self.client_name == "demo_clinic_beta":
             try:
                 from clients.demo_clinic_beta.patient_scheduling.flow_definition import warmup_openai
-                warmup_tasks.append(warmup_openai(organization_name))
+                warmup_tasks.append(warmup_openai(self.patient_data))
             except ImportError:
                 logger.debug("Beta scheduling warmup not available")
 

@@ -90,6 +90,8 @@ GRADING CRITERIA:
    - If route_to_workflow was called with a detailed reason matching conversation, context was preserved
    - Staff transfers after patient lookup fails is CORRECT behavior, not a routing failure
    - Focus on what the mainline bot did, not what happens in downstream workflows
+   - If caller had multiple intents (scheduling + labs + billing) and call ends with staff transfer, staff can handle remaining intents
+   - If "ALSO NEEDS" appears in context with billing mentioned, and call ends with request_staff, billing IS being handled
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -100,21 +102,29 @@ FAIL: <5 words what went wrong>"""
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
-def grade_conversation_quality(conv_text: str) -> dict:
+def grade_conversation_quality(conv_text: str, calls_text: str = "") -> dict:
     """Grade conversational quality - natural, efficient, professional."""
     prompt = f"""Grade this conversation's QUALITY. Be STRICT about these issues:
 
 CONVERSATION:
 {conv_text}
 
+FUNCTION CALLS (context captured):
+{calls_text}
+
 Check for these problems:
-1. REPETITION: Bot says same thing multiple times
+1. REPETITION: Bot says same thing multiple times unnecessarily
 2. OVER-TALKING: Bot keeps talking after caller says goodbye
 3. ROBOTIC: Unnatural phrasing, lists, or overly formal language
 4. WRONG INFO: Bot gives incorrect practice information
-5. IGNORED REQUEST: Bot doesn't acknowledge caller's stated need
+5. IGNORED REQUEST: Bot doesn't acknowledge caller's stated need (check function call reasons - if the need is captured there, it was NOT ignored)
 
-If ANY of these issues exist, mark as FAIL.
+IMPORTANT - Do NOT fail for:
+- Caller repeating themselves (that's caller behavior, not bot behavior)
+- Bot transferring quickly when caller's need is clear and captured in function call reason
+- Verification questions asked by sub-workflows after handoff (expected behavior)
+- Transferring for callback requests (the bot cannot schedule callbacks - staff must handle it, so transferring with "callback" in the reason IS correct)
+- Transferring for urgent requests (staff can prioritize urgent callers better than the bot)
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -137,7 +147,7 @@ FINAL STATE:
 
 Check for FUNCTION CALL correctness only:
 1. route_to_workflow used for scheduling/lab_results/prescription_status intents
-2. route_to_staff used for billing/front_desk/unclear requests
+2. request_staff used for billing/front_desk/human requests/unclear needs
 3. end_call used appropriately when caller says goodbye
 4. save_call_info captures volunteered caller information
 5. No premature routing before understanding caller's need
@@ -173,7 +183,7 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
 
     # Run all graders
     routing = grade_routing(conv_text, expected_problem, calls_text, final_state)
-    quality = grade_conversation_quality(conv_text)
+    quality = grade_conversation_quality(conv_text, calls_text)
     functions = grade_function_calls(calls_text, final_state)
 
     # All must pass

@@ -16,107 +16,35 @@ from handlers.transcript import save_transcript_to_db
 from clients.demo_clinic_alpha.patient_scheduling.text_conversation import TextConversation
 
 
-async def warmup_openai(organization_name: str = "Demo Clinic Alpha"):
-    """Warm up OpenAI with system prompt prefix for cache hits.
+class _MockFlowManager:
+    def __init__(self):
+        self.state = {}
 
-    OpenAI caches prompt prefixes of 1024+ tokens. We need to send a request
-    with the same system prompt structure we use in actual calls to prime the cache.
-    """
+
+async def warmup_openai(patient_data: dict = None):
     try:
+        patient_data = patient_data or {"organization_name": "Demo Clinic Alpha"}
+        flow = PatientSchedulingFlow(
+            patient_data=patient_data,
+            flow_manager=_MockFlowManager(),
+            main_llm=None,
+        )
+        greeting_node = flow.create_greeting_node()
+
+        messages = []
+        for msg in greeting_node.role_messages or []:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        for msg in greeting_node.task_messages or []:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": "Hello, I'd like to schedule an appointment"})
+
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-        # Build a prompt that matches the structure used in actual calls
-        # This needs to be 1024+ tokens for OpenAI to cache it
-        global_instructions = f"""You are Monica, a friendly scheduling assistant for {organization_name}.
-
-# What You Handle
-You ONLY help patients SCHEDULE NEW APPOINTMENTS. This includes:
-- New patients booking their first visit
-- Returning patients booking a new appointment
-
-# What You Do NOT Handle - Transfer These
-If the caller wants ANY of these, call request_staff to transfer them:
-- Check-in for an existing appointment ("I'm here for my appointment", "checking in")
-- Cancel or reschedule an existing appointment
-- Billing, payments, or account questions
-- Insurance or coverage questions
-- Medical advice or questions about procedures
-- Prescription refills
-- Test results or medical records
-- Complaints or urgent issues
-
-When transferring, briefly explain: "Let me connect you with someone who can help with that."
-
-# Voice Conversation Style
-You are having a real-time phone conversation. Your responses will be converted to speech, so:
-- Speak naturally like a human would on the phone—use contractions, brief acknowledgments, and conversational flow
-- Keep responses short and direct. One or two sentences is usually enough.
-- NEVER use bullet points, numbered lists, asterisks, bold, or any markdown formatting
-- Avoid robotic phrases. Say "Got it" or "Perfect" instead of "I have recorded your information"
-- Use natural filler when appropriate: "Let me see..." or "Okay, so..."
-- If they ask you to repeat, SHORTEN your response each time. Don't repeat verbatim. Example: First time you might say the full slots, second time just "Saturday 9 AM or Friday 2 PM—which works?"
-
-# Handling Speech Recognition
-The input you receive is transcribed from speech in real-time and may contain errors. When you notice something that looks wrong:
-- Silently correct obvious transcription mistakes based on context
-- "buy milk two tomorrow" means "buy milk tomorrow"
-- "for too ate" likely means "4 2 8" in a phone number context
-- "at gmail dot com" means "@gmail.com"
-- If truly unclear, ask them to repeat—but phrase it naturally: "Sorry, I didn't catch that last part"
-
-# Other Guardrails
-- If the caller is frustrated or asks for a human: call request_staff to transfer them.
-- Never guess at information—always confirm with the patient.
-
-# Data Formats
-When collecting emails: "at" → @, "dot" → .
-Phone numbers: write as digits only (e.g., "5551234567")."""
-
-        # Simulate the task messages structure to build up token count
-        task_context = """FIRST: Determine if the caller wants to SCHEDULE a new appointment.
-
-If they want something OTHER than scheduling (check-in, cancel, reschedule, billing, insurance, medical question, etc.):
-→ Say "Let me connect you with someone who can help with that." and call request_staff
-
-If they want to SCHEDULE an appointment, ask: "Are you a new patient, or have you been here before?"
-- NEW patient → call set_new_patient
-- RETURNING patient → call set_returning_patient"""
-
-        # Add padding context to reach 1024 tokens (OpenAI's cache threshold)
-        # This simulates what the context looks like after a few turns
-        conversation_padding = """
-Patient is New Patient. Ask: "What brings you in today?"
-Once they explain, call save_visit_reason with brief summary.
-
-Ask which day works. Offer times: 9:00 AM, 10:30 AM, 1:00 PM, 3:30 PM.
-Once they pick date AND time, call schedule_appointment.
-
-Collect for booking:
-1. Ask first name
-2. Last name (ask to spell letter by letter)
-3. Phone number
-4. Date of birth
-5. Email (ask to spell letter by letter)
-
-Acknowledge briefly: "Got it." When ALL 5 collected, call save_patient_info.
-
-Confirm appointment details. Confirmation email will be sent. Anything else?
-- If no/goodbye → call end_call
-- If question → answer, then ask again"""
-
         await client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": global_instructions},
-                {"role": "system", "content": task_context},
-                {"role": "system", "content": conversation_padding},
-                {"role": "user", "content": "Hello, I'd like to schedule an appointment"},
-                {"role": "assistant", "content": "Hello! I'd be happy to help you schedule an appointment. Are you a new patient, or have you been here before?"},
-                {"role": "user", "content": "I'm a new patient"},
-            ],
+            messages=messages,
             max_tokens=1,
         )
-        logger.info("OpenAI connection warmed up with prompt prefix")
+        logger.info("OpenAI cache warmed with scheduling prompt prefix")
     except Exception as e:
         logger.warning(f"OpenAI warmup failed (non-critical): {e}")
 
