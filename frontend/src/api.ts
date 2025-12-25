@@ -5,7 +5,9 @@ import {
   AddPatientResponse,
   StartCallResponse,
   BulkAddResponse,
-  AuthResponse
+  AuthResponse,
+  Session,
+  SessionsResponse
 } from './types';
 import { removeAuthToken, getAuthToken } from './lib/auth';
 
@@ -88,6 +90,26 @@ export const deletePatient = async (patientId: string): Promise<void> => {
 // PUT /patients/:id - Update a patient
 export const updatePatient = async (patientId: string, patientData: Record<string, any>): Promise<void> => {
   await api.put(`/patients/${patientId}`, patientData);
+};
+
+// GET /sessions - Fetch sessions, optionally filtered by workflow or patient
+export const getSessions = async (workflow?: string, patientId?: string): Promise<Session[]> => {
+  const params: Record<string, string> = {};
+  if (workflow) params.workflow = workflow;
+  if (patientId) params.patient_id = patientId;
+  const response = await api.get<SessionsResponse>('/sessions', { params });
+  return response.data.sessions;
+};
+
+// GET /sessions/:id - Fetch single session
+export const getSession = async (sessionId: string): Promise<Session> => {
+  const response = await api.get(`/sessions/${sessionId}`);
+  return response.data.session;
+};
+
+// Get call history for a patient
+export const getPatientCallHistory = async (patientId: string): Promise<Session[]> => {
+  return getSessions(undefined, patientId);
 };
 
 // POST /start-call - Start a call for a patient

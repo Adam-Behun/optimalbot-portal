@@ -40,6 +40,9 @@ class DialoutManager:
 
 
 async def update_status_if_not_terminal(pipeline, new_status: CallStatus):
+    if not pipeline.patient_id:
+        logger.debug("No patient_id - skipping status update")
+        return
     try:
         patient = await get_async_patient_db().find_patient_by_id(
             pipeline.patient_id, pipeline.organization_id
@@ -77,9 +80,9 @@ def setup_dialin_handlers(pipeline):
         logger.info(f"Caller connected: {participant['id']}")
         await transport.capture_participant_transcription(participant["id"])
         if pipeline.flow and pipeline.flow_manager:
-            initial_node = pipeline.flow.create_greeting_node()
+            initial_node = pipeline.flow.get_initial_node()
             await pipeline.flow_manager.initialize(initial_node)
-            logger.info("Flow initialized with greeting node")
+            logger.info("Flow initialized with initial node")
 
     @pipeline.transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
@@ -90,9 +93,10 @@ def setup_dialin_handlers(pipeline):
     @pipeline.transport.event_handler("on_dialin_error")
     async def on_dialin_error(transport, data):
         logger.error(f"Dial-in error: {data}")
-        await get_async_patient_db().update_call_status(
-            pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id
-        )
+        if pipeline.patient_id:
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id
+            )
         await cleanup_and_cancel(pipeline)
 
     @pipeline.transport.event_handler("on_dialout_answered")
@@ -106,9 +110,10 @@ def setup_dialin_handlers(pipeline):
             "timestamp": datetime.utcnow().isoformat(),
             "type": "transfer"
         })
-        await get_async_patient_db().update_call_status(
-            pipeline.patient_id, CallStatus.COMPLETED.value, pipeline.organization_id
-        )
+        if pipeline.patient_id:
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, CallStatus.COMPLETED.value, pipeline.organization_id
+            )
         await save_transcript_to_db(pipeline)
         await pipeline.task.queue_frames([EndFrame()])
 
@@ -145,16 +150,18 @@ def setup_dialout_handlers(pipeline):
                 "timestamp": datetime.utcnow().isoformat(),
                 "type": "transfer"
             })
-            await get_async_patient_db().update_call_status(
-                pipeline.patient_id, CallStatus.SUPERVISOR_DIALED.value, pipeline.organization_id
-            )
+            if pipeline.patient_id:
+                await get_async_patient_db().update_call_status(
+                    pipeline.patient_id, CallStatus.SUPERVISOR_DIALED.value, pipeline.organization_id
+                )
             await save_transcript_to_db(pipeline)
             await pipeline.task.queue_frames([EndFrame()])
         else:
             dialout_manager.mark_connected()
-            await get_async_patient_db().update_call_status(
-                pipeline.patient_id, CallStatus.IN_PROGRESS.value, pipeline.organization_id
-            )
+            if pipeline.patient_id:
+                await get_async_patient_db().update_call_status(
+                    pipeline.patient_id, CallStatus.IN_PROGRESS.value, pipeline.organization_id
+                )
             logger.info(f"Call answered by {pipeline.phone_number}")
 
     @pipeline.transport.event_handler("on_dialout_stopped")
@@ -187,7 +194,8 @@ def setup_dialout_handlers(pipeline):
             return
 
         logger.error(f"All {DIALOUT_MAX_RETRIES} dialout attempts failed")
-        await get_async_patient_db().update_call_status(
-            pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id
-        )
+        if pipeline.patient_id:
+            await get_async_patient_db().update_call_status(
+                pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id
+            )
         await cleanup_and_cancel(pipeline)

@@ -88,6 +88,45 @@ class AsyncSessionRecord:
             logger.error(f"Error cleaning up sessions: {e}")
             return 0
 
+    async def save_transcript(
+        self, session_id: str, transcript_data: dict, organization_id: str = None
+    ) -> bool:
+        """Save call transcript to session."""
+        return await self.update_session(session_id, {
+            "call_transcript": transcript_data,
+            "transcript_saved_at": datetime.now(timezone.utc)
+        }, organization_id)
+
+    async def find_sessions_by_organization(
+        self, organization_id: str, workflow: str = None
+    ) -> List[dict]:
+        """Find sessions for an organization, optionally filtered by workflow."""
+        try:
+            from bson import ObjectId
+            query = {"organization_id": ObjectId(organization_id)}
+            if workflow:
+                query["workflow"] = workflow
+            cursor = self.sessions.find(query).sort("created_at", -1)
+            return await cursor.to_list(length=None)
+        except Exception as e:
+            logger.error(f"Error finding sessions for org {organization_id}: {e}")
+            return []
+
+    async def find_sessions_by_patient(
+        self, patient_id: str, organization_id: str = None
+    ) -> List[dict]:
+        """Find all sessions for a patient (call history)."""
+        try:
+            from bson import ObjectId
+            query = {"patient_id": patient_id}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            cursor = self.sessions.find(query).sort("created_at", -1)
+            return await cursor.to_list(length=None)
+        except Exception as e:
+            logger.error(f"Error finding sessions for patient {patient_id}: {e}")
+            return []
+
 
 _session_db_instance: Optional[AsyncSessionRecord] = None
 

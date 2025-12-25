@@ -6,12 +6,10 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from loguru import logger
-from backend.models import get_async_patient_db
 from backend.models.organization import get_async_organization_db
 from backend.sessions import get_async_session_db
 from backend.schemas import DialinSettings, BotBodyData, TransferConfig
 from backend.server_utils import create_daily_room, start_bot_production, start_bot_local
-from backend.constants import CallStatus
 from backend.utils import mask_id, mask_phone
 
 router = APIRouter()
@@ -73,25 +71,11 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
     session_id = str(uuid.uuid4())
     http_session = request.app.state.http_session
 
-    patient_db = get_async_patient_db()
-    patient_data = {
-        "workflow": workflow_name,
-        "caller_phone_number": call_data.from_phone,
-        "organization_id": organization_id,
-        "organization_name": organization.get("name", ""),
-        "call_status": CallStatus.IN_PROGRESS.value
-    }
-    patient_id = await patient_db.add_patient(patient_data)
-
-    if not patient_id:
-        raise HTTPException(status_code=500, detail="Failed to create patient record")
-
-    logger.info(f"Patient created: {mask_id(patient_id)}")
-
+    # Create session only - patient lookup/creation handled by flow
     session_db = get_async_session_db()
     session_created = await session_db.create_session({
         "session_id": session_id,
-        "patient_id": patient_id,
+        "patient_id": None,  # Flow will find/create patient
         "phone_number": call_data.from_phone,
         "client_name": f"{client_name}/{workflow_name}",
         "organization_id": organization_id,
@@ -113,11 +97,11 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
 
     body_data = BotBodyData(
         session_id=session_id,
-        patient_id=patient_id,
-        patient_data={
-            "patient_id": patient_id,
+        patient_id=None,  # Flow will find/create patient
+        call_data={
+            "session_id": session_id,
             "caller_phone": call_data.from_phone,
-            "called_number": call_data.to_phone,
+            "called_phone": call_data.to_phone,
             "call_type": "dial-in",
             "workflow": workflow_name,
             "organization_name": organization.get("name", ""),

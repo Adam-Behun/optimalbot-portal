@@ -3,6 +3,7 @@ WORKFLOW_SCHEMA = {
     "display_name": "Patient Scheduling",
     "description": "Inbound calls for appointment scheduling",
     "call_direction": "dial-in",
+    "record_type": "patient",  # Patients are created/verified in this workflow
     "patient_schema": {
         "fields": [
             # Patient identity (common fields for cross-workflow support)

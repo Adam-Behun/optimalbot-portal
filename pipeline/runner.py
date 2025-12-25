@@ -25,8 +25,8 @@ class ConversationPipeline:
         self,
         client_name: str,
         session_id: str,
-        patient_id: str,
-        patient_data: Dict[str, Any],
+        patient_id: str,  # None for dial-in (patient found/created by flow)
+        call_data: Dict[str, Any],
         phone_number: str,
         organization_id: str,
         organization_slug: str,
@@ -38,7 +38,7 @@ class ConversationPipeline:
         self.client_name = client_name
         self.session_id = session_id
         self.patient_id = patient_id
-        self.patient_data = patient_data
+        self.call_data = call_data
         self.phone_number = phone_number
         self.organization_id = organization_id
         self.organization_slug = organization_slug
@@ -75,32 +75,32 @@ class ConversationPipeline:
             # Mainline routes to multiple workflows - warm up all of them
             try:
                 from clients.demo_clinic_alpha.mainline.flow_definition import warmup_openai as warmup_mainline
-                warmup_tasks.append(warmup_mainline(self.patient_data))
+                warmup_tasks.append(warmup_mainline(self.call_data))
             except ImportError:
                 logger.debug("Mainline warmup not available")
 
             try:
                 from clients.demo_clinic_alpha.patient_scheduling.flow_definition import warmup_openai as warmup_scheduling
-                warmup_tasks.append(warmup_scheduling(self.patient_data))
+                warmup_tasks.append(warmup_scheduling(self.call_data))
             except ImportError:
                 logger.debug("Scheduling warmup not available")
 
             try:
                 from clients.demo_clinic_alpha.lab_results.flow_definition import warmup_openai as warmup_lab
-                warmup_tasks.append(warmup_lab(self.patient_data))
+                warmup_tasks.append(warmup_lab(self.call_data))
             except ImportError:
                 logger.debug("Lab results warmup not available")
 
             try:
                 from clients.demo_clinic_alpha.prescription_status.flow_definition import warmup_openai as warmup_rx
-                warmup_tasks.append(warmup_rx(self.patient_data))
+                warmup_tasks.append(warmup_rx(self.call_data))
             except ImportError:
                 logger.debug("Prescription status warmup not available")
 
         elif self.client_name == "demo_clinic_beta":
             try:
                 from clients.demo_clinic_beta.patient_scheduling.flow_definition import warmup_openai
-                warmup_tasks.append(warmup_openai(self.patient_data))
+                warmup_tasks.append(warmup_openai(self.call_data))
             except ImportError:
                 logger.debug("Beta scheduling warmup not available")
 
@@ -116,7 +116,7 @@ class ConversationPipeline:
         session_data = {
             'session_id': self.session_id,
             'patient_id': self.patient_id,
-            'patient_data': self.patient_data,
+            'call_data': self.call_data,
             'phone_number': self.phone_number,
             'organization_id': self.organization_id,
             'organization_slug': self.organization_slug,
@@ -140,7 +140,7 @@ class ConversationPipeline:
 
         # Start OpenAI warmup early - while pipeline is being assembled
         # This primes OpenAI's prompt cache BEFORE the first user turn
-        organization_name = self.patient_data.get("organization_name", "Demo Clinic")
+        organization_name = self.call_data.get("organization_name", "Demo Clinic")
         warmup_task = asyncio.create_task(self._warmup_all_flows(organization_name))
         self.triage_detector = components.get('triage_detector')
         self.ivr_processor = components.get('ivr_processor')
@@ -232,7 +232,7 @@ class ConversationPipeline:
         return {
             "workflow_state": "active" if self.flow_manager else "inactive",
             "client": self.client_name,
-            "patient_data": self.patient_data,
+            "call_data": self.call_data,
             "phone_number": self.phone_number,
             "transcripts": self.transcripts,
         }

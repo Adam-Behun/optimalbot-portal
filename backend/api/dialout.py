@@ -106,7 +106,7 @@ async def start_call(
             body_data = BotBodyData(
                 session_id=session_id,
                 patient_id=call_request.patient_id,
-                patient_data=patient,
+                call_data=patient,  # For dial-out, call_data contains the patient record
                 client_name=call_request.client_name,
                 organization_id=str(org_id),
                 organization_slug=org.get("slug"),

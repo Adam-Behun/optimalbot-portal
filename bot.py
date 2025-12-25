@@ -45,8 +45,8 @@ async def bot(args: DailyRunnerArguments):
     try:
         body = args.body
         session_id = body.get("session_id")
-        patient_id = body.get("patient_id")
-        patient_data = body.get("patient_data")
+        patient_id = body.get("patient_id")  # None for dial-in (patient found/created by flow)
+        call_data = body.get("call_data")
         client_name = body.get("client_name", "eligibility_verification")
         organization_id = body.get("organization_id")
         organization_slug = body.get("organization_slug")
@@ -66,8 +66,8 @@ async def bot(args: DailyRunnerArguments):
         else:
             raise ValueError("Either dialin_settings or dialout_targets required")
 
-        if not all([session_id, patient_id, patient_data, organization_id, organization_slug]):
-            raise ValueError("Missing required: session_id, patient_id, patient_data, organization_id, organization_slug")
+        if not all([session_id, call_data, organization_id, organization_slug]):
+            raise ValueError("Missing required: session_id, call_data, organization_id, organization_slug")
 
         await session_db.update_session(session_id, {
             "status": "running",
@@ -77,8 +77,8 @@ async def bot(args: DailyRunnerArguments):
         pipeline = ConversationPipeline(
             client_name=client_name,
             session_id=session_id,
-            patient_id=patient_id,
-            patient_data=patient_data,
+            patient_id=patient_id,  # None for dial-in
+            call_data=call_data,
             phone_number=phone_number,
             organization_id=organization_id,
             organization_slug=organization_slug,

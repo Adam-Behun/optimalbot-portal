@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from openai import AsyncOpenAI
@@ -10,6 +11,7 @@ from pipecat_flows import (
 from loguru import logger
 
 from backend.models import get_async_patient_db
+from backend.sessions import get_async_session_db
 from backend.utils import parse_natural_date, parse_natural_time
 from handlers.transcript import save_transcript_to_db
 
@@ -19,11 +21,12 @@ class _MockFlowManager:
         self.state = {}
 
 
-async def warmup_openai(patient_data: dict = None):
+async def warmup_openai(call_data: dict = None):
     try:
-        patient_data = patient_data or {"organization_name": "Demo Clinic Beta"}
+        call_data = call_data or {"organization_name": "Demo Clinic Beta"}
         flow = PatientSchedulingFlow(
-            patient_data=patient_data,
+            call_data=call_data,
+            session_id="warmup",
             flow_manager=_MockFlowManager(),
             main_llm=None,
         )
@@ -49,7 +52,8 @@ async def warmup_openai(patient_data: dict = None):
 class PatientSchedulingFlow:
     def __init__(
         self,
-        patient_data: Dict[str, Any],
+        call_data: Dict[str, Any],
+        session_id: str,
         flow_manager: FlowManager,
         main_llm,
         context_aggregator=None,
@@ -58,14 +62,15 @@ class PatientSchedulingFlow:
         organization_id: str = None,
         cold_transfer_config: Dict[str, Any] = None,
     ):
-        self.patient_data = patient_data
+        self.call_data = call_data
+        self.session_id = session_id
         self.flow_manager = flow_manager
         self.main_llm = main_llm
         self.context_aggregator = context_aggregator
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
-        self.organization_name = patient_data.get("organization_name", "Demo Clinic Beta")
+        self.organization_name = call_data.get("organization_name", "Demo Clinic Beta")
         self.cold_transfer_config = cold_transfer_config or {}
 
     def _get_global_instructions(self) -> str:
@@ -584,27 +589,42 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
         """End the call - transition to end node which handles termination."""
+        patient_id = flow_manager.state.get("patient_id")
+        session_db = get_async_session_db()
         logger.info("Call ended by flow - transitioning to end node")
-        patient_id = self.patient_data.get("patient_id")
-        db = get_async_patient_db() if patient_id else None
 
         try:
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
-                logger.info("Transcript saved")
 
-            if patient_id and db:
-                await db.update_call_status(patient_id, "Completed", self.organization_id)
-                logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
+            # Save session metadata
+            session_updates = {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc),
+                "identity_verified": flow_manager.state.get("identity_verified", False),
+                "patient_id": patient_id,
+            }
+            await session_db.update_session(self.session_id, session_updates, self.organization_id)
+
+            # Save workflow-specific data to patient
+            if patient_id:
+                patient_db = get_async_patient_db()
+                patient_updates = {
+                    "call_status": "Completed",
+                    "last_call_session_id": self.session_id,
+                    "appointment_date": flow_manager.state.get("appointment_date"),
+                    "appointment_time": flow_manager.state.get("appointment_time"),
+                    "appointment_type": flow_manager.state.get("appointment_type"),
+                }
+                patient_updates = {k: v for k, v in patient_updates.items() if v is not None}
+                await patient_db.update_patient(patient_id, patient_updates, self.organization_id)
 
         except Exception as e:
             logger.exception("Error in end_call_handler")
-
-            if patient_id and db:
-                try:
-                    await db.update_call_status(patient_id, "Failed", self.organization_id)
-                except Exception as db_error:
-                    logger.error(f"Failed to update status to Failed: {db_error}")
+            try:
+                await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
+            except Exception as db_error:
+                logger.error(f"Failed to update session status: {db_error}")
 
         return None, self._create_end_node()
 

@@ -80,8 +80,8 @@ class TransferConfig(BaseModel):
 
 class BotBodyData(BaseModel):
     session_id: str
-    patient_id: str
-    patient_data: dict
+    patient_id: Optional[str] = None  # None for dial-in (patient found/created by flow)
+    call_data: dict  # Renamed from patient_data - contains session/caller info
     organization_id: str
     organization_slug: str
     client_name: str

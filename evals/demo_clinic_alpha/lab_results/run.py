@@ -279,15 +279,16 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, patient_data: dict, llm_config: dict):
+    def __init__(self, call_data: dict, llm_config: dict):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
-        self.patient_data = patient_data
+        self.call_data = call_data
 
         self.flow = LabResultsFlow(
-            patient_data=patient_data,
+            call_data=call_data,
+            session_id="eval-session",
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
@@ -505,14 +506,14 @@ async def run_simulation(
     caller = scenario["caller"]
     persona = scenario["persona"]
 
-    # Build patient_data for flow
-    patient_data = {
+    # Build call_data for flow
+    call_data = {
         "patient_id": f"eval_{scenario['id']}",
         "organization_name": "Demo Clinic Alpha",
         **patient,
     }
 
-    runner = FlowRunner(patient_data, llm_config)
+    runner = FlowRunner(call_data, llm_config)
 
     # Bot greeting
     pre_actions = runner.current_node.get("pre_actions") or []

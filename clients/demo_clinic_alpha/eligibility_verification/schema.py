@@ -4,6 +4,7 @@ WORKFLOW_SCHEMA = {
     "description": "Outbound calls to insurance companies for eligibility and benefits verification",
     "call_direction": "dial-out",
     "dial_out_phone_field": "insurance_phone",
+    "record_type": "patient",  # Patients are the verification subjects
     "patient_schema": {
         "fields": [
             {"key": "patient_name", "label": "Patient Name", "type": "string", "required": True, "display_in_list": True, "display_order": 1},

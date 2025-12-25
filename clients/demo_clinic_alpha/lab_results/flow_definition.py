@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from openai import AsyncOpenAI
@@ -6,6 +7,7 @@ from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from loguru import logger
 
 from backend.models import get_async_patient_db
+from backend.sessions import get_async_session_db
 from backend.utils import parse_natural_date
 from handlers.transcript import save_transcript_to_db
 
@@ -15,17 +17,18 @@ class _MockFlowManager:
         self.state = {}
 
 
-async def warmup_openai(patient_data: dict = None):
+async def warmup_openai(call_data: dict = None):
     try:
-        patient_data = patient_data or {"organization_name": "Demo Clinic Alpha"}
+        call_data = call_data or {"organization_name": "Demo Clinic Alpha"}
         flow = LabResultsFlow(
-            patient_data=patient_data,
+            call_data=call_data,
+            session_id="warmup",
             flow_manager=_MockFlowManager(),
             main_llm=None,
         )
         greeting_node = flow.create_greeting_node()
 
-        messages = [{"role": m["role"], "content": m["content"]} for m in (greeting_node.role_messages or []) + (greeting_node.task_messages or [])]
+        messages = [{"role": m["role"], "content": m["content"]} for m in (greeting_node.get("role_messages") or []) + (greeting_node.get("task_messages") or [])]
         messages.append({"role": "user", "content": "Hi, I'm calling about my lab results"})
 
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -43,6 +46,8 @@ class LabResultsFlow:
 
     # ==================== Class Constants ====================
 
+    ALLOWS_NEW_PATIENTS = False
+
     WORKFLOW_FLOWS = {
         "scheduling": ("clients.demo_clinic_alpha.patient_scheduling.flow_definition", "PatientSchedulingFlow"),
         "prescription_status": ("clients.demo_clinic_alpha.prescription_status.flow_definition", "PrescriptionStatusFlow"),
@@ -52,7 +57,8 @@ class LabResultsFlow:
 
     def __init__(
         self,
-        patient_data: Dict[str, Any],
+        call_data: Dict[str, Any],
+        session_id: str,
         flow_manager: FlowManager,
         main_llm=None,
         context_aggregator=None,
@@ -61,29 +67,44 @@ class LabResultsFlow:
         organization_id: str = None,
         cold_transfer_config: Dict[str, Any] = None,
     ):
+        self.call_data = call_data
+        self.session_id = session_id
         self.flow_manager = flow_manager
         self.main_llm = main_llm
         self.context_aggregator = context_aggregator
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
-        self.patient_data = patient_data
-        self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
+        self.organization_name = call_data.get("organization_name", "Demo Clinic Alpha")
         self.cold_transfer_config = cold_transfer_config or {}
-        self._init_state()
+        self._state_initialized = False
+
+        # Initialize state now if flow_manager exists (cross-workflow handoff)
+        # For direct dial-in, runner.py calls _init_flow_state() after setting flow_manager
+        if self.flow_manager:
+            self._init_state()
+
+    def _init_flow_state(self):
+        """Called by runner.py after flow_manager is assigned for direct dial-in."""
+        if not self._state_initialized:
+            self._init_state()
 
     def _init_state(self):
+        if self._state_initialized:
+            return
+        self._state_initialized = True
+
         for field in ["patient_id", "patient_name", "first_name", "last_name",
                       "date_of_birth", "medical_record_number", "phone_number"]:
             self.flow_manager.state[field] = (
-                self.flow_manager.state.get(field) or self.patient_data.get(field, "")
+                self.flow_manager.state.get(field) or self.call_data.get(field, "")
             )
 
         for field in ["test_type", "test_date", "ordering_physician", "results_status", "results_summary"]:
-            self.flow_manager.state[field] = self.patient_data.get(field, "")
+            self.flow_manager.state[field] = self.call_data.get(field, "")
 
-        self.flow_manager.state["provider_review_required"] = self.patient_data.get("provider_review_required", False)
-        self.flow_manager.state["callback_timeframe"] = self.patient_data.get("callback_timeframe", "24 to 48 hours")
+        self.flow_manager.state["provider_review_required"] = self.call_data.get("provider_review_required", False)
+        self.flow_manager.state["callback_timeframe"] = self.call_data.get("callback_timeframe", "24 to 48 hours")
         self.flow_manager.state.setdefault("identity_verified", False)
         self.flow_manager.state.setdefault("results_communicated", False)
 
@@ -124,6 +145,31 @@ class LabResultsFlow:
         patient_id = flow_manager.state.get("patient_id")
         await self._try_db_update(patient_id, "update_patient", {"caller_phone_number": new_number_digits}, error_msg="Error updating callback number")
         return new_number_digits
+
+    async def _load_domain_data(self, patient_id: str) -> bool:
+        """Load lab results domain data for a verified patient. Returns True if successful."""
+        if not patient_id:
+            return False
+        try:
+            db = get_async_patient_db()
+            patient = await db.find_patient_by_id(patient_id, self.organization_id)
+            if not patient:
+                logger.warning(f"Flow: Could not load domain data - patient {patient_id} not found")
+                return False
+
+            # Load domain-specific data for lab results
+            self.flow_manager.state["test_type"] = patient.get("test_type", "")
+            self.flow_manager.state["test_date"] = patient.get("test_date", "")
+            self.flow_manager.state["ordering_physician"] = patient.get("ordering_physician", "")
+            self.flow_manager.state["results_status"] = patient.get("results_status", "")
+            self.flow_manager.state["results_summary"] = patient.get("results_summary", "")
+            self.flow_manager.state["provider_review_required"] = patient.get("provider_review_required", False)
+            self.flow_manager.state["callback_timeframe"] = patient.get("callback_timeframe", "24 to 48 hours")
+            logger.info(f"Flow: Loaded domain data for patient {patient_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Flow: Error loading domain data: {e}")
+            return False
 
     # ==================== Helpers: Prompts ====================
 
@@ -190,6 +236,10 @@ The input is transcribed from speech and may contain errors:
         )
 
     # ==================== Node Creators: Entry Points ====================
+
+    def get_initial_node(self) -> NodeConfig:
+        """Entry point for dial-in calls. Returns the first node to execute."""
+        return self.create_greeting_node()
 
     def create_greeting_node(self) -> NodeConfig:
         return NodeConfig(
@@ -259,11 +309,78 @@ If you miss what the caller said:
             pre_actions=[{"type": "tts_say", "text": f"Hello! Thank you for calling {self.organization_name}. How can I help you today?"}],
         )
 
-    def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
+    async def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
         self.flow_manager.state["test_type"] = "biopsy" if "biopsy" in context.lower() else ""
         self.flow_manager.state["caller_anxious"] = "anxious" in context.lower() or "worried" in context.lower()
-        logger.info("Flow: Handoff entry - context stored, proceeding to verification")
-        return self.create_verification_node()
+
+        if self.flow_manager.state.get("identity_verified"):
+            first_name = self.flow_manager.state.get("first_name", "")
+            patient_id = self.flow_manager.state.get("patient_id")
+            logger.info(f"Flow: Caller already verified as {first_name}, loading domain data")
+            await self._load_domain_data(patient_id)
+            return self.create_results_node()
+
+        logger.info("Flow: Handoff entry - context stored, proceeding to phone lookup")
+        return self.create_returning_patient_lookup_node()
+
+    # ==================== Node Creators: Phone Lookup Verification ====================
+
+    def create_returning_patient_lookup_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="returning_patient_lookup",
+            task_messages=[{
+                "role": "system",
+                "content": """Ask for their phone number to pull up their record: "I can help you with that. What's the phone number on your account?"
+
+Once they provide a phone number, call lookup_by_phone with the digits.""",
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="lookup_by_phone",
+                    description="Look up patient record by phone number.",
+                    properties={
+                        "phone_number": {"type": "string", "description": "Phone number (digits only)"},
+                    },
+                    required=["phone_number"],
+                    handler=self._lookup_by_phone_handler,
+                ),
+                self._request_staff_schema(),
+            ],
+            respond_immediately=True,
+        )
+
+    def create_returning_patient_verify_dob_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="returning_patient_verify_dob",
+            task_messages=[{
+                "role": "system",
+                "content": """Found a record. Ask for date of birth to verify: "I found your record. Can you confirm your date of birth?"
+
+Once they provide DOB, call verify_dob.""",
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="verify_dob",
+                    description="Verify patient identity by date of birth.",
+                    properties={
+                        "date_of_birth": {"type": "string", "description": "DOB in natural format"},
+                    },
+                    required=["date_of_birth"],
+                    handler=self._verify_dob_handler,
+                ),
+                self._request_staff_schema(),
+            ],
+            respond_immediately=True,
+        )
+
+    def create_returning_patient_not_found_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="returning_patient_not_found",
+            task_messages=[],
+            functions=[],
+            pre_actions=[{"type": "tts_say", "text": "I couldn't find your record in our system. Let me connect you with a colleague who can help. One moment."}],
+            post_actions=[{"type": "end_conversation"}],
+        )
 
     # ==================== Node Creators: Main Flow ====================
 
@@ -436,7 +553,7 @@ Caller: "Call my cell instead: 555-999-7777"
         test_date = state.get("test_date", "")
         results_summary = state.get("results_summary", "")
 
-        practice_info = self.patient_data.get("practice_info", {})
+        practice_info = self.call_data.get("practice_info", {})
         office_hours = practice_info.get("office_hours", "Monday through Friday, 8 AM to 5 PM")
         facts = [(k, v) for k, v in [("Office hours", office_hours), ("Location", practice_info.get("location")), ("Parking", practice_info.get("parking"))] if v]
         practice_info_text = "\n".join(f"- {k}: {v}" for k, v in facts) if facts else "- Contact the front desk for practice information"
@@ -611,11 +728,97 @@ If caller has a question you can answer:
             pre_actions=[{"type": "tts_say", "text": "I apologize, the transfer didn't go through."}],
         )
 
+    # ==================== Handlers: Phone Lookup Verification ====================
+
+    async def _lookup_by_phone_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+        phone_digits = self._normalize_phone(args.get("phone_number", ""))
+        logger.info(f"Flow: Looking up phone: {self._phone_last4(phone_digits)}")
+
+        if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id):
+            # Store lookup record for DOB verification
+            flow_manager.state["_lookup_record"] = {
+                "patient_id": patient.get("patient_id"),
+                "first_name": patient.get("first_name", ""),
+                "last_name": patient.get("last_name", ""),
+                "date_of_birth": patient.get("date_of_birth", ""),
+                "phone_number": patient.get("phone_number", ""),
+                "test_type": patient.get("test_type", ""),
+                "test_date": patient.get("test_date", ""),
+                "ordering_physician": patient.get("ordering_physician", ""),
+                "results_status": patient.get("results_status", ""),
+                "results_summary": patient.get("results_summary", ""),
+                "provider_review_required": patient.get("provider_review_required", False),
+                "callback_timeframe": patient.get("callback_timeframe", "24 to 48 hours"),
+            }
+            logger.info("Flow: Found record, requesting DOB")
+            return None, self.create_returning_patient_verify_dob_node()
+
+        # Not found - transfer to staff (protected flow)
+        logger.info("Flow: No patient found - transferring to staff")
+        await self._initiate_sip_transfer(flow_manager)
+        return None, self.create_returning_patient_not_found_node()
+
+    async def _verify_dob_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+        provided = parse_natural_date(args.get("date_of_birth", "").strip())
+        lookup = flow_manager.state.get("_lookup_record", {})
+        stored = lookup.get("date_of_birth", "")
+        logger.info(f"Flow: Verifying DOB - provided: {provided}, stored: {stored}")
+
+        if provided and provided == stored:
+            # DOB matches - mark verified and load domain data
+            flow_manager.state["identity_verified"] = True
+            flow_manager.state["patient_id"] = lookup.get("patient_id")
+            flow_manager.state["first_name"] = lookup.get("first_name", "")
+            flow_manager.state["last_name"] = lookup.get("last_name", "")
+            flow_manager.state["date_of_birth"] = stored
+            flow_manager.state["phone_number"] = lookup.get("phone_number", "")
+            flow_manager.state["patient_name"] = f"{lookup.get('first_name', '')} {lookup.get('last_name', '')}".strip()
+
+            # Load domain-specific data for lab results
+            flow_manager.state["test_type"] = lookup.get("test_type", "")
+            flow_manager.state["test_date"] = lookup.get("test_date", "")
+            flow_manager.state["ordering_physician"] = lookup.get("ordering_physician", "")
+            flow_manager.state["results_status"] = lookup.get("results_status", "")
+            flow_manager.state["results_summary"] = lookup.get("results_summary", "")
+            flow_manager.state["provider_review_required"] = lookup.get("provider_review_required", False)
+            flow_manager.state["callback_timeframe"] = lookup.get("callback_timeframe", "24 to 48 hours")
+
+            flow_manager.state.pop("_lookup_record", None)
+            first_name = lookup.get("first_name", "")
+            logger.info(f"Flow: DOB verified for {first_name}")
+
+            # Check if we can share results immediately
+            results_status = flow_manager.state.get("results_status", "")
+            provider_review_required = flow_manager.state.get("provider_review_required", False)
+            results_summary = flow_manager.state.get("results_summary", "")
+            test_type = flow_manager.state.get("test_type", "lab test")
+            test_date = flow_manager.state.get("test_date", "")
+
+            if results_status.lower() in ["ready", "available"] and not provider_review_required and results_summary:
+                flow_manager.state["results_communicated"] = True
+                patient_id = flow_manager.state.get("patient_id")
+                await self._try_db_update(patient_id, "update_field", "results_communicated", True, error_msg="Error updating results_communicated")
+                logger.info("Flow: Results communicated to patient (ready, no review required)")
+
+                message = f"Thank you, {first_name}. I found your record. I can see you had a {test_type}"
+                if test_date:
+                    message += f" on {test_date}"
+                message += f". Your results are in and show: {results_summary}"
+                return message, self.create_completion_node()
+
+            return f"Welcome back, {first_name}! Let me check on your lab results.", self.create_results_node()
+
+        # DOB mismatch - transfer to staff (protected flow)
+        logger.warning("Flow: DOB mismatch - transferring to staff")
+        flow_manager.state.pop("_lookup_record", None)
+        await self._initiate_sip_transfer(flow_manager)
+        return "That doesn't match our records. Let me connect you with a colleague who can help.", self.create_returning_patient_not_found_node()
+
     # ==================== Handlers: Verification ====================
 
     async def _proceed_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
         logger.info("Flow: Proceeding to identity verification")
-        return None, self.create_verification_node()
+        return None, self.create_returning_patient_lookup_node()
 
     async def _verify_identity_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
         provided_name = args.get("name", "")
@@ -699,8 +902,9 @@ If caller has a question you can answer:
         FlowClass = getattr(module, class_name)
 
         target_flow = FlowClass(
-            patient_data=self.patient_data, flow_manager=flow_manager, main_llm=self.main_llm,
-            context_aggregator=self.context_aggregator, transport=self.transport, pipeline=self.pipeline,
+            call_data=self.call_data, session_id=self.session_id, flow_manager=flow_manager,
+            main_llm=self.main_llm, context_aggregator=self.context_aggregator,
+            transport=self.transport, pipeline=self.pipeline,
             organization_id=self.organization_id, cold_transfer_config=self.cold_transfer_config,
         )
 
@@ -717,7 +921,7 @@ If caller has a question you can answer:
                 msg = f"Let me check on that for you, {first_name}." if first_name else "Let me check on that for you."
                 return None, self._create_post_workflow_node(target_flow, "prescription", msg)
 
-        return None, target_flow.create_handoff_entry_node(context=reason)
+        return None, await target_flow.create_handoff_entry_node(context=reason)
 
     # ==================== Handlers: Callbacks ====================
 
@@ -792,24 +996,36 @@ If caller has a question you can answer:
     async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         logger.info("Flow: Ending call")
         patient_id = flow_manager.state.get("patient_id")
-        db = get_async_patient_db() if patient_id else None
+        session_db = get_async_session_db()
 
         try:
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
-                logger.info("Transcript saved")
 
-            if patient_id and db:
-                await db.update_call_status(patient_id, "Completed", self.organization_id)
-                logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
+            # Save session metadata
+            session_updates = {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc),
+                "identity_verified": flow_manager.state.get("identity_verified", False),
+                "patient_id": patient_id,
+            }
+            await session_db.update_session(self.session_id, session_updates, self.organization_id)
+
+            # Save workflow-specific data to patient
+            if patient_id:
+                patient_db = get_async_patient_db()
+                await patient_db.update_patient(patient_id, {
+                    "call_status": "Completed",
+                    "last_call_session_id": self.session_id,
+                    "results_communicated": True,
+                }, self.organization_id)
 
         except Exception as e:
             logger.exception("Error in end_call_handler")
-            if patient_id and db:
-                try:
-                    await db.update_call_status(patient_id, "Failed", self.organization_id)
-                except Exception as db_error:
-                    logger.error(f"Failed to update status to Failed: {db_error}")
+            try:
+                await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
+            except Exception as db_error:
+                logger.error(f"Failed to update session status: {db_error}")
 
         return None, NodeConfig(
             name="end",

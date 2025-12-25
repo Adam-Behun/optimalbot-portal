@@ -3,6 +3,7 @@ WORKFLOW_SCHEMA = {
     "display_name": "Main Line",
     "description": "Main phone line - answer questions or route to AI workflows/staff",
     "call_direction": "dial-in",
+    "record_type": "session",  # Sessions track calls, not patients
     # Practice info - used by the bot to answer common questions
     "practice_info": {
         "office_hours": "Monday through Friday, 8 AM to 5 PM. Saturday 9 AM to 1 PM. Closed Sundays.",
@@ -10,7 +11,7 @@ WORKFLOW_SCHEMA = {
         "parking": "Free parking available in the rear lot",
         "website": "www.democlinicalpha.com",
     },
-    "patient_schema": {
+    "session_schema": {
         "fields": [
             # Call classification
             {"key": "call_type", "label": "Call Type", "type": "string", "required": False, "display_in_list": True, "display_order": 1, "computed": True},

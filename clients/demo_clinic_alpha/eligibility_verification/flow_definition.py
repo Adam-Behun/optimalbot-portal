@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
 from loguru import logger
 from backend.models import get_async_patient_db
+from backend.sessions import get_async_session_db
 from handlers.transcript import save_transcript_to_db
 
 
@@ -1660,17 +1662,28 @@ EXAMPLES:
         from pipecat.processors.frame_processor import FrameDirection
 
         logger.info("Call ended by flow")
+        patient_id = flow_manager.state.get("patient_id")
+        session_db = get_async_session_db()
 
         try:
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
-                logger.info("Transcript saved")
 
-            patient_id = flow_manager.state.get("patient_id")
+            # Save session metadata
+            session_updates = {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc),
+                "patient_id": patient_id,
+            }
+            await session_db.update_session(self.session_id, session_updates, self.organization_id)
+
+            # Save workflow-specific data to patient (dial-out always has patient_id)
             if patient_id:
-                db = get_async_patient_db()
-                await db.update_call_status(patient_id, "Completed", self.organization_id)
-                logger.info("Database: call_status = Completed")
+                patient_db = get_async_patient_db()
+                await patient_db.update_patient(patient_id, {
+                    "call_status": "Completed",
+                    "last_call_session_id": self.session_id,
+                }, self.organization_id)
 
             if self.context_aggregator:
                 await self.context_aggregator.assistant().push_frame(
@@ -1679,5 +1692,9 @@ EXAMPLES:
 
         except Exception as e:
             logger.error(f"Error in end_call_handler: {e}")
+            try:
+                await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
+            except Exception:
+                pass
 
         return None, None

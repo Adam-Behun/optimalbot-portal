@@ -3,6 +3,7 @@ WORKFLOW_SCHEMA = {
     "display_name": "Lab Results",
     "description": "Inbound calls for lab result inquiries",
     "call_direction": "dial-in",
+    "record_type": "patient",  # Patients are verified in this workflow
     "patient_schema": {
         "fields": [
             # Patient identity (common fields for cross-workflow support)

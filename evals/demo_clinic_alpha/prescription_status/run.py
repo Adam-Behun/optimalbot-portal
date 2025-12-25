@@ -332,15 +332,16 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, patient_data: dict, llm_config: dict):
+    def __init__(self, call_data: dict, llm_config: dict):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
-        self.patient_data = patient_data
+        self.call_data = call_data
 
         self.flow = PrescriptionStatusFlow(
-            patient_data=patient_data,
+            call_data=call_data,
+            session_id="eval-session",
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
@@ -561,13 +562,13 @@ async def run_simulation(
     patient = scenario["patient"]
     persona = scenario["persona"]
 
-    # Build patient_data for flow - handle first_name/last_name extraction
+    # Build call_data for flow - handle first_name/last_name extraction
     patient_name = patient.get("patient_name", "")
     name_parts = patient_name.split()
     first_name = name_parts[0] if name_parts else ""
     last_name = name_parts[-1] if len(name_parts) > 1 else ""
 
-    patient_data = {
+    call_data = {
         "patient_id": f"eval_{scenario['id']}",
         "organization_name": "Demo Clinic Alpha",
         "first_name": first_name,
@@ -575,7 +576,7 @@ async def run_simulation(
         **patient,
     }
 
-    runner = FlowRunner(patient_data, llm_config)
+    runner = FlowRunner(call_data, llm_config)
 
     # Bot greeting
     pre_actions = runner.current_node.get("pre_actions") or []

@@ -233,7 +233,8 @@ class FlowRunner:
         self.handoff_context = handoff_context
 
         self.flow = PatientSchedulingFlow(
-            patient_data={"organization_name": "Demo Clinic Alpha"},
+            call_data={"organization_name": "Demo Clinic Alpha"},
+            session_id="eval-session",
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,

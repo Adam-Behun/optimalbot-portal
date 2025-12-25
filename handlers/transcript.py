@@ -1,8 +1,9 @@
 import os
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timezone
 from loguru import logger
 from backend.models import get_async_patient_db
+from backend.sessions import get_async_session_db
 
 
 def assemble_transcript(raw_messages: list) -> list:
@@ -102,17 +103,15 @@ async def delete_daily_recording(room_name: str):
         return False
 
 async def save_transcript_to_db(pipeline):
-    # Check if transcript was already saved to prevent duplicates
     if hasattr(pipeline, 'transcript_saved') and pipeline.transcript_saved:
-        logger.info("✅ Transcript already saved, skipping duplicate save")
+        logger.info("Transcript already saved, skipping duplicate save")
         return
 
     if not pipeline.transcripts:
-        logger.info("⚠️ No transcript messages to save")
+        logger.info("No transcript messages to save")
         return
 
     try:
-        # Assemble fragmented messages from streaming STT
         assembled_messages = assemble_transcript(pipeline.transcripts)
 
         transcript_data = {
@@ -122,26 +121,35 @@ async def save_transcript_to_db(pipeline):
             "conversation_duration": None
         }
 
-        success = await get_async_patient_db().save_call_transcript(
-            patient_id=pipeline.patient_id,
+        # Save to session (works even when patient_id is None for dial-in)
+        session_db = get_async_session_db()
+        success = await session_db.save_transcript(
             session_id=pipeline.session_id,
             transcript_data=transcript_data,
             organization_id=pipeline.organization_id
         )
 
         if success:
-            # Mark transcript as saved to prevent duplicate saves
-            if hasattr(pipeline, 'transcript_saved'):
-                pipeline.transcript_saved = True
+            pipeline.transcript_saved = True
+            logger.info(f"Transcript saved to session ({len(assembled_messages)} messages)")
 
-            logger.info(f"✅ Transcript saved ({len(assembled_messages)} messages)")
+            # Update patient's last_call reference if patient exists
+            if pipeline.patient_id:
+                try:
+                    patient_db = get_async_patient_db()
+                    await patient_db.update_patient(pipeline.patient_id, {
+                        "last_call_session_id": pipeline.session_id,
+                        "last_call_timestamp": datetime.now(timezone.utc).isoformat()
+                    }, pipeline.organization_id)
+                except Exception as e:
+                    logger.warning(f"Could not update patient last_call reference: {e}")
 
-            # Delete Daily recording for HIPAA compliance (minimize PHI retention)
+            # Delete Daily recording for HIPAA compliance
             if hasattr(pipeline, 'transport') and hasattr(pipeline.transport, '_room_name'):
                 room_name = pipeline.transport._room_name
                 await delete_daily_recording(room_name)
         else:
-            logger.error("❌ Failed to save transcript to MongoDB")
+            logger.error("Failed to save transcript to session")
 
     except Exception as e:
-        logger.error(f"❌ Error saving transcript: {e}")
+        logger.error(f"Error saving transcript: {e}")

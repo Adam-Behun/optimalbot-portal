@@ -104,22 +104,36 @@ export interface TranscriptMessage {
   type: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary' | 'transfer';
 }
 
-// Session with transcript
+// Session - unified call record (every call has a session)
 export interface Session {
   _id: string;
   session_id: string;
   organization_id: string;
-  patient_id: string;
   workflow: string;
-  status: 'in_progress' | 'completed' | 'failed';
-  phone_number: string;
-  started_at: string;
-  ended_at?: string;
-  duration_seconds?: number;
-  transcript: {
+  status: 'starting' | 'running' | 'completed' | 'failed' | 'transferred';
+  caller_phone?: string;
+  called_phone?: string;
+  call_transcript?: {
     messages: TranscriptMessage[];
-    summary?: string;
+    message_count: number;
   };
+  // Link to patient (optional - may be null for unverified dial-in)
+  patient_id?: string;
+  identity_verified?: boolean;
+  // Mainline-specific metadata
+  caller_name?: string;
+  call_type?: string;
+  call_reason?: string;
+  routed_to?: string;
+  // Timestamps
+  created_at: string;
+  updated_at?: string;
+  completed_at?: string;
+}
+
+export interface SessionsResponse {
+  sessions: Session[];
+  total_count: number;
 }
 
 // Authentication types

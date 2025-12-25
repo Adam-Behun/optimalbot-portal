@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from openai import AsyncOpenAI
@@ -10,6 +11,7 @@ from pipecat_flows import (
 from loguru import logger
 
 from backend.models import get_async_patient_db
+from backend.sessions import get_async_session_db
 from handlers.transcript import save_transcript_to_db
 
 class _MockFlowManager:
@@ -17,20 +19,21 @@ class _MockFlowManager:
         self.state = {}
 
 
-async def warmup_openai(patient_data: dict = None):
+async def warmup_openai(call_data: dict = None):
     try:
-        patient_data = patient_data or {"organization_name": "Demo Clinic Alpha"}
+        call_data = call_data or {"organization_name": "Demo Clinic Alpha"}
         flow = MainlineFlow(
-            patient_data=patient_data,
+            call_data=call_data,
+            session_id="warmup",
             flow_manager=_MockFlowManager(),
             main_llm=None,
         )
         greeting_node = flow.create_greeting_node()
 
         messages = []
-        for msg in greeting_node.role_messages or []:
+        for msg in greeting_node.get("role_messages") or []:
             messages.append({"role": msg["role"], "content": msg["content"]})
-        for msg in greeting_node.task_messages or []:
+        for msg in greeting_node.get("task_messages") or []:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": "Hi"})
 
@@ -54,7 +57,8 @@ class MainlineFlow:
 
     def __init__(
         self,
-        patient_data: Dict[str, Any],
+        call_data: Dict[str, Any],
+        session_id: str,
         flow_manager: FlowManager,
         main_llm,
         context_aggregator=None,
@@ -63,19 +67,34 @@ class MainlineFlow:
         organization_id: str = None,
         cold_transfer_config: Dict[str, Any] = None,
     ):
-        self.patient_data = patient_data
+        self.call_data = call_data
+        self.session_id = session_id
         self.flow_manager = flow_manager
         self.main_llm = main_llm
         self.context_aggregator = context_aggregator
         self.transport = transport
         self.pipeline = pipeline
         self.organization_id = organization_id
-        self.organization_name = patient_data.get("organization_name", "Demo Clinic Alpha")
+        self.organization_name = call_data.get("organization_name", "Demo Clinic Alpha")
         self.cold_transfer_config = cold_transfer_config or {}
-        self.practice_info = patient_data.get("practice_info", {})
-        self._init_state()
+        self.practice_info = call_data.get("practice_info", {})
+        self._state_initialized = False
+
+        # Initialize state now if flow_manager exists (cross-workflow handoff)
+        # For direct dial-in, runner.py calls _init_flow_state() after setting flow_manager
+        if self.flow_manager:
+            self._init_state()
+
+    def _init_flow_state(self):
+        """Called by runner.py after flow_manager is assigned for direct dial-in."""
+        if not self._state_initialized:
+            self._init_state()
 
     def _init_state(self):
+        if self._state_initialized:
+            return
+        self._state_initialized = True
+
         self.flow_manager.state.update({k: "" for k in [
             "caller_name", "call_type", "call_reason", "routed_to", "resolution"
         ]})
@@ -136,6 +155,10 @@ The input you receive is transcribed from speech and may contain errors:
             required=[],
             handler=self._end_call_handler,
         )
+
+    def get_initial_node(self) -> NodeConfig:
+        """Entry point for dial-in calls. Returns the first node to execute."""
+        return self.create_greeting_node()
 
     def create_greeting_node(self) -> NodeConfig:
         greeting_text = f"Hello, this is Monica at {self.organization_name}. How can I help you?"
@@ -368,7 +391,8 @@ If you don't understand the caller:
         FlowClass = getattr(module, class_name)
 
         flow = FlowClass(
-            patient_data=self.patient_data,
+            call_data=self.call_data,
+            session_id=self.session_id,
             flow_manager=flow_manager,
             main_llm=self.main_llm,
             context_aggregator=self.context_aggregator,
@@ -379,7 +403,7 @@ If you don't understand the caller:
         )
 
         logger.info(f"Flow: Handing off to {class_name} with context: {reason}")
-        return None, flow.create_handoff_entry_node(context=reason)
+        return None, await flow.create_handoff_entry_node(context=reason)
 
     async def _request_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
@@ -407,7 +431,7 @@ If you don't understand the caller:
                 await self.transport.sip_call_transfer({"toEndPoint": transfer_number})
                 logger.info(f"SIP transfer initiated: {transfer_number}")
 
-            patient_id = self.patient_data.get("patient_id")
+            patient_id = flow_manager.state.get("patient_id")
             if patient_id:
                 try:
                     db = get_async_patient_db()
@@ -439,35 +463,43 @@ If you don't understand the caller:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, NodeConfig]:
         logger.info("Flow: Call ended - transitioning to end node")
-        patient_id = self.patient_data.get("patient_id")
-        db = get_async_patient_db() if patient_id else None
+        patient_id = flow_manager.state.get("patient_id")
+        session_db = get_async_session_db()
 
         try:
             if self.pipeline:
                 await save_transcript_to_db(self.pipeline)
-                logger.info("Transcript saved")
+                logger.info("Transcript saved to session")
 
-            if patient_id and db:
-                update_fields = {
+            # Save call metadata to session (works even when patient_id is None)
+            session_updates = {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc),
+                "identity_verified": flow_manager.state.get("identity_verified", False),
+                "patient_id": patient_id,
+                "caller_name": flow_manager.state.get("caller_name"),
+                "call_type": flow_manager.state.get("call_type", "General Question"),
+                "call_reason": flow_manager.state.get("call_reason"),
+                "routed_to": flow_manager.state.get("routed_to", "Answered Directly"),
+            }
+            session_updates = {k: v for k, v in session_updates.items() if v is not None}
+            await session_db.update_session(self.session_id, session_updates, self.organization_id)
+            logger.info(f"Session metadata saved (session_id: {self.session_id})")
+
+            # Update patient record if exists (for cross-workflow handoffs)
+            if patient_id:
+                patient_db = get_async_patient_db()
+                await patient_db.update_patient(patient_id, {
                     "call_status": "Completed",
-                    "caller_name": flow_manager.state.get("caller_name"),
-                    "call_type": flow_manager.state.get("call_type", "General Question"),
-                    "call_reason": flow_manager.state.get("call_reason"),
-                    "routed_to": flow_manager.state.get("routed_to", "Answered Directly"),
-                    "resolution": flow_manager.state.get("resolution", "Call completed"),
-                }
-                update_fields = {k: v for k, v in update_fields.items() if v is not None}
-                await db.update_patient(patient_id, update_fields, self.organization_id)
-                logger.info(f"Database status updated: Completed (patient_id: {patient_id})")
+                    "last_call_session_id": self.session_id,
+                }, self.organization_id)
 
         except Exception as e:
             logger.exception("Error in end_call_handler")
-
-            if patient_id and db:
-                try:
-                    await db.update_call_status(patient_id, "Failed", self.organization_id)
-                except Exception as db_error:
-                    logger.error(f"Failed to update status to Failed: {db_error}")
+            try:
+                await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
+            except Exception as db_error:
+                logger.error(f"Failed to update session status: {db_error}")
 
         return None, NodeConfig(
             name="end",

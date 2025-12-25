@@ -264,14 +264,15 @@ class FlowRunner:
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
 
-        # Build patient_data with practice_info from schema
-        patient_data = {
+        # Build call_data with practice_info from schema
+        call_data = {
             "organization_name": "Demo Clinic Alpha",
             "practice_info": practice_info,
         }
 
         self.flow = MainlineFlow(
-            patient_data=patient_data,
+            call_data=call_data,
+            session_id="eval-session",
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
