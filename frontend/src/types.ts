@@ -23,6 +23,7 @@ export interface SchemaField {
   required: boolean;
   display_in_list: boolean;       // Show in patient list table
   display_order: number;          // Sort order for UI
+  display_priority?: 'mobile' | 'tablet' | 'desktop';  // Responsive visibility (mobile=all, tablet=≥768px, desktop=≥1024px)
   options?: string[];             // For select fields
   default?: string;               // Default value
   computed?: boolean;             // True if bot updates (not user-editable)

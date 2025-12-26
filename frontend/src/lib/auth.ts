@@ -82,3 +82,22 @@ export const getCurrentWorkflowSchema = () => {
   if (!org || !workflow) return null;
   return org.workflows?.[workflow]?.patient_schema || null;
 };
+
+// --- Auth Event System ---
+// Used when logout needs to be triggered from non-React code (like API interceptors)
+
+type LogoutCallback = () => void;
+const logoutListeners: Set<LogoutCallback> = new Set();
+
+// Emit logout event - triggers all registered callbacks
+export const emitLogoutEvent = (): void => {
+  logoutListeners.forEach((callback) => callback());
+};
+
+// Subscribe to logout events - returns unsubscribe function
+export const onLogoutEvent = (callback: LogoutCallback): (() => void) => {
+  logoutListeners.add(callback);
+  return () => {
+    logoutListeners.delete(callback);
+  };
+};

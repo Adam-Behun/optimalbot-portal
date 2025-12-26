@@ -103,7 +103,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation();
   const { theme, setTheme } = useTheme();
   const user = getAuthUser();
-  const { organization } = useOrganization();
+  const { organization, clearOrganization } = useOrganization();
 
   // Build dynamic workflow navigation from organization data
   const workflowNavItems = useMemo(() => {
@@ -131,11 +131,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     try {
       await logout();
       removeAuthToken();
+      clearOrganization();
       toast.success("Signed out successfully");
       window.location.href = "https://optimalbot.ai";
     } catch (error) {
       console.error("Error during logout:", error);
       removeAuthToken();
+      clearOrganization();
       window.location.href = "https://optimalbot.ai";
     }
   };

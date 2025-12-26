@@ -9,7 +9,7 @@ import {
   Session,
   SessionsResponse
 } from './types';
-import { removeAuthToken, getAuthToken } from './lib/auth';
+import { removeAuthToken, getAuthToken, emitLogoutEvent } from './lib/auth';
 
 // Use Vite environment variable (empty string uses proxy in dev, relative URLs in production)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -43,8 +43,9 @@ api.interceptors.response.use(
   (error) => {
     // If we get a 401 Unauthorized response (token expired or invalid)
     if (error.response?.status === 401) {
-      // Clear authentication data
+      // HIPAA Compliance: Clear all authentication data
       removeAuthToken();
+      emitLogoutEvent(); // Triggers context cleanup via SessionCleanup
 
       // Redirect to landing page
       window.location.href = '/';

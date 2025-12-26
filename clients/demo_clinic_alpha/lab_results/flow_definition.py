@@ -812,7 +812,7 @@ If caller has a question you can answer:
         logger.warning("Flow: DOB mismatch - transferring to staff")
         flow_manager.state.pop("_lookup_record", None)
         await self._initiate_sip_transfer(flow_manager)
-        return "That doesn't match our records. Let me connect you with a colleague who can help.", self.create_returning_patient_not_found_node()
+        return "That doesn't match our records.", self.create_returning_patient_not_found_node()
 
     # ==================== Handlers: Verification ====================
 
@@ -1017,7 +1017,6 @@ If caller has a question you can answer:
                 await patient_db.update_patient(patient_id, {
                     "call_status": "Completed",
                     "last_call_session_id": self.session_id,
-                    "results_communicated": True,
                 }, self.organization_id)
 
         except Exception as e:

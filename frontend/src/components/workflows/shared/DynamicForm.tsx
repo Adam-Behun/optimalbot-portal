@@ -307,13 +307,13 @@ export function DynamicForm({
     <div className="space-y-6">
       {/* Excel/CSV Upload Buttons */}
       {showCsvUpload && onBulkSubmit && (
-        <div className="flex justify-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
           <Button
             type="button"
             variant="outline"
             size="lg"
             onClick={handleDownloadSample}
-            className="w-60"
+            className="w-full sm:w-60"
           >
             <Download className="mr-2 h-5 w-5" />
             Download Sample .xlsx
@@ -323,7 +323,7 @@ export function DynamicForm({
             variant="outline"
             size="lg"
             onClick={handleUploadClick}
-            className="w-60"
+            className="w-full sm:w-60"
           >
             <Upload className="mr-2 h-5 w-5" />
             Upload Excel or CSV
@@ -342,8 +342,8 @@ export function DynamicForm({
       <div className="bg-card rounded-lg border">
         <form onSubmit={handleSubmit} className="p-4 space-y-0">
           {fields.map((field) => (
-            <div key={field.key} className="flex items-center py-1.5 border-b last:border-b-0">
-              <Label htmlFor={field.key} className="w-48 text-muted-foreground shrink-0">
+            <div key={field.key} className="flex flex-col gap-1 py-2 border-b last:border-b-0 sm:flex-row sm:items-center sm:gap-0 sm:py-1.5">
+              <Label htmlFor={field.key} className="text-muted-foreground sm:w-48 sm:shrink-0">
                 {field.label}
                 {field.required && <span className="text-destructive ml-1">*</span>}
               </Label>

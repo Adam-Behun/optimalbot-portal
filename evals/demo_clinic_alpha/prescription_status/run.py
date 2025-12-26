@@ -20,6 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from evals.db import get_patient_db, ORG_ID_STR
+
 import yaml
 from anthropic import Anthropic
 from openai import AsyncOpenAI
@@ -347,7 +349,7 @@ class FlowRunner:
             context_aggregator=None,
             transport=self.mock_transport,
             pipeline=self.mock_pipeline,
-            organization_id="demo_clinic_alpha",
+            organization_id=ORG_ID_STR,
         )
 
         self.current_node = self.flow.create_greeting_node()
@@ -559,8 +561,18 @@ async def run_simulation(
     llm_config: dict,
 ) -> dict:
     """Run a single prescription status simulation for a scenario."""
-    patient = scenario["patient"]
     persona = scenario["persona"]
+
+    # Look up patient from DB by phone
+    caller_phone = scenario.get("patient", {}).get("phone_number", "")
+    db = get_patient_db()
+    patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR)
+
+    if patient:
+        print(f"  [DB] Found patient: {patient.get('patient_name')}")
+    else:
+        print(f"  [DB] Patient not found for {caller_phone}")
+        patient = {}
 
     # Build call_data for flow - handle first_name/last_name extraction
     patient_name = patient.get("patient_name", "")
@@ -569,11 +581,11 @@ async def run_simulation(
     last_name = name_parts[-1] if len(name_parts) > 1 else ""
 
     call_data = {
-        "patient_id": f"eval_{scenario['id']}",
+        "patient_id": str(patient.get("_id", f"eval_{scenario['id']}")),
         "organization_name": "Demo Clinic Alpha",
         "first_name": first_name,
         "last_name": last_name,
-        **patient,
+        **{k: v for k, v in patient.items() if k != "_id"},
     }
 
     runner = FlowRunner(call_data, llm_config)

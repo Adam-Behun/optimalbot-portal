@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { WorkflowConfig, Patient, SchemaField } from '@/types';
+import { useBreakpoint } from '@/hooks/use-mobile';
 import { formatDate, formatDatetime, formatTime } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -115,13 +116,30 @@ export function DynamicTable({
   onDeletePatient,
 }: DynamicTableProps) {
   const hasRowActions = onViewPatient || onEditPatient || onStartCall || onDeletePatient;
-  // Get columns from schema, sorted by display_order
-  const columns = schema.patient_schema.fields
-    .filter((f) => f.display_in_list)
-    .sort((a, b) => a.display_order - b.display_order);
+  const breakpoint = useBreakpoint();
 
-  // Find the patient_name field for filtering
-  const patientNameField = columns.find(f => f.key === 'patient_name' || f.key.includes('name'));
+  // Get columns from schema, sorted by display_order, filtered by breakpoint
+  const columns = useMemo(() => {
+    return schema.patient_schema.fields
+      .filter((f) => {
+        if (!f.display_in_list) return false;
+
+        // Filter by display_priority based on current breakpoint
+        const priority = f.display_priority || 'desktop';
+
+        if (breakpoint === 'mobile') {
+          return priority === 'mobile';
+        } else if (breakpoint === 'tablet') {
+          return priority === 'mobile' || priority === 'tablet';
+        }
+        // Desktop shows all columns
+        return true;
+      })
+      .sort((a, b) => a.display_order - b.display_order);
+  }, [schema.patient_schema.fields, breakpoint]);
+
+  // Find the patient_name field for filtering (search all fields, not just visible ones)
+  const patientNameField = schema.patient_schema.fields.find(f => f.key === 'patient_name' || f.key.includes('name'));
 
   // State
   const [nameFilter, setNameFilter] = useState('');
@@ -256,15 +274,15 @@ export function DynamicTable({
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
         <Input
-          placeholder="Filter by patient name..."
+          placeholder="Filter by name..."
           value={nameFilter}
           onChange={(e) => {
             setNameFilter(e.target.value);
             setPageIndex(0);
           }}
-          className="max-w-sm"
+          className="w-full sm:max-w-sm"
         />
         <Select
           value={statusFilter}
@@ -273,7 +291,7 @@ export function DynamicTable({
             setPageIndex(0);
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-full sm:w-[180px]">
             <SelectValue placeholder="Call Status" />
           </SelectTrigger>
           <SelectContent>
@@ -288,17 +306,18 @@ export function DynamicTable({
 
       {/* Bulk Actions Bar */}
       {selectedPatients.length > 0 && (onStartCalls || onDeletePatients) && (
-        <div className="flex items-center gap-2 p-4 bg-muted rounded-lg">
+        <div className="flex flex-col gap-3 p-4 bg-muted rounded-lg sm:flex-row sm:items-center sm:gap-2">
           <span className="text-sm font-medium">
             {selectedPatients.length} selected
           </span>
-          <div className="flex gap-2 ml-auto">
+          <div className="flex gap-2 sm:ml-auto">
             {onStartCalls && (
               <Button
                 onClick={handleBulkStartCalls}
                 disabled={bulkActionLoading}
                 variant="default"
-                size="sm"
+                size="default"
+                className="flex-1 sm:flex-none sm:size-auto"
               >
                 <Phone className="mr-2 h-4 w-4" />
                 Start Calls
@@ -309,10 +328,11 @@ export function DynamicTable({
                 onClick={() => setShowDeleteDialog(true)}
                 disabled={bulkActionLoading}
                 variant="destructive"
-                size="sm"
+                size="default"
+                className="flex-1 sm:flex-none sm:size-auto"
               >
                 <Trash2 className="mr-2 h-4 w-4" />
-                Delete Selected
+                Delete
               </Button>
             )}
           </div>
@@ -366,7 +386,7 @@ export function DynamicTable({
                 key={patient.patient_id}
                 data-state={selectedIds.has(patient.patient_id) && 'selected'}
                 onClick={() => onRowClick?.(patient)}
-                className={onRowClick ? 'cursor-pointer' : ''}
+                className={`${onRowClick ? 'cursor-pointer' : ''} [&>td]:py-3 sm:[&>td]:py-2`}
               >
                 {(onStartCalls || onDeletePatients) && (
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -395,7 +415,7 @@ export function DynamicTable({
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0">
+                        <Button variant="ghost" className="h-9 w-9 p-0 sm:h-8 sm:w-8">
                           <span className="sr-only">Open menu</span>
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
@@ -439,12 +459,12 @@ export function DynamicTable({
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="flex-1 text-sm text-muted-foreground">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-muted-foreground text-center sm:text-left">
           {selectedPatients.length} of {filteredPatients.length} row(s) selected.
         </div>
-        <div className="flex items-center space-x-6 lg:space-x-8">
-          <div className="flex items-center space-x-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6 lg:gap-8">
+          <div className="flex items-center justify-center gap-2 sm:justify-start">
             <p className="text-sm font-medium">Rows per page</p>
             <Select
               value={`${pageSize}`}
@@ -465,23 +485,25 @@ export function DynamicTable({
               </SelectContent>
             </Select>
           </div>
-          <div className="flex w-[100px] items-center justify-center text-sm font-medium">
-            Page {pageIndex + 1} of {pageCount || 1}
-          </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center justify-center gap-4">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPageIndex(p => p - 1)}
               disabled={pageIndex === 0}
+              className="min-h-9"
             >
               Previous
             </Button>
+            <span className="text-sm font-medium whitespace-nowrap">
+              {pageIndex + 1} / {pageCount || 1}
+            </span>
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPageIndex(p => p + 1)}
               disabled={pageIndex >= pageCount - 1}
+              className="min-h-9"
             >
               Next
             </Button>

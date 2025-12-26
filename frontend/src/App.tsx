@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -7,8 +8,9 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
 import { Home } from './components/Home';
-import { OrganizationProvider } from './contexts/OrganizationContext';
+import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext';
 import { SidebarLayout } from './components/SidebarLayout';
+import { removeAuthToken, onLogoutEvent } from './lib/auth';
 import {
   EligibilityVerificationDashboard,
   EligibilityVerificationPatientList,
@@ -31,10 +33,37 @@ import {
   PrescriptionStatusCallList,
 } from './components/workflows/prescription_status';
 
+// HIPAA Compliance: Clear session data on tab close and handle logout events
+function SessionCleanup() {
+  const { clearOrganization } = useOrganization();
+
+  useEffect(() => {
+    // Clear session data when tab/browser is closed
+    const handleBeforeUnload = () => {
+      removeAuthToken();
+    };
+
+    // Listen for logout events from API interceptors
+    const unsubscribe = onLogoutEvent(() => {
+      clearOrganization();
+    });
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      unsubscribe();
+    };
+  }, [clearOrganization]);
+
+  return null;
+}
+
 const App = () => {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="healthcare-ui-theme">
       <OrganizationProvider>
+        <SessionCleanup />
         <Router>
           <SessionTimeoutModal>
             <div className="min-h-screen bg-background">

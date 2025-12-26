@@ -8,7 +8,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { removeAuthToken, isAuthenticated } from '@/lib/auth';
+import { removeAuthToken, isAuthenticated, emitLogoutEvent } from '@/lib/auth';
 
 // Session timeout configuration (in milliseconds)
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes of inactivity
@@ -26,7 +26,9 @@ export function SessionTimeoutModal({ children }: SessionTimeoutModalProps) {
   const lastActivityRef = useRef<number>(Date.now());
 
   const handleLogout = useCallback(() => {
+    // HIPAA Compliance: Clear all auth data before redirect
     removeAuthToken();
+    emitLogoutEvent(); // Triggers context cleanup
     window.location.href = 'https://optimalbot.ai';
   }, []);
 
