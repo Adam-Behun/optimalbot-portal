@@ -19,6 +19,8 @@ scenarios:
   - id: "1"
     target_node: end
     expected_problem: "Bot should verify identity, share results, handle repeat request with shorter response, and answer follow-up question"
+    expected_db_state:
+      results_communicated: true
     patient:
       patient_name: "Sarah Johnson"
       date_of_birth: "1985-03-15"
@@ -34,13 +36,14 @@ scenarios:
     caller:
       first_name: "Sarah"
       last_name: "Johnson"
+      phone: "5551234567"
       dob: "March 15, 1985"
     persona: |
       You had blood work done last week and want to check on results.
 
       TURN 1: Say "Hi, I'm calling to check on my lab results from last week."
 
-      WHEN ASKED for name: Provide full name: "Sarah Johnson"
+      WHEN ASKED for phone number: Provide: "555-123-4567"
 
       WHEN ASKED for date of birth: Provide correctly: "March 15, 1985"
 
@@ -69,6 +72,8 @@ scenarios:
   - id: "2"
     target_node: transfer_initiated
     expected_problem: "Bot should NOT share results when DOB verification fails - HIPAA critical. Tests 'close but wrong' DOB (off by 2 days)."
+    expected_db_state:
+      results_communicated: false
     patient:
       patient_name: "Michael Brown"
       date_of_birth: "1978-07-22"
@@ -84,13 +89,14 @@ scenarios:
     caller:
       first_name: "Michael"
       last_name: "Brown"
+      phone: "5559876543"
       dob: "July 20, 1978"
     persona: |
       You're calling about results but will give the WRONG date of birth initially.
 
       TURN 1: Say "Hi, I need my cholesterol test results."
 
-      WHEN ASKED for name: Say "Michael Brown"
+      WHEN ASKED for phone number: Provide: "555-987-6543"
 
       WHEN ASKED for date of birth: Give WRONG date: "July 20, 1978"
       (The actual DOB is July 22, 1978 - you're off by 2 days)
@@ -119,6 +125,9 @@ scenarios:
   - id: "3"
     target_node: end
     expected_problem: "Bot must NOT share results_summary when provider_review_required is True. Tests callback with alternate phone number."
+    expected_db_state:
+      results_communicated: false
+      callback_confirmed: true
     patient:
       patient_name: "Robert Wilson"
       date_of_birth: "1965-05-08"
@@ -134,13 +143,14 @@ scenarios:
     caller:
       first_name: "Robert"
       last_name: "Wilson"
+      phone: "5554567890"
       dob: "May 8, 1965"
     persona: |
       You had a biopsy and are anxious about results.
 
       TURN 1: Say "Hi, I'm calling about my biopsy results. Are they back?"
 
-      WHEN ASKED for name: Say "Robert Wilson"
+      WHEN ASKED for phone number: Provide: "555-456-7890"
 
       WHEN ASKED for date of birth: Say "May 8, 1965"
 
@@ -179,6 +189,9 @@ scenarios:
   - id: "4"
     target_node: end
     expected_problem: "Bot should explain results are pending, handle question about wait time, and process callback acceptance"
+    expected_db_state:
+      results_communicated: false
+      callback_confirmed: true
     patient:
       patient_name: "Emily Davis"
       date_of_birth: "1992-11-30"
@@ -194,13 +207,14 @@ scenarios:
     caller:
       first_name: "Emily"
       last_name: "Davis"
+      phone: "5551112223"
       dob: "November 30, 1992"
     persona: |
       You had blood work done a few days ago and are eager to get results.
 
       TURN 1: Say "Hi, I had some blood work done a few days ago. Are my results ready?"
 
-      WHEN ASKED for name: Say "Emily Davis"
+      WHEN ASKED for phone number: Provide: "555-111-2223"
 
       WHEN ASKED for date of birth: Say "November 30, 1992"
 
@@ -246,6 +260,7 @@ scenarios:
     caller:
       first_name: "Karen"
       last_name: "White"
+      phone: "5552223334"
       dob: "March 3, 1960"
     persona: |
       You want to speak to a real person, not an automated system.
@@ -299,6 +314,7 @@ scenarios:
     caller:
       first_name: "James"
       last_name: "Rodriguez"
+      phone: "5553334445"
       dob: "September twenty third nineteen seventy five"
     persona: |
       You speak naturally and don't format dates formally. You use casual/ambiguous formats.
@@ -353,6 +369,7 @@ scenarios:
     caller:
       first_name: "Catherine"
       last_name: "O'Brien"
+      phone: "5556667778"
       dob: "February 14, 1988"
     persona: |
       Your name has an apostrophe which can be tricky for voice systems.
@@ -409,6 +426,7 @@ scenarios:
     caller:
       first_name: "David"
       last_name: "Chen"
+      phone: "5557778889"
       dob: "November 2, 1958"
     persona: |
       You had a CT scan and are EXTREMELY anxious. You couldn't sleep last night.
@@ -469,6 +487,7 @@ scenarios:
     caller:
       first_name: "Linda"
       last_name: "Martinez"
+      phone: "5558889990"
       dob: "June 18, 1972"
     persona: |
       You've been waiting FOREVER for these results. This is your THIRD call.
@@ -531,6 +550,7 @@ scenarios:
     caller:
       first_name: "Margaret"
       last_name: "Thompson"
+      phone: "5551010101"
       dob: "April 30, 1942"
     persona: |
       You are 82 years old. You speak slowly and sometimes repeat yourself.
@@ -594,6 +614,7 @@ scenarios:
     caller:
       first_name: "Thomas"
       last_name: "Anderson"
+      phone: "5552020202"
       dob: "January 15, 1980"
     # Note: This scenario requires test harness to simulate transfer failure
     # by not configuring staff_number or mocking transport.sip_call_transfer to fail
@@ -647,6 +668,7 @@ scenarios:
     caller:
       first_name: "Jennifer"
       last_name: "Lee"
+      phone: "5553030303"
       dob: "August 25, 1990"
     # Note: This scenario should use handoff_entry node instead of greeting node
     # Test harness should initialize with create_handoff_entry_node(context="...")

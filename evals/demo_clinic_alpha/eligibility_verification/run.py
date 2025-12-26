@@ -20,6 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from evals.context import EvalContextManager
+
 import yaml
 from anthropic import Anthropic
 from openai import AsyncOpenAI
@@ -239,17 +241,10 @@ class FlowRunner:
 
         # Start with greeting node for direct human conversation (no IVR)
         self.current_node = self.flow.create_greeting_node_without_ivr()
-        self.conversation_history = []
+        self.context = EvalContextManager()
+        self.context.set_node(self.current_node)
         self.function_calls = []  # Track all function calls
         self.done = False
-
-    def get_prompts(self) -> list[dict]:
-        messages = []
-        role_msgs = self.current_node.get("role_messages") or []
-        task_msgs = self.current_node.get("task_messages") or []
-        messages.extend(role_msgs)
-        messages.extend(task_msgs)
-        return messages
 
     def get_tools(self) -> list[dict]:
         functions = self.current_node.get("functions") or []
@@ -289,20 +284,46 @@ class FlowRunner:
         result, next_node = await handler(func_args, self.mock_flow_manager)
         return result, next_node
 
+    def _print_llm_context(self, messages: list[dict], tools: list[dict] | None, node_name: str, turn: int):
+        """Print what's being sent to the LLM for debugging."""
+        print(f"\n  {'─'*60}")
+        print(f"  LLM CONTEXT (turn {turn}, node: {node_name})")
+        print(f"  {'─'*60}")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "?")
+            content = msg.get("content", "")
+            # Truncate long system messages
+            if role == "system" and len(content) > 200:
+                content = content[:200] + "..."
+            # Show tool calls if present
+            if msg.get("tool_calls"):
+                tc = msg["tool_calls"][0]
+                print(f"  [{i}] {role}: (tool_call: {tc['function']['name']})")
+            elif role == "tool":
+                print(f"  [{i}] {role}: {content[:100]}")
+            else:
+                print(f"  [{i}] {role}: {content[:150]}{'...' if len(content) > 150 else ''}")
+        if tools:
+            tool_names = [t["function"]["name"] for t in tools]
+            print(f"  TOOLS: {tool_names}")
+        print(f"  {'─'*60}\n")
+
     @observe(name="monica_turn")
     async def process_message(self, user_message: str, turn_number: int) -> str:
         if user_message:
-            self.conversation_history.append({"role": "user", "content": user_message})
+            self.context.add_user_message(user_message)
 
         all_content = []
         last_func_call = None  # Track last (func_name, args_json) to prevent loops
         did_respond_immediately = False  # Only allow one respond_immediately continuation per turn
 
         while not self.done:
-            messages = self.get_prompts() + self.conversation_history
+            messages = self.context.get_messages()
             functions = self.current_node.get("functions") or []
             tools = self.get_tools() if functions else None
             node_name = self.current_node.get("name", "unknown")
+
+            self._print_llm_context(messages, tools, node_name, turn_number)
 
             response = await self._call_llm(messages, tools, node_name)
             msg = response.choices[0].message
@@ -341,8 +362,7 @@ class FlowRunner:
                 })
                 print(f"    → {func_name}({json.dumps(func_args)})")
 
-                self.conversation_history.append({
-                    "role": "assistant",
+                self.context.add_tool_call({
                     "content": msg.content,
                     "tool_calls": [{
                         "id": tool_call.id,
@@ -357,11 +377,7 @@ class FlowRunner:
                 handler = next(f.handler for f in functions if f.name == func_name)
                 result, next_node = await self._execute_handler(func_name, func_args, handler)
 
-                self.conversation_history.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result or "OK"
-                })
+                self.context.add_tool_result(tool_call.id, result)
 
                 if result:
                     all_content.append(result)
@@ -373,6 +389,7 @@ class FlowRunner:
 
                 if next_node:
                     self.current_node = next_node
+                    self.context.set_node(next_node)
                     # Process pre_actions on the new node (e.g., tts_say)
                     pre_actions = self.current_node.get("pre_actions") or []
                     for action in pre_actions:
@@ -380,10 +397,7 @@ class FlowRunner:
                             pre_action_text = action.get("text", "")
                             if pre_action_text:
                                 all_content.append(pre_action_text)
-                                self.conversation_history.append({
-                                    "role": "assistant",
-                                    "content": pre_action_text
-                                })
+                                self.context.add_assistant_message(pre_action_text)
 
                     # Check if this node ends the conversation
                     result_node_name = next_node.get("name")
@@ -401,7 +415,7 @@ class FlowRunner:
 
             if msg.content:
                 all_content.append(msg.content)
-                self.conversation_history.append({"role": "assistant", "content": msg.content})
+                self.context.add_assistant_message(msg.content)
 
             break
 
@@ -459,6 +473,9 @@ async def run_simulation(
     # Bot greeting
     pre_actions = runner.current_node.get("pre_actions") or []
     greeting = pre_actions[0].get("text", "") if pre_actions else ""
+
+    # Add greeting to context
+    runner.context.add_assistant_message(greeting)
 
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
