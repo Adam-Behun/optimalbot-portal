@@ -7,6 +7,15 @@ NC='\033[0m'
 
 PORTAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$PORTAL_DIR/.dev-logs"
+
+# Kill any stale processes from previous runs
+pkill -f "tail -f.*\.dev-logs" 2>/dev/null || true
+for port in 8000 7860 3000 3001 4321 4322; do
+    lsof -ti :$port 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+done
+rm -rf "$LOG_DIR"
+sleep 0.5
+
 mkdir -p "$LOG_DIR"
 
 # Parse arguments
@@ -99,15 +108,42 @@ tail -f "$LOG_DIR/backend.log" "$LOG_DIR/bot.log" "$LOG_DIR/frontend.log" "$LOG_
 TAIL_PID=$!
 
 cleanup() {
+    # Disable trap to prevent re-entry on second Ctrl+C
+    trap - SIGINT SIGTERM
+
     echo ""
     echo "Stopping..."
-    # Kill process trees (parent + children)
-    for pid in $TAIL_PID $BACKEND_PID $BOT_PID $MARKETING_PID $FRONTEND_PID; do
-        pkill -P $pid 2>/dev/null
-        kill $pid 2>/dev/null
+
+    # Kill tail first to stop log output
+    if [ -n "$TAIL_PID" ]; then
+        kill $TAIL_PID 2>/dev/null
+        wait $TAIL_PID 2>/dev/null
+    fi
+
+    # Graceful shutdown: kill children first, then parents
+    for pid in $BACKEND_PID $BOT_PID $MARKETING_PID $FRONTEND_PID; do
+        if [ -n "$pid" ] && kill -0 $pid 2>/dev/null; then
+            pkill -P $pid 2>/dev/null
+            kill $pid 2>/dev/null
+        fi
     done
-    # Kill any remaining processes on dev ports
-    lsof -ti :8000,:7860,:3000,:3001,:4321,:4322 2>/dev/null | xargs -r kill -9 2>/dev/null
+
+    # Give processes time to exit gracefully
+    sleep 0.3
+
+    # Force kill any stubborn processes
+    for pid in $BACKEND_PID $BOT_PID $MARKETING_PID $FRONTEND_PID; do
+        if [ -n "$pid" ] && kill -0 $pid 2>/dev/null; then
+            pkill -9 -P $pid 2>/dev/null
+            kill -9 $pid 2>/dev/null
+        fi
+    done
+
+    # Final cleanup: kill anything still on dev ports
+    for port in 8000 7860 3000 3001 4321 4322; do
+        lsof -ti :$port 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+    done
+
     rm -rf "$LOG_DIR"
     exit 0
 }
