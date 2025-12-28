@@ -15,6 +15,7 @@ from pipecat_flows import FlowManager
 from services.service_factory import ServiceFactory
 from pipeline.triage_detector import TriageDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
+from pipeline.safety_monitor import SafetyMonitor
 from core.flow_loader import FlowLoader
 
 
@@ -39,8 +40,6 @@ class PipelineFactory:
             services_config['services']['llm']
         )
 
-        # classifier_llm is used only in TriageDetector parallel pipeline for classification
-        # The main pipeline always uses main_llm - no switching needed
         classifier_llm_config = services_config['services'].get('classifier_llm')
         if classifier_llm_config:
             classifier_llm = ServiceFactory.create_classifier_llm(classifier_llm_config)
@@ -48,7 +47,9 @@ class PipelineFactory:
             classifier_llm = None
             logger.info("classifier_llm not configured - triage detection disabled")
 
-        # Main pipeline always uses main_llm (no LLM switching)
+        safety_llm_config = services_config['services'].get('safety_llm')
+        safety_llm = ServiceFactory.create_safety_llm(safety_llm_config) if safety_llm_config else None
+
         active_llm = main_llm
 
         # Extract turn_detection config if present (for Smart Turn + VAD)
@@ -67,6 +68,7 @@ class PipelineFactory:
             ),
             'main_llm': main_llm,
             'classifier_llm': classifier_llm,
+            'safety_llm': safety_llm,
             'active_llm': active_llm,
             'cold_transfer': services_config.get('cold_transfer')
         }
@@ -148,6 +150,7 @@ class PipelineFactory:
 
         triage_detector = None
         ivr_processor = None
+        safety_monitor = None
 
         if call_type == "dial-out":
             triage_config = services_config.get('triage', {})
@@ -161,10 +164,13 @@ class PipelineFactory:
                     voicemail_response_delay=triage_config.get('voicemail_response_delay', 2.0),
                 )
 
-                # 2.0s longer pause for IVR menus which have longer prompts
                 ivr_processor = IVRNavigationProcessor(
                     ivr_vad_params=VADParams(stop_secs=2.0)
                 )
+
+        safety_config = services_config.get('safety_monitors', {})
+        if safety_config.get('enabled') and services['safety_llm']:
+            safety_monitor = SafetyMonitor(safety_llm=services['safety_llm'])
 
         return {
             'context': context,
@@ -172,6 +178,8 @@ class PipelineFactory:
             'transcript_processor': transcript_processor,
             'triage_detector': triage_detector,
             'ivr_processor': ivr_processor,
+            'safety_monitor': safety_monitor,
+            'safety_config': safety_config,
             'flow': flow,
             'main_llm': services['main_llm'],
             'classifier_llm': services['classifier_llm'],
@@ -189,35 +197,35 @@ class PipelineFactory:
             config=STTMuteConfig(strategies={STTMuteStrategy.FIRST_SPEECH})
         )
 
+        processors = [services['transport'].input(), services['stt']]
+
+        if components.get('safety_monitor'):
+            processors.append(components['safety_monitor'])
+
         if components.get('triage_detector'):
-            pipeline = Pipeline([
-                services['transport'].input(),
-                services['stt'],
+            processors.extend([
                 components['triage_detector'].detector(),
                 components['ivr_processor'],
-                stt_mute_processor,
-                components['transcript_processor'].user(),
-                components['context_aggregator'].user(),
-                components['active_llm'],
-                services['tts'],
-                components['triage_detector'].gate(),
-                components['transcript_processor'].assistant(),
-                components['context_aggregator'].assistant(),
-                services['transport'].output()
             ])
-        else:
-            pipeline = Pipeline([
-                services['transport'].input(),
-                services['stt'],
-                stt_mute_processor,
-                components['transcript_processor'].user(),
-                components['context_aggregator'].user(),
-                components['active_llm'],
-                services['tts'],
-                components['transcript_processor'].assistant(),
-                components['context_aggregator'].assistant(),
-                services['transport'].output()
-            ])
+
+        processors.extend([
+            stt_mute_processor,
+            components['transcript_processor'].user(),
+            components['context_aggregator'].user(),
+            components['active_llm'],
+            services['tts'],
+        ])
+
+        if components.get('triage_detector'):
+            processors.append(components['triage_detector'].gate())
+
+        processors.extend([
+            components['transcript_processor'].assistant(),
+            components['context_aggregator'].assistant(),
+            services['transport'].output()
+        ])
+
+        pipeline = Pipeline(processors)
 
         params = PipelineParams(
             audio_in_sample_rate=16000,

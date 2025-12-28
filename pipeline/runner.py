@@ -8,6 +8,7 @@ from pipeline.pipeline_factory import PipelineFactory
 from handlers import (
     setup_transport_handlers,
     setup_transcript_handler,
+    setup_safety_handlers,
 )
 from handlers.triage import setup_triage_handlers
 from observers import LangfuseLatencyObserver
@@ -217,6 +218,10 @@ class ConversationPipeline:
                 self.flow,
                 self.flow_manager,
             )
+
+        safety_monitor = components.get('safety_monitor')
+        if safety_monitor:
+            setup_safety_handlers(self, safety_monitor, components.get('safety_config', {}))
 
         logger.info("✅ Event handlers registered")
 

@@ -196,6 +196,22 @@ class ServiceFactory:
         return llm
 
     @staticmethod
+    def create_safety_llm(config: Dict[str, Any]):
+        provider = config.get('provider', 'groq')
+
+        if provider == 'groq':
+            llm = GroqLLMService(
+                api_key=config['api_key'],
+                model=config.get('model', 'llama-guard-4-12b'),
+                temperature=0,
+                max_tokens=20
+            )
+        else:
+            raise ValueError(f"Unsupported safety LLM provider: {provider}. Currently only groq is supported.")
+
+        return llm
+
+    @staticmethod
     def create_tts(config: Dict[str, Any]):
         """Create TTS service based on provider configuration."""
         provider = config.get('provider', 'elevenlabs')  # Default to elevenlabs for backwards compatibility
