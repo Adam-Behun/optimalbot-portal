@@ -4,6 +4,8 @@ safety_monitors:
   enabled: true
   emergency_message: "If this is an emergency, hang up and dial 911."
   auto_transfer: true
+  output_validator:
+    enabled: true
 
   safety_llm:
     provider: groq

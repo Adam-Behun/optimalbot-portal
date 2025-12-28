@@ -36,3 +36,11 @@ def setup_safety_handlers(pipeline, safety_monitor, config):
         logger.info(f"Staff transfer requested - session {pipeline.session_id}")
         await pipeline.task.queue_frames([TTSSpeakFrame("Let me transfer you to someone who can help.")])
         await _initiate_transfer(pipeline)
+
+
+def setup_output_validator_handlers(pipeline, output_validator, config):
+    @output_validator.event_handler("on_unsafe_output")
+    async def handle_unsafe_output(processor, text):
+        logger.warning(f"UNSAFE output detected - session {pipeline.session_id}: {text[:100]}...")
+        msg = config.get("unsafe_output_message", "I apologize, let me rephrase that.")
+        await pipeline.task.queue_frames([TTSSpeakFrame(msg)])

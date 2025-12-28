@@ -15,7 +15,7 @@ from pipecat_flows import FlowManager
 from services.service_factory import ServiceFactory
 from pipeline.triage_detector import TriageDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
-from pipeline.safety_monitor import SafetyMonitor
+from pipeline.safety_processors import SafetyMonitor, OutputValidator
 from core.flow_loader import FlowLoader
 
 
@@ -47,7 +47,8 @@ class PipelineFactory:
             classifier_llm = None
             logger.info("classifier_llm not configured - triage detection disabled")
 
-        safety_llm_config = services_config['services'].get('safety_llm')
+        safety_monitors_config = services_config.get('safety_monitors', {})
+        safety_llm_config = safety_monitors_config.get('safety_llm')
         safety_llm = ServiceFactory.create_safety_llm(safety_llm_config) if safety_llm_config else None
 
         active_llm = main_llm
@@ -172,6 +173,14 @@ class PipelineFactory:
         if safety_config.get('enabled') and services['safety_llm']:
             safety_monitor = SafetyMonitor(safety_llm=services['safety_llm'])
 
+        output_validator = None
+        safety_llm_config = safety_config.get('safety_llm')
+        if safety_config.get('output_validator', {}).get('enabled') and safety_llm_config:
+            output_validator = OutputValidator(
+                api_key=safety_llm_config['api_key'],
+                model=safety_llm_config.get('model', 'llama-guard-4-12b')
+            )
+
         return {
             'context': context,
             'context_aggregator': context_aggregator,
@@ -179,6 +188,7 @@ class PipelineFactory:
             'triage_detector': triage_detector,
             'ivr_processor': ivr_processor,
             'safety_monitor': safety_monitor,
+            'output_validator': output_validator,
             'safety_config': safety_config,
             'flow': flow,
             'main_llm': services['main_llm'],
@@ -213,8 +223,12 @@ class PipelineFactory:
             components['transcript_processor'].user(),
             components['context_aggregator'].user(),
             components['active_llm'],
-            services['tts'],
         ])
+
+        if components.get('output_validator'):
+            processors.append(components['output_validator'])
+
+        processors.append(services['tts'])
 
         if components.get('triage_detector'):
             processors.append(components['triage_detector'].gate())

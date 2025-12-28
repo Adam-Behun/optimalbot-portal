@@ -9,6 +9,7 @@ from handlers import (
     setup_transport_handlers,
     setup_transcript_handler,
     setup_safety_handlers,
+    setup_output_validator_handlers,
 )
 from handlers.triage import setup_triage_handlers
 from observers import LangfuseLatencyObserver
@@ -222,6 +223,10 @@ class ConversationPipeline:
         safety_monitor = components.get('safety_monitor')
         if safety_monitor:
             setup_safety_handlers(self, safety_monitor, components.get('safety_config', {}))
+
+        output_validator = components.get('output_validator')
+        if output_validator:
+            setup_output_validator_handlers(self, output_validator, components.get('safety_config', {}))
 
         logger.info("✅ Event handlers registered")
 
