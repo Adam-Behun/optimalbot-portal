@@ -139,9 +139,11 @@ async def start_call(
                 "patient_id": call_request.patient_id,
                 "phone_number": phone_number,
                 "client_name": call_request.client_name,
+                "workflow": call_request.client_name,
                 "organization_id": org_id,
                 "room_url": room_url,
-                "status": SessionStatus.RUNNING.value
+                "status": SessionStatus.RUNNING.value,
+                "call_type": "dial-out"
             })
 
         except HTTPException:

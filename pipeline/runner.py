@@ -70,8 +70,10 @@ class ConversationPipeline:
         """
         warmup_tasks = []
 
-        # Determine which flows to warm up based on client
-        if self.client_name == "demo_clinic_alpha":
+        logger.info(f"Warmup check - organization_slug: '{self.organization_slug}', client_name: '{self.client_name}'")
+
+        # Determine which flows to warm up based on organization
+        if self.organization_slug == "demo_clinic_alpha":
             # Mainline routes to multiple workflows - warm up all of them
             try:
                 from clients.demo_clinic_alpha.mainline.flow_definition import warmup_openai as warmup_mainline
@@ -97,7 +99,7 @@ class ConversationPipeline:
             except ImportError:
                 logger.debug("Prescription status warmup not available")
 
-        elif self.client_name == "demo_clinic_beta":
+        elif self.organization_slug == "demo_clinic_beta":
             try:
                 from clients.demo_clinic_beta.patient_scheduling.flow_definition import warmup_openai
                 warmup_tasks.append(warmup_openai(self.call_data))

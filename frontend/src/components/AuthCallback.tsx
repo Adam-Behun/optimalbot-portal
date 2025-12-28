@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { exchangeToken } from '../api';
 import { setAuthToken, setAuthUser } from '../lib/auth';
@@ -10,8 +10,15 @@ export function AuthCallback() {
   const [searchParams] = useSearchParams();
   const { updateOrganization } = useOrganization();
   const [error, setError] = useState<string | null>(null);
+  const exchangeAttempted = useRef(false);
 
   useEffect(() => {
+    // Prevent duplicate calls from React StrictMode
+    if (exchangeAttempted.current) {
+      return;
+    }
+    exchangeAttempted.current = true;
+
     const token = searchParams.get('token');
     if (!token) {
       setError('No authentication token provided');

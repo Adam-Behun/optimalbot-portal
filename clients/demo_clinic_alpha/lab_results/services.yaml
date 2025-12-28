@@ -4,9 +4,9 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.55
-    eot_threshold: 0.65
-    eot_timeout_ms: 3500
+    eager_eot_threshold: 0.4
+    eot_threshold: 0.5
+    eot_timeout_ms: 1200
     keyterm:
       - "lab results"
       - "test results"
@@ -43,7 +43,7 @@ services:
     api_key: ${CARTESIA_API_KEY}
 
     generation_config:
-      speed: 0.95
+      speed: 1.0
       volume: 1.0
       emotion: neutral
     aggregate_sentences: true

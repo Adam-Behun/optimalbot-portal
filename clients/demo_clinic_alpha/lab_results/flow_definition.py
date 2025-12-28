@@ -208,7 +208,7 @@ The input is transcribed from speech and may contain errors:
     def _end_call_schema(self) -> FlowsFunctionSchema:
         return FlowsFunctionSchema(
             name="end_call",
-            description="End the call when caller says goodbye or confirms no more questions.",
+            description="End call. Use when caller says goodbye/bye/that's all. NOT just 'thank you'.",
             properties={},
             required=[],
             handler=self._end_call_handler,
@@ -217,8 +217,8 @@ The input is transcribed from speech and may contain errors:
     def _request_staff_schema(self) -> FlowsFunctionSchema:
         return FlowsFunctionSchema(
             name="request_staff",
-            description="Transfer to human staff. Use for explicit human requests, billing, or unhandled issues.",
-            properties={"reason": {"type": "string", "description": "Brief reason for transfer"}},
+            description="Transfer to staff. ONLY use when caller explicitly asks for human/transfer, or for billing.",
+            properties={"reason": {"type": "string", "description": "Brief reason (e.g., 'caller requested', 'billing question')"}},
             required=[],
             handler=self._request_staff_handler,
         )
@@ -226,10 +226,10 @@ The input is transcribed from speech and may contain errors:
     def _route_to_workflow_schema(self) -> FlowsFunctionSchema:
         return FlowsFunctionSchema(
             name="route_to_workflow",
-            description="Route to AI workflow. Caller is already verified - context carries through.",
+            description="Route to another workflow. Use for scheduling or prescription requests.",
             properties={
                 "workflow": {"type": "string", "enum": ["scheduling", "prescription_status"]},
-                "reason": {"type": "string", "description": "Brief context for the next workflow"},
+                "reason": {"type": "string", "description": "Brief context (e.g., 'follow-up after lab results')"},
             },
             required=["workflow", "reason"],
             handler=self._route_to_workflow_handler,
@@ -248,65 +248,71 @@ The input is transcribed from speech and may contain errors:
             task_messages=[{
                 "role": "system",
                 "content": """# Goal
-Determine what the caller needs and route appropriately.
+This is the lab results line. Make a quick binary decision.
 
-# Scenario Handling
-If caller asks about LAB RESULTS, TEST RESULTS, or BLOOD WORK:
-→ Respond naturally and briefly: "Sounds good!" or "Of course!" or "Sure thing!"
-→ Call proceed_to_verification immediately (the verification node will ask for their name)
-→ Do NOT say "I need to verify your identity" - that sounds robotic
+# Rules
+LAB RESULTS (test results, blood work, labs, checking on tests):
+→ Say "Sounds good!" and call proceed_to_lab_results
 
-If caller is frustrated about lab results:
-→ Acknowledge briefly: "I understand, let me help you with that."
-→ Call proceed_to_verification immediately
-
-If caller EXPLICITLY asks for a human/person/transfer:
-→ "Let me connect you with someone who can help."
-→ Call request_staff
-
-If caller needs something ELSE (appointments, billing, prescriptions, etc.):
-→ Say "Let me connect you with someone who can help with that."
-→ Call request_staff
-
-# Example Flow
-Caller: "I'm calling to check on my lab results."
-→ Say "Sounds good!" and call proceed_to_verification
-
-Caller: "Hi, I need my blood work results."
-→ Say "Of course!" and call proceed_to_verification
-
-Caller frustrated: "I've called THREE times about my blood work!"
-→ Say "I understand, let me help you with that." and call proceed_to_verification
-
-Caller: "Can I speak to a person?"
-→ "Let me connect you with someone."
-→ Call request_staff
-
-# Guardrails
-- Do NOT ask for any personal information yet - the verification node handles that
-- Do NOT discuss lab results until identity is verified
-- Do NOT say "First, I need to verify your identity" - sounds unnatural
-- Route to verification as soon as caller mentions lab/test results
-- Frustrated callers asking about lab results should STILL go through verification (not transfer)
-- Only transfer if caller explicitly asks for a human
-
-# Error Handling
-If you miss what the caller said:
-- Ask naturally: "I'm sorry, could you repeat that?"
-- Never guess what they need""",
+ANYTHING ELSE (scheduling, prescriptions, billing, transfer, unclear):
+→ Say "Let me help you with that." and call proceed_to_other""",
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="proceed_to_verification",
-                    description="Proceed to identity verification. Use when caller asks about lab/test results.",
+                    name="proceed_to_lab_results",
+                    description="Caller wants lab/test results.",
                     properties={},
                     required=[],
-                    handler=self._proceed_to_verification_handler,
+                    handler=self._proceed_to_lab_results_handler,
                 ),
-                self._request_staff_schema(),
+                FlowsFunctionSchema(
+                    name="proceed_to_other",
+                    description="Caller wants something other than lab results.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_other_handler,
+                ),
             ],
             respond_immediately=False,
-            pre_actions=[{"type": "tts_say", "text": f"Hello! Thank you for calling {self.organization_name}. How can I help you today?"}],
+            pre_actions=[{"type": "tts_say", "text": f"Hello, this is {self.organization_name} laboratory results line. How can I help you?"}],
+        )
+
+    def create_other_requests_node(self) -> NodeConfig:
+        return NodeConfig(
+            name="other_requests",
+            task_messages=[{
+                "role": "system",
+                "content": """# Goal
+Caller reached the lab results line but needs something else. Route them.
+
+# Rules
+SCHEDULING (appointments, book, reschedule, cancel):
+→ Call route_to_workflow with workflow="scheduling"
+
+PRESCRIPTIONS (refill, medication, pharmacy):
+→ Call route_to_workflow with workflow="prescription_status"
+
+HUMAN REQUEST (explicitly asks for person/transfer) or BILLING:
+→ Call request_staff
+
+ACTUALLY WANTS LAB RESULTS (changed mind, mentions test/results):
+→ Call proceed_to_lab_results
+
+UNCLEAR:
+→ Ask "Could you tell me more about what you need?" and stay on this node""",
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="proceed_to_lab_results",
+                    description="Caller changed mind, wants lab results.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_lab_results_handler,
+                ),
+                self._route_to_workflow_schema(),
+                self._request_staff_schema(),
+            ],
+            respond_immediately=True,
         )
 
     async def create_handoff_entry_node(self, context: str = "") -> NodeConfig:
@@ -321,25 +327,42 @@ If you miss what the caller said:
             return self.create_results_node()
 
         logger.info("Flow: Handoff entry - context stored, proceeding to phone lookup")
-        return self.create_returning_patient_lookup_node()
+        return self.create_patient_lookup_node()
 
     # ==================== Node Creators: Phone Lookup Verification ====================
 
-    def create_returning_patient_lookup_node(self) -> NodeConfig:
+    def create_patient_lookup_node(self) -> NodeConfig:
         return NodeConfig(
-            name="returning_patient_lookup",
+            name="patient_lookup",
             task_messages=[{
                 "role": "system",
-                "content": """Ask for their phone number to pull up their record: "I can help you with that. What's the phone number on your account?"
+                "content": """Ask: "What's the phone number on your account?"
 
-Once they provide a phone number, call lookup_by_phone with the digits.""",
+# Phone Normalization
+Spoken → Written (digits only):
+- "five five five one two three four" → "5551234"
+- "555-123-4567" → "5551234567"
+
+# IMPORTANT: Confirm Before Lookup
+After collecting the number, READ IT BACK to confirm before calling lookup_by_phone.
+Format: "That's [number formatted as XXX-XXX-XXXX], correct?"
+
+Example:
+Caller: "five one six, five six six, seven one three two"
+You: "That's 516-566-7132, correct?"
+Caller: "Yes"
+→ Call lookup_by_phone(phone_number="5165667132")
+
+If caller says the number is wrong, ask them to repeat it.
+If unclear, ask: "Could you repeat that number?"
+If caller doesn't know their number, call request_staff.""",
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="lookup_by_phone",
-                    description="Look up patient record by phone number.",
+                    description="Look up patient by phone. Call after collecting phone number.",
                     properties={
-                        "phone_number": {"type": "string", "description": "Phone number (digits only)"},
+                        "phone_number": {"type": "string", "description": "Digits only (e.g., '5551234567')"},
                     },
                     required=["phone_number"],
                     handler=self._lookup_by_phone_handler,
@@ -354,16 +377,24 @@ Once they provide a phone number, call lookup_by_phone with the digits.""",
             name="returning_patient_verify_dob",
             task_messages=[{
                 "role": "system",
-                "content": """Found a record. Ask for date of birth to verify: "I found your record. Can you confirm your date of birth?"
+                "content": """Say: "I found your record. Can you confirm your date of birth?"
 
-Once they provide DOB, call verify_dob.""",
+# Date Normalization
+Spoken → Written:
+- "march twenty second seventy eight" → "March 22, 1978"
+- "three twenty two nineteen seventy eight" → "March 22, 1978"
+
+Once you have DOB, call verify_dob immediately.
+
+If unclear, ask: "Could you repeat that date?"
+If caller can't verify, call request_staff.""",
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="verify_dob",
-                    description="Verify patient identity by date of birth.",
+                    description="Verify patient by DOB. Call after collecting date of birth.",
                     properties={
-                        "date_of_birth": {"type": "string", "description": "DOB in natural format"},
+                        "date_of_birth": {"type": "string", "description": "Natural format (e.g., 'March 22, 1978')"},
                     },
                     required=["date_of_birth"],
                     handler=self._verify_dob_handler,
@@ -376,10 +407,42 @@ Once they provide DOB, call verify_dob.""",
     def create_returning_patient_not_found_node(self) -> NodeConfig:
         return NodeConfig(
             name="returning_patient_not_found",
-            task_messages=[],
-            functions=[],
-            pre_actions=[{"type": "tts_say", "text": "I couldn't find your record in our system. Let me connect you with a colleague who can help. One moment."}],
-            post_actions=[{"type": "end_conversation"}],
+            task_messages=[{"role": "system", "content": "Call initiate_transfer immediately to connect caller with staff."}],
+            functions=[
+                FlowsFunctionSchema(
+                    name="initiate_transfer",
+                    description="Transfer to staff after patient not found.",
+                    properties={},
+                    required=[],
+                    handler=self._initiate_transfer_after_message_handler,
+                ),
+            ],
+            pre_actions=[{"type": "tts_say", "text": "I couldn't find your record in our system. Let me connect you with a colleague who can help."}],
+            respond_immediately=True,
+        )
+
+    def create_no_results_node(self) -> NodeConfig:
+        """Node for when patient is found but has no lab results on file."""
+        return NodeConfig(
+            name="no_results",
+            task_messages=[{
+                "role": "system",
+                "content": """The patient is verified but has no lab results on file.
+
+Listen to what the caller says:
+- If they mention a specific test they're expecting → call request_staff to connect them with someone who can check
+- If they want to schedule an appointment → call route_to_workflow with workflow="scheduling"
+- If they want to check prescriptions → call route_to_workflow with workflow="prescription_status"
+- If they say goodbye → call end_call
+- If they ask for a human → call request_staff""",
+            }],
+            functions=[
+                self._route_to_workflow_schema(),
+                self._request_staff_schema(),
+                self._end_call_schema(),
+            ],
+            pre_actions=[{"type": "tts_say", "text": "I found your record, but I don't see any pending lab results. Is there something specific you were expecting?"}],
+            respond_immediately=False,
         )
 
     # ==================== Node Creators: Main Flow ====================
@@ -457,10 +520,10 @@ If you miss information:
             functions=[
                 FlowsFunctionSchema(
                     name="verify_identity",
-                    description="Verify caller identity. Call immediately after collecting name AND date of birth.",
+                    description="Verify identity. Call IMMEDIATELY when you have both name AND DOB - don't wait.",
                     properties={
-                        "name": {"type": "string", "description": "Caller's full name as stated (first and last)"},
-                        "date_of_birth": {"type": "string", "description": "Caller's date of birth in natural format (e.g., 'March 22, 1978')"},
+                        "name": {"type": "string", "description": "Full name as stated (e.g., 'David Chen')"},
+                        "date_of_birth": {"type": "string", "description": "DOB normalized (e.g., 'March 22, 1978')"},
                     },
                     required=["name", "date_of_birth"],
                     handler=self._verify_identity_handler,
@@ -484,7 +547,11 @@ If you miss information:
             task_messages=[{
                 "role": "system",
                 "content": f"""# Goal
-Handle provider review or pending results. Never share results when provider_review_required is True. This step is important.
+Handle provider review or pending results. Never share results when provider_review_required is True.
+
+# Tools
+- confirm_callback: Call after ANY response to callback question (confirm, new number, decline, or anxiety)
+- request_staff: ONLY if caller explicitly says "transfer me" or "speak to someone"
 
 # Lab Order Information
 - Test Type: {test_type}
@@ -498,14 +565,17 @@ Handle provider review or pending results. Never share results when provider_rev
 Explain that the doctor needs to review, then ask about callback ONCE:
 → "{ordering_physician} needs to review these results. The doctor will call you within {callback_timeframe}. Is {phone_last4} still good to reach you?"
 
-When caller confirms phone or gives new number → call confirm_callback immediately
-When caller asks about results instead of answering → empathize briefly, then call confirm_callback(confirmed=true)
-When caller asks "when will they call?" → answer "{callback_timeframe}" and call confirm_callback(confirmed=true)
+After saying this, ALWAYS call confirm_callback on your next turn, regardless of what the caller says:
+- Caller confirms phone → call confirm_callback(confirmed=true)
+- Caller gives new number → call confirm_callback(confirmed=true, new_number="...")
+- Caller asks about results / is anxious → empathize briefly, then call confirm_callback(confirmed=true)
+- Caller asks "when will they call?" → answer "{callback_timeframe}", then call confirm_callback(confirmed=true)
 
-# Results Pending
+# Results Pending (results_status is pending/processing)
 → "Your {test_type} is still being processed. Would you like us to call when ready?"
-When caller says yes → confirm phone number, then call confirm_callback
-When caller asks "how long?" → answer with timeframe, wait for callback answer
+- Caller says yes → call confirm_callback(confirmed=true)
+- Caller gives new number → call confirm_callback(confirmed=true, new_number="...")
+- Caller declines → call confirm_callback(confirmed=false)
 
 # Examples
 
@@ -525,19 +595,18 @@ Caller: "Call my cell instead: 555-999-7777"
 → call confirm_callback(confirmed=true, new_number="5559997777")
 
 # Guardrails
-- NEVER share results when provider_review_required is True. This step is important.
-- NEVER repeat information already said (callback timeframe, doctor will call, etc.)
-- Ask about callback phone number only ONCE
-- After anxious caller deflects TWICE: call confirm_callback(confirmed=true) - don't keep talking. This step is important.
+- NEVER share results when provider_review_required is True
+- NEVER repeat information already said
+- Ask about callback phone number only ONCE - then proceed with confirm_callback
 - Only transfer if caller explicitly asks: "transfer me" or "speak to someone" """,
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="confirm_callback",
-                    description="Confirm callback preference. Call after patient confirms/declines callback.",
+                    description="Call after ANY patient response to callback question. Don't wait for explicit confirm.",
                     properties={
-                        "confirmed": {"type": "boolean", "description": "Whether patient confirmed/wants callback"},
-                        "new_number": {"type": "string", "description": "New phone number if different (digits only), or empty"},
+                        "confirmed": {"type": "boolean", "description": "True unless patient explicitly declines callback"},
+                        "new_number": {"type": "string", "description": "New number digits only (e.g., '5551234567'), or empty to keep current"},
                     },
                     required=["confirmed"],
                     handler=self._confirm_callback_handler,
@@ -643,8 +712,8 @@ Caller: "No, that's all. Thank you!"
                 self._end_call_schema(),
                 FlowsFunctionSchema(
                     name="update_callback_number",
-                    description="Update callback phone number when caller provides a different one.",
-                    properties={"new_number": {"type": "string", "description": "The new phone number (digits only or with common separators)"}},
+                    description="Update callback number. Call when caller provides a different phone number.",
+                    properties={"new_number": {"type": "string", "description": "Digits only (e.g., '5551234567')"}},
                     required=["new_number"],
                     handler=self._update_callback_number_handler,
                 ),
@@ -703,15 +772,24 @@ Do NOT say "transferring" or "please hold" - the transfer system handles that.""
             role_messages=[{"role": "system", "content": self._get_global_instructions()}],
             task_messages=[{
                 "role": "system",
-                "content": """The transfer didn't go through. Apologize and offer alternatives. This step is important.
+                "content": """The transfer didn't go through. Offer alternatives.
 
 If caller wants to try the transfer again:
 → Call retry_transfer
 
+If caller asks about lab results / test results:
+→ Call proceed_to_lab_results
+
+If caller wants to schedule an appointment:
+→ Call route_to_workflow with workflow="scheduling"
+
+If caller wants to check prescriptions:
+→ Call route_to_workflow with workflow="prescription_status"
+
 If caller says goodbye or wants to end call:
 → Call end_call
 
-If caller has a question you can answer:
+If caller has a simple question you can answer (hours, location):
 → Answer it, then ask if there's anything else""",
             }],
             functions=[
@@ -722,10 +800,18 @@ If caller has a question you can answer:
                     required=[],
                     handler=self._retry_transfer_handler,
                 ),
+                FlowsFunctionSchema(
+                    name="proceed_to_lab_results",
+                    description="Start lab results flow. Use when caller asks about lab/test results.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_lab_results_handler,
+                ),
+                self._route_to_workflow_schema(),
                 self._end_call_schema(),
             ],
             respond_immediately=True,
-            pre_actions=[{"type": "tts_say", "text": "I apologize, the transfer didn't go through."}],
+            pre_actions=[{"type": "tts_say", "text": "I apologize, the transfer didn't go through. Is there something else I can help you with?"}],
         )
 
     # ==================== Handlers: Phone Lookup Verification ====================
@@ -735,12 +821,19 @@ If caller has a question you can answer:
         logger.info(f"Flow: Looking up phone: {self._phone_last4(phone_digits)}")
 
         if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id):
+            # Check if patient has DOB for verification
+            stored_dob = patient.get("date_of_birth", "")
+            if not stored_dob:
+                # No DOB on file - can't verify, transfer to staff
+                logger.warning("Flow: Patient found but no DOB on file - transferring to staff")
+                return None, self.create_returning_patient_not_found_node()
+
             # Store lookup record for DOB verification
             flow_manager.state["_lookup_record"] = {
                 "patient_id": patient.get("patient_id"),
                 "first_name": patient.get("first_name", ""),
                 "last_name": patient.get("last_name", ""),
-                "date_of_birth": patient.get("date_of_birth", ""),
+                "date_of_birth": stored_dob,
                 "phone_number": patient.get("phone_number", ""),
                 "test_type": patient.get("test_type", ""),
                 "test_date": patient.get("test_date", ""),
@@ -753,9 +846,8 @@ If caller has a question you can answer:
             logger.info("Flow: Found record, requesting DOB")
             return None, self.create_returning_patient_verify_dob_node()
 
-        # Not found - transfer to staff (protected flow)
-        logger.info("Flow: No patient found - transferring to staff")
-        await self._initiate_sip_transfer(flow_manager)
+        # Not found - transfer to staff (message plays first, then transfer initiates)
+        logger.info("Flow: No patient found - routing to transfer node")
         return None, self.create_returning_patient_not_found_node()
 
     async def _verify_dob_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
@@ -785,10 +877,19 @@ If caller has a question you can answer:
 
             flow_manager.state.pop("_lookup_record", None)
             first_name = lookup.get("first_name", "")
+            patient_id = flow_manager.state.get("patient_id")
             logger.info(f"Flow: DOB verified for {first_name}")
 
-            # Check if we can share results immediately
+            # Update DB with verification
+            await self._try_db_update(patient_id, "update_field", "identity_verified", True, error_msg="Error updating identity_verified")
+
+            # Check if patient has any lab results
             results_status = flow_manager.state.get("results_status", "")
+            if not results_status:
+                logger.info("Flow: Patient verified but no lab results on file")
+                return None, self.create_no_results_node()
+
+            # Check if we can share results immediately
             provider_review_required = flow_manager.state.get("provider_review_required", False)
             results_summary = flow_manager.state.get("results_summary", "")
             test_type = flow_manager.state.get("test_type", "lab test")
@@ -796,7 +897,6 @@ If caller has a question you can answer:
 
             if results_status.lower() in ["ready", "available"] and not provider_review_required and results_summary:
                 flow_manager.state["results_communicated"] = True
-                patient_id = flow_manager.state.get("patient_id")
                 await self._try_db_update(patient_id, "update_field", "results_communicated", True, error_msg="Error updating results_communicated")
                 logger.info("Flow: Results communicated to patient (ready, no review required)")
 
@@ -808,17 +908,31 @@ If caller has a question you can answer:
 
             return f"Welcome back, {first_name}! Let me check on your lab results.", self.create_results_node()
 
-        # DOB mismatch - transfer to staff (protected flow)
-        logger.warning("Flow: DOB mismatch - transferring to staff")
+        # DOB mismatch - transfer to staff (message plays first, then transfer initiates)
+        logger.warning("Flow: DOB mismatch - routing to transfer node")
         flow_manager.state.pop("_lookup_record", None)
-        await self._initiate_sip_transfer(flow_manager)
         return "That doesn't match our records.", self.create_returning_patient_not_found_node()
 
-    # ==================== Handlers: Verification ====================
+    # ==================== Handlers: Greeting ====================
 
-    async def _proceed_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
-        logger.info("Flow: Proceeding to identity verification")
-        return None, self.create_returning_patient_lookup_node()
+    async def _proceed_to_lab_results_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
+        """Proceed to lab results flow - phone lookup."""
+        logger.info("Flow: Proceeding to lab results (phone lookup)")
+        return None, self.create_patient_lookup_node()
+
+    async def _proceed_to_other_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
+        """Route to other_requests node for non-lab-results requests."""
+        logger.info("Flow: Routing to other_requests")
+        return None, self.create_other_requests_node()
+
+    # ==================== Handlers: Transfer ====================
+
+    async def _initiate_transfer_after_message_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        """Initiate SIP transfer after the apology message has played."""
+        logger.info("Flow: Initiating transfer after message")
+        return await self._initiate_sip_transfer(flow_manager)
+
+    # ==================== Handlers: Verification ====================
 
     async def _verify_identity_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
         provided_name = args.get("name", "")

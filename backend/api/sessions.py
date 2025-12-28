@@ -90,3 +90,39 @@ async def get_session(
     except Exception as e:
         logger.exception("Error fetching session")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{session_id}")
+async def delete_session(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    org_id: str = Depends(get_current_user_organization_id),
+    session_db: AsyncSessionRecord = Depends(get_session_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    try:
+        deleted = await session_db.delete_session(session_id, org_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        ip_address, user_agent = get_client_info(request)
+        await audit_logger.log_phi_access(
+            user_id=current_user["sub"],
+            action="delete",
+            resource_type="session",
+            resource_id=session_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            endpoint=request.url.path,
+            details={},
+            organization_id=org_id
+        )
+
+        return {"status": "deleted", "session_id": session_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error deleting session")
+        raise HTTPException(status_code=500, detail=str(e))

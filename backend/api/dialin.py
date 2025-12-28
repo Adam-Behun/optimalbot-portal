@@ -78,6 +78,7 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
         "patient_id": None,  # Flow will find/create patient
         "phone_number": call_data.from_phone,
         "client_name": f"{client_name}/{workflow_name}",
+        "workflow": workflow_name,
         "organization_id": organization_id,
         "call_type": "dial-in"
     })

@@ -2,31 +2,32 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Patient } from '@/types';
-import { getPatients } from '@/api';
-import { Phone, CheckCircle, XCircle, Clock, PhoneIncoming } from 'lucide-react';
+import { Session } from '@/types';
+import { getSessions } from '@/api';
+import { Phone, CheckCircle, XCircle, Clock, PhoneForwarded, Calendar } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 
 export function LabResultsDashboard() {
   const navigate = useNavigate();
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getPatients('lab_results')
-      .then(setPatients)
+    getSessions('lab_results')
+      .then(setSessions)
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  // Calculate metrics based on call_status
+  // Calculate metrics based on session status
   const today = new Date().toISOString().split('T')[0];
   const metrics = {
-    total: patients.length,
-    completed: patients.filter(p => p.call_status === 'Completed' || p.call_status === 'Supervisor Dialed').length,
-    completedToday: patients.filter(p => (p.call_status === 'Completed' || p.call_status === 'Supervisor Dialed') && p.created_at?.startsWith(today)).length,
-    inProgress: patients.filter(p => p.call_status === 'Dialing' || p.call_status === 'In Progress').length,
-    failed: patients.filter(p => p.call_status === 'Failed').length
+    total: sessions.length,
+    inProgress: sessions.filter(s => s.status === 'starting' || s.status === 'running').length,
+    completed: sessions.filter(s => s.status === 'completed').length,
+    transferred: sessions.filter(s => s.status === 'transferred').length,
+    failed: sessions.filter(s => s.status === 'failed').length,
+    today: sessions.filter(s => s.created_at?.startsWith(today)).length,
   };
 
   if (loading) {
@@ -49,7 +50,7 @@ export function LabResultsDashboard() {
     >
       <div className="space-y-6">
         {/* Metrics Grid */}
-        <div className="grid gap-4 md:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Total Calls</CardTitle>
@@ -82,6 +83,16 @@ export function LabResultsDashboard() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Transferred</CardTitle>
+              <PhoneForwarded className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-blue-600">{metrics.transferred}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Failed</CardTitle>
               <XCircle className="h-4 w-4 text-red-500" />
             </CardHeader>
@@ -93,10 +104,10 @@ export function LabResultsDashboard() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Today</CardTitle>
-              <PhoneIncoming className="h-4 w-4 text-blue-500" />
+              <Calendar className="h-4 w-4 text-purple-500" />
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-blue-600">{metrics.completedToday}</p>
+              <p className="text-2xl font-bold text-purple-600">{metrics.today}</p>
             </CardContent>
           </Card>
         </div>

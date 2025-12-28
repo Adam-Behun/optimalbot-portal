@@ -108,6 +108,11 @@ export const getSession = async (sessionId: string): Promise<Session> => {
   return response.data.session;
 };
 
+// DELETE /sessions/:id - Delete a session
+export const deleteSession = async (sessionId: string): Promise<void> => {
+  await api.delete(`/sessions/${sessionId}`);
+};
+
 // Get call history for a patient
 export const getPatientCallHistory = async (patientId: string): Promise<Session[]> => {
   return getSessions(undefined, patientId);

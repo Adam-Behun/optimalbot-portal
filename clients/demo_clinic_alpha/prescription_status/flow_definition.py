@@ -337,9 +337,26 @@ If you don't understand the caller:
             name="returning_patient_lookup",
             task_messages=[{
                 "role": "system",
-                "content": """Ask for their phone number to pull up their record: "I can help you with that. What's the phone number on your account?"
+                "content": """Ask for their phone number: "What's the phone number on your account?"
 
-Once they provide a phone number, call lookup_by_phone with the digits.""",
+# Phone Normalization
+Spoken → Written (digits only):
+- "five five five one two three four" → "5551234"
+- "555-123-4567" → "5551234567"
+
+# IMPORTANT: Confirm Before Lookup
+After collecting the number, READ IT BACK to confirm before calling lookup_by_phone.
+Format: "That's [number formatted as XXX-XXX-XXXX], correct?"
+
+Example:
+Caller: "five one six, five six six, seven one three two"
+You: "That's 516-566-7132, correct?"
+Caller: "Yes"
+→ Call lookup_by_phone(phone_number="5165667132")
+
+If caller says the number is wrong, ask them to repeat it.
+If unclear, ask: "Could you repeat that number?"
+If caller doesn't know their number, call request_staff.""",
             }],
             functions=[
                 FlowsFunctionSchema(

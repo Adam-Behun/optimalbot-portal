@@ -127,6 +127,19 @@ class AsyncSessionRecord:
             logger.error(f"Error finding sessions for patient {patient_id}: {e}")
             return []
 
+    async def delete_session(self, session_id: str, organization_id: str = None) -> bool:
+        """Delete a session by session_id."""
+        try:
+            from bson import ObjectId
+            query = {"session_id": session_id}
+            if organization_id:
+                query["organization_id"] = ObjectId(organization_id)
+            result = await self.sessions.delete_one(query)
+            return result.deleted_count > 0
+        except Exception as e:
+            logger.error(f"Error deleting session {session_id}: {e}")
+            return False
+
 
 _session_db_instance: Optional[AsyncSessionRecord] = None
 
