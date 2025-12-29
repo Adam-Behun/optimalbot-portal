@@ -55,7 +55,7 @@ class SafetyClassifier(FrameProcessor):
         elif response == "STAFF_REQUEST":
             logger.info("SafetyClassifier: STAFF_REQUEST detected")
             await self._call_event_handler("on_staff_requested")
-        elif response != "OK":
+        elif response not in ("OK", "SAFE"):
             logger.debug(f"SafetyClassifier: unexpected response '{response}'")
 
 

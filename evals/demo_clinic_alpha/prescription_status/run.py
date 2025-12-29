@@ -566,7 +566,7 @@ async def run_simulation(
     # Look up patient from DB by phone
     caller_phone = scenario.get("patient", {}).get("phone_number", "")
     db = get_patient_db()
-    patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR)
+    patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR, "prescription_status")
 
     if patient:
         print(f"  [DB] Found patient: {patient.get('patient_name')}")

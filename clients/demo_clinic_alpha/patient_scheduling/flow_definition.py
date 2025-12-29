@@ -768,7 +768,7 @@ Once they provide DOB, call verify_dob.""",
         phone_digits = self._normalize_phone(args.get("phone_number", ""))
         logger.info(f"Flow: Looking up phone: {self._phone_last4(phone_digits)}")
 
-        if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id):
+        if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id, "patient_scheduling"):
             flow_manager.state["_lookup_record"] = {f: patient.get(f, "") for f in self.REQUIRED_FIELDS}
             flow_manager.state["_lookup_record"]["patient_id"] = patient.get("patient_id")
             logger.info("Flow: Found record, requesting DOB")
@@ -974,7 +974,6 @@ Once they provide DOB, call verify_dob.""",
         patient_confirmed = args.get("patient_confirmed", False)
         reason = args.get("reason", "general inquiry")
 
-        flow_manager.state["transfer_reason"] = reason
         logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
 
         if urgent or patient_confirmed:

@@ -58,7 +58,7 @@ class PrescriptionStatusFlow:
         "scheduling": ("clients.demo_clinic_alpha.patient_scheduling.flow_definition", "PatientSchedulingFlow", "create_scheduling_node"),
     }
 
-    IDENTITY_FIELDS = ["patient_id", "patient_name", "first_name", "last_name", "date_of_birth", "medical_record_number", "phone_number"]
+    IDENTITY_FIELDS = ["patient_id", "patient_name", "first_name", "last_name", "date_of_birth", "phone_number"]
     RX_FIELDS = ["medication_name", "dosage", "prescribing_physician", "refill_status", "last_filled_date", "next_refill_date",
                  "pharmacy_name", "pharmacy_phone", "pharmacy_address"]
 
@@ -110,7 +110,11 @@ class PrescriptionStatusFlow:
             state[field] = self.call_data.get(field, "")
         state["refills_remaining"] = self.call_data.get("refills_remaining", 0)
         state["prescriptions"] = self.call_data.get("prescriptions", [])
-        state["identity_verified"] = state.get("identity_verified", False)
+
+        # Shared flags (unified across all flows)
+        state.setdefault("identity_verified", False)
+        state.setdefault("routed_to", "")
+        state.setdefault("callback_confirmed", False)
 
     # ==================== Helpers: Database ====================
 
@@ -861,42 +865,16 @@ Caller: "No, that's everything. Thank you!"
         )
 
     def create_transfer_failed_node(self) -> NodeConfig:
-        transfer_reason = self.flow_manager.state.get("transfer_reason", "")
-
-        if transfer_reason == "expedite":
-            alternatives = """PROACTIVELY OFFER THESE ALTERNATIVES:
-1. "I can note on your file that this is urgent, so when the doctor reviews it they'll see the priority."
-2. "You can also call the clinic directly at your convenience and ask to speak with the prescription team."
-3. "Would you like me to make a note about the urgency, or is there anything else I can help with?"
-
-Do NOT keep offering to retry the transfer. Proactively suggest one of the alternatives above."""
-        elif transfer_reason == "pharmacy_change":
-            alternatives = """PROACTIVELY OFFER THESE ALTERNATIVES:
-1. "You can call the clinic directly to update your pharmacy on file."
-2. "Would you like me to make a note that you need a pharmacy change, so staff can follow up?"
-
-Do NOT keep offering to retry the transfer. Proactively suggest one of the alternatives above."""
-        else:
-            alternatives = """PROACTIVELY OFFER THESE ALTERNATIVES:
-1. "You can call the clinic directly during business hours."
-2. "I can make a note on your file for staff to follow up."
-3. "Is there anything else I can help you with in the meantime?"
-
-Do NOT keep offering to retry the transfer. Proactively suggest one of the alternatives above."""
-
         return NodeConfig(
             name="transfer_failed",
             role_messages=[{"role": "system", "content": self._get_global_instructions()}],
             task_messages=[{
                 "role": "system",
-                "content": f"""The transfer didn't go through. Apologize and offer alternatives.
+                "content": """The transfer didn't go through. Offer alternatives:
+- "You can call the clinic directly during business hours."
+- "I can make a note on your file for staff to follow up."
 
-{alternatives}
-
-If caller accepts an alternative (note on file, callback, etc.):
-→ Acknowledge and call end_call
-
-If caller says goodbye or wants to end call:
+If caller accepts an alternative or says goodbye:
 → Call end_call
 
 If caller has a question you can answer:
@@ -922,7 +900,7 @@ If caller has a question you can answer:
         phone_digits = self._normalize_phone(args.get("phone_number", ""))
         logger.info(f"Flow: Looking up phone: {self._phone_last4(phone_digits)}")
 
-        if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id):
+        if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id, "prescription_status"):
             # Store lookup record for DOB verification
             flow_manager.state["_lookup_record"] = {
                 "patient_id": patient.get("patient_id"),
@@ -1282,7 +1260,6 @@ If caller has a question you can answer:
 
         logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
 
-        flow_manager.state["transfer_reason"] = reason
         staff_number = self.cold_transfer_config.get("staff_number")
 
         if not staff_number:

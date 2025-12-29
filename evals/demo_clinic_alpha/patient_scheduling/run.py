@@ -470,7 +470,7 @@ async def run_simulation(
     # Look up patient from DB by phone (to verify DB connectivity)
     caller_phone = caller.get("phone", "")
     db = get_patient_db()
-    db_patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR)
+    db_patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR, "patient_scheduling")
 
     if db_patient:
         print(f"  [DB] Found patient: {db_patient.get('patient_name', db_patient.get('first_name', ''))}")

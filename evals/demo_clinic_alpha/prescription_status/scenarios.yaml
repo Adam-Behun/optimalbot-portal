@@ -20,7 +20,6 @@ scenarios:
     patient:
       patient_name: "Jennifer Martinez"
       date_of_birth: "09/12/1980"
-      medical_record_number: "MRN567890"
       medication_name: "Lisinopril"
       dosage: "10mg"
       refill_status: "Sent to Pharmacy"
@@ -45,7 +44,6 @@ scenarios:
     patient:
       patient_name: "David Thompson"
       date_of_birth: "02/28/1975"
-      medical_record_number: "MRN234567"
       medication_name: "Metformin"
       dosage: "500mg"
       refill_status: "Ready for Pickup"
@@ -76,7 +74,6 @@ scenarios:
     patient:
       patient_name: "Amanda Lee"
       date_of_birth: "06/20/1988"
-      medical_record_number: "MRN678901"
       medication_name: "Gabapentin"
       dosage: "300mg"
       refill_status: "Pending Doctor Approval"
@@ -107,7 +104,6 @@ scenarios:
     patient:
       patient_name: "Chris Anderson"
       date_of_birth: "12/05/1970"
-      medical_record_number: "MRN890123"
       medication_name: "Atorvastatin"
       dosage: "20mg"
       refill_status: "Sent to Pharmacy"
@@ -135,7 +131,6 @@ scenarios:
     patient:
       patient_name: "Michelle Garcia"
       date_of_birth: "04/18/1995"
-      medical_record_number: "MRN012345"
       medication_name: "Sertraline"
       dosage: "50mg"
       refill_status: "Sent to Pharmacy"
@@ -162,7 +157,6 @@ scenarios:
     patient:
       patient_name: "Robert Chen"
       date_of_birth: "03/15/1968"
-      medical_record_number: "MRN111222"
       pharmacy_name: "Walgreens"
       pharmacy_phone: "(555) 333-4444"
       prescriptions:
@@ -212,7 +206,6 @@ scenarios:
     patient:
       patient_name: "Sarah Williams"
       date_of_birth: "08/22/1992"
-      medical_record_number: "MRN444555"
       medication_name: "Omeprazole"
       dosage: "20mg"
       refill_status: "Too Early"
@@ -248,7 +241,6 @@ scenarios:
       first_name: "Thomas"
       last_name: "Baker"
       date_of_birth: "01/25/1965"
-      medical_record_number: "MRN223344"
       medication_name: "Amlodipine"
       dosage: "5mg"
       refill_status: "Active"
@@ -300,7 +292,6 @@ scenarios:
     patient:
       patient_name: "James Wilson"
       date_of_birth: "11/30/1982"
-      medical_record_number: "MRN777888"
       medication_name: "Hydrocodone"
       dosage: "5mg"
       refill_status: "Pending Doctor Approval"
@@ -327,7 +318,6 @@ scenarios:
     patient:
       patient_name: "Patricia Brown"
       date_of_birth: "07/04/1955"
-      medical_record_number: "MRN999000"
       medication_name: "Metoprolol"
       dosage: "25mg"
       refill_status: "Active"
@@ -352,7 +342,6 @@ scenarios:
     patient:
       patient_name: "Elizabeth Taylor"
       date_of_birth: "05/10/1945"
-      medical_record_number: "MRN123789"
       medication_name: "Warfarin"
       dosage: "5mg"
       refill_status: "Active"
@@ -385,7 +374,6 @@ scenarios:
     patient:
       patient_name: "Margaret Johnson"
       date_of_birth: "06/15/1978"
-      medical_record_number: "MRN555666"
       pharmacy_name: "CVS Pharmacy"
       pharmacy_phone: "(555) 777-8888"
       pharmacy_address: "789 Elm Street"
@@ -515,7 +503,6 @@ scenarios:
     patient:
       patient_name: "Angela Foster"
       date_of_birth: "07/22/1979"
-      medical_record_number: "MRN667788"
       phone_number: "5554443322"
       email: "angela.foster@email.com"
       pharmacy_name: "Walgreens"

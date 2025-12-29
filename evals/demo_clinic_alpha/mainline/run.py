@@ -517,7 +517,9 @@ async def run_simulation(
     # Look up patient from DB by phone
     caller_phone = caller.get("phone", "")
     db = get_patient_db()
-    patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR)
+    # Mainline routes to other workflows, so patient lookup is just for diagnostics
+    # Pass "mainline" as workflow - will return None since mainline patients don't exist
+    patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR, "mainline")
 
     if patient:
         print(f"  [DB] Found patient: {patient.get('patient_name', patient.get('first_name', ''))}")

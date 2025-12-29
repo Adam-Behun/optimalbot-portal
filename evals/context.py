@@ -41,8 +41,10 @@ class EvalContextManager:
 
             self._is_first_node = False
         else:
+            # APPEND strategy: keep conversation history, but replace (not extend) role/task messages
+            # Role messages define bot persona - should be replaced if new node has them
             if role_messages:
-                self.role_messages.extend(role_messages)
+                self.role_messages = list(role_messages)
             self.task_messages = list(task_messages)
 
         self._current_node_name = node_name
@@ -62,10 +64,12 @@ class EvalContextManager:
         })
 
     def add_tool_result(self, tool_call_id: str, content: str) -> None:
+        # Production returns JSON for transition functions
+        result_content = content if content else '{"status": "acknowledged"}'
         self.conversation_history.append({
             "role": "tool",
             "tool_call_id": tool_call_id,
-            "content": content or "OK",
+            "content": result_content,
         })
 
     def get_messages(self) -> list[dict]:

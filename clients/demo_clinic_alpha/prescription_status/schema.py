@@ -12,7 +12,6 @@ WORKFLOW_SCHEMA = {
             {"key": "last_name", "label": "Last Name", "type": "string", "required": False, "display_in_list": False, "display_order": 3, "computed": False},
             {"key": "date_of_birth", "label": "Date of Birth", "type": "date", "required": True, "display_in_list": True, "display_order": 4, "display_priority": "desktop", "computed": False},
             {"key": "phone_number", "label": "Phone Number", "type": "phone", "required": False, "display_in_list": False, "display_order": 5, "computed": False},
-            {"key": "medical_record_number", "label": "MRN", "type": "string", "required": False, "display_in_list": False, "display_order": 6, "computed": False},
 
             # Prescription record (from clinic database - what we tell the patient)
             {"key": "medication_name", "label": "Medication", "type": "string", "required": True, "display_in_list": True, "display_order": 7, "display_priority": "mobile", "computed": False},

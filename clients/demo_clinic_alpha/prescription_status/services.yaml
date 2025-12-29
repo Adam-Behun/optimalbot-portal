@@ -1,5 +1,20 @@
 call_type: "dial-in"
 
+safety_monitors:
+  enabled: true
+  emergency_message: "If this is an emergency, hang up and dial 911."
+  auto_transfer: true
+  output_validator:
+    enabled: true
+
+  safety_llm:
+    provider: groq
+    model: meta-llama/llama-guard-4-12b
+    api_key: ${GROQ_API_KEY}
+
+cold_transfer:
+  staff_number: "3146967837"
+
 services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}

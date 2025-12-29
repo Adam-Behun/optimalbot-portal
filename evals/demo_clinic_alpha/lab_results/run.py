@@ -304,13 +304,14 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, call_data: dict, llm_config: dict, session_id: str):
+    def __init__(self, call_data: dict, llm_config: dict, session_id: str, verbose: bool = False):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
         self.call_data = call_data
         self.session_id = session_id
+        self.verbose = verbose
 
         self.flow = LabResultsFlow(
             call_data=call_data,
@@ -377,20 +378,28 @@ class FlowRunner:
         print(f"\n  {'─'*60}")
         print(f"  LLM CONTEXT (turn {turn}, node: {node_name})")
         print(f"  {'─'*60}")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "?")
-            content = msg.get("content", "")
-            # Truncate long system messages
-            if role == "system" and len(content) > 200:
-                content = content[:200] + "..."
-            # Show tool calls if present
-            if msg.get("tool_calls"):
-                tc = msg["tool_calls"][0]
-                print(f"  [{i}] {role}: (tool_call: {tc['function']['name']})")
-            elif role == "tool":
-                print(f"  [{i}] {role}: {content[:100]}")
-            else:
-                print(f"  [{i}] {role}: {content[:150]}{'...' if len(content) > 150 else ''}")
+
+        if self.verbose:
+            # Full context output (matches production logs format)
+            for i, msg in enumerate(messages):
+                print(f"  [{i}] {json.dumps(msg, indent=2)}")
+        else:
+            # Truncated output for normal runs
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "?")
+                content = msg.get("content", "")
+                # Truncate long system messages
+                if role == "system" and len(content) > 200:
+                    content = content[:200] + "..."
+                # Show tool calls if present
+                if msg.get("tool_calls"):
+                    tc = msg["tool_calls"][0]
+                    print(f"  [{i}] {role}: (tool_call: {tc['function']['name']})")
+                elif role == "tool":
+                    print(f"  [{i}] {role}: {content[:100]}")
+                else:
+                    print(f"  [{i}] {role}: {content[:150]}{'...' if len(content) > 150 else ''}")
+
         if tools:
             tool_names = [t["function"]["name"] for t in tools]
             print(f"  TOOLS: {tool_names}")
@@ -535,6 +544,8 @@ async def run_simulation(
     scenario: dict,
     llm_config: dict,
     session_id: str,
+    verbose: bool = False,
+    latency: float = 0,
 ) -> dict:
     caller = scenario["caller"]
     persona = scenario["persona"]
@@ -544,7 +555,7 @@ async def run_simulation(
         "session_id": session_id,
     }
 
-    runner = FlowRunner(call_data, llm_config, session_id)
+    runner = FlowRunner(call_data, llm_config, session_id, verbose=verbose)
 
     pre_actions = runner.current_node.get("pre_actions") or []
     greeting = pre_actions[0].get("text", "") if pre_actions else ""
@@ -575,11 +586,19 @@ async def run_simulation(
         print(f"CALLER: {caller_msg}\n")
         conversation.append({"role": "user", "content": caller_msg, "turn": turn})
 
+        # Simulate caller speaking time
+        if latency > 0:
+            await asyncio.sleep(latency)
+
         # Jamie responds
         bot_response = await runner.process_message(caller_msg, turn)
         if bot_response:
             print(f"JAMIE: {bot_response}\n")
             conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
+
+            # Simulate TTS playback time (typically faster than speaking)
+            if latency > 0:
+                await asyncio.sleep(latency * 0.5)
 
     final_state = runner.mock_flow_manager.state
     final_node = runner.current_node_name
@@ -705,7 +724,7 @@ def sync_dataset_to_langfuse() -> None:
     print(f"View at: https://cloud.langfuse.com/datasets")
 
 
-async def run_scenario(scenario_id: str) -> dict:
+async def run_scenario(scenario_id: str, verbose: bool = False, latency: float = 0) -> dict:
     scenario = get_scenario(scenario_id)
 
     services_path = Path(__file__).parent.parent.parent.parent / "clients/demo_clinic_alpha/lab_results/services.yaml"
@@ -725,7 +744,7 @@ async def run_scenario(scenario_id: str) -> dict:
         await test_db.create_session(session_id, workflow="lab_results")
         print(f"  [SESSION] Created session: {session_id}")
 
-        result = await run_simulation(scenario, llm_config, session_id)
+        result = await run_simulation(scenario, llm_config, session_id, verbose=verbose, latency=latency)
 
         db_state = await test_db.get_patient_state(patient_id)
         print(f"  [DB STATE] {db_state}")
@@ -762,7 +781,7 @@ async def run_scenario(scenario_id: str) -> dict:
         print(f"  [CLEANUP] Removed test patient and session")
 
 
-async def run_all_scenarios() -> list[dict]:
+async def run_all_scenarios(verbose: bool = False, latency: float = 0) -> list[dict]:
     """Run all scenarios sequentially."""
     config = load_scenarios()
     results = []
@@ -772,7 +791,7 @@ async def run_all_scenarios() -> list[dict]:
         print(f"# Running: {scenario['id']}")
         print(f"{'#'*70}")
 
-        result = await run_scenario(scenario["id"])
+        result = await run_scenario(scenario["id"], verbose=verbose, latency=latency)
         results.append(result)
 
     # Summary
@@ -797,6 +816,8 @@ async def main():
     parser.add_argument("--all", "-a", action="store_true", help="Run all scenarios")
     parser.add_argument("--list", "-l", action="store_true", help="List available scenarios")
     parser.add_argument("--sync-dataset", action="store_true", help="Sync scenarios to Langfuse dataset")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print full LLM context for debugging")
+    parser.add_argument("--latency", type=float, default=0, help="Add delay (seconds) between turns to simulate real call timing")
 
     args = parser.parse_args()
 
@@ -809,11 +830,11 @@ async def main():
         return
 
     if args.all:
-        await run_all_scenarios()
+        await run_all_scenarios(verbose=args.verbose, latency=args.latency)
         return
 
     if args.scenario:
-        await run_scenario(args.scenario)
+        await run_scenario(args.scenario, verbose=args.verbose, latency=args.latency)
         return
 
     # Default: run first scenario
@@ -824,7 +845,7 @@ async def main():
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
-    await run_scenario(first_scenario)
+    await run_scenario(first_scenario, verbose=args.verbose, latency=args.latency)
 
 
 if __name__ == "__main__":
