@@ -77,10 +77,9 @@ class LangfuseLatencyObserver(BaseObserver):
     Also captures LLM TTFB and TTS TTFB from Pipecat's built-in metrics.
     """
 
-    def __init__(self, session_id: str, patient_id: str):
+    def __init__(self, session_id: str):
         super().__init__()
         self._session_id = session_id
-        self._patient_id = patient_id
         self._processed_frames: set = set()
         self._turn_count: int = 0
 
@@ -216,7 +215,6 @@ class LangfuseLatencyObserver(BaseObserver):
             span.set_attribute("latency.llm_ttfb_ms", turn.format_ms(turn.llm_ttfb))
             span.set_attribute("latency.tts_ttfb_ms", turn.format_ms(turn.tts_ttfb))
             span.set_attribute("langfuse.session.id", self._session_id)
-            span.set_attribute("patient.id", self._patient_id)
 
     def _record_summary(self):
         """Log session summary statistics."""
@@ -265,7 +263,6 @@ class LangfuseLatencyObserver(BaseObserver):
                 if tts_ttfb_times:
                     span.set_attribute("latency.tts_ttfb_avg_ms", int(mean(tts_ttfb_times) * 1000))
                 span.set_attribute("langfuse.session.id", self._session_id)
-                span.set_attribute("patient.id", self._patient_id)
 
     def get_metrics(self) -> dict:
         """Get metrics as dictionary."""

@@ -1,6 +1,36 @@
 from importlib import import_module
 from pathlib import Path
+from typing import Callable, List
 from loguru import logger
+
+
+def discover_warmup_functions(organization_slug: str) -> List[Callable]:
+    """Discover warmup_openai functions for all flows in an organization.
+
+    Returns list of async warmup functions that can be called with call_data.
+    """
+    warmup_functions = []
+    org_path = Path(f"clients/{organization_slug}")
+
+    if not org_path.exists():
+        return warmup_functions
+
+    for workflow_dir in org_path.iterdir():
+        if not workflow_dir.is_dir():
+            continue
+        if not (workflow_dir / "flow_definition.py").exists():
+            continue
+
+        module_path = f"clients.{organization_slug}.{workflow_dir.name}.flow_definition"
+        try:
+            module = import_module(module_path)
+            if hasattr(module, 'warmup_openai'):
+                warmup_functions.append(module.warmup_openai)
+                logger.debug(f"Found warmup function in {module_path}")
+        except ImportError as e:
+            logger.debug(f"Could not import {module_path}: {e}")
+
+    return warmup_functions
 
 
 class FlowLoader:

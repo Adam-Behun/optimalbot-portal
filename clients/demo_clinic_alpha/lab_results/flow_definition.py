@@ -191,7 +191,8 @@ The input is transcribed from speech and may contain errors:
 - If truly unclear, ask naturally: "Sorry, I didn't catch that"
 
 # HIPAA Compliance
-- You MUST verify patient identity before discussing ANY health information. This step is important.
+- Identity verification is handled by the flow's verification functions (lookup_by_phone, verify_dob, verify_identity)
+- Do NOT ask verification questions directly - the flow will guide you to the right verification step
 - Never share lab results with unverified callers
 - If verification fails, do not provide any lab information
 
@@ -248,14 +249,21 @@ The input is transcribed from speech and may contain errors:
             task_messages=[{
                 "role": "system",
                 "content": """# Goal
-This is the lab results line. Make a quick binary decision.
+This is the lab results line. Route the caller by calling the appropriate function.
 
-# Rules
-LAB RESULTS (test results, blood work, labs, checking on tests):
-→ Say "Sounds good!" and call proceed_to_lab_results
+# CRITICAL: Do NOT ask verification questions here
+- Do NOT ask for name, date of birth, phone number, or any identifying information
+- Verification happens in subsequent nodes AFTER routing
+- Your ONLY job is to route the caller to the right place
 
-ANYTHING ELSE (scheduling, prescriptions, billing, transfer, unclear):
-→ Say "Let me help you with that." and call proceed_to_other""",
+# Rules - YOU MUST CALL A FUNCTION
+If caller mentions lab results, test results, blood work, labs, or checking on tests:
+→ Say "Sounds good!" then CALL proceed_to_lab_results
+
+For anything else (scheduling, prescriptions, billing, transfer, unclear):
+→ Say "Let me help you with that." then CALL proceed_to_other
+
+IMPORTANT: You MUST call one of the functions above. Do not just respond with text.""",
             }],
             functions=[
                 FlowsFunctionSchema(
@@ -274,7 +282,7 @@ ANYTHING ELSE (scheduling, prescriptions, billing, transfer, unclear):
                 ),
             ],
             respond_immediately=False,
-            pre_actions=[{"type": "tts_say", "text": f"Hello, this is {self.organization_name} laboratory results line. How can I help you?"}],
+            pre_actions=[{"type": "tts_say", "text": f"Hello, this is {self.organization_name} laboratory results. How can I help you?"}],
         )
 
     def create_other_requests_node(self) -> NodeConfig:

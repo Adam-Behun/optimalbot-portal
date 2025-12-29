@@ -6,12 +6,10 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMTextFrame,
     StartInterruptionFrame,
+    TranscriptionFrame,
 )
 from pipecat.pipeline.parallel_pipeline import ParallelPipeline
-from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.services.llm_service import LLMService
 
 
 # Prompts
@@ -62,7 +60,7 @@ class SafetyClassifier(FrameProcessor):
 
 
 class OutputValidator(FrameProcessor):
-    def __init__(self, api_key: str, model: str = "llama-guard-4-12b"):
+    def __init__(self, api_key: str, model: str = "meta-llama/llama-guard-4-12b"):
         super().__init__()
         from groq import AsyncGroq
         self._client = AsyncGroq(api_key=api_key)
@@ -98,19 +96,63 @@ class OutputValidator(FrameProcessor):
             logger.error(f"OutputValidator validation failed: {e}")
 
 
-class SafetyMonitor(ParallelPipeline):
-    """Parallel pipeline that classifies user input for emergencies/staff requests."""
+class SafetyInputClassifier(FrameProcessor):
+    """Classifies user input for emergencies/staff requests using direct Groq client.
 
-    def __init__(self, *, safety_llm: LLMService):
-        self._context = LLMContext(
-            messages=[{"role": "system", "content": SAFETY_CLASSIFICATION_PROMPT}]
-        )
-        self._context_aggregator = LLMContextAggregatorPair(self._context)
+    Uses direct API calls instead of pipecat's LLM service to avoid tool calling issues
+    with models like Llama Guard that don't support function calling.
+    """
+
+    def __init__(self, api_key: str, model: str = "meta-llama/llama-guard-4-12b"):
+        super().__init__()
+        from groq import AsyncGroq
+        self._client = AsyncGroq(api_key=api_key)
+        self._model = model
+        self._buffer = ""
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # Pass all frames through (required for parallel pipeline to work)
+        await self.push_frame(frame, direction)
+
+        # Classify transcription text asynchronously
+        if isinstance(frame, TranscriptionFrame) and frame.text:
+            asyncio.create_task(self._classify(frame.text))
+
+    async def _classify(self, text: str):
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": SAFETY_CLASSIFICATION_PROMPT},
+                    {"role": "user", "content": text}
+                ],
+                max_tokens=10
+            )
+            result = response.choices[0].message.content.strip().upper()
+
+            # Emit frames for SafetyClassifier to process
+            await self.push_frame(LLMFullResponseStartFrame())
+            await self.push_frame(LLMTextFrame(text=result))
+            await self.push_frame(LLMFullResponseEndFrame())
+        except Exception as e:
+            logger.error(f"SafetyInputClassifier failed: {e}")
+
+
+class SafetyMonitor(ParallelPipeline):
+    """Parallel pipeline that classifies user input for emergencies/staff requests.
+
+    Uses direct Groq client to avoid tool calling issues with safety models.
+    """
+
+    def __init__(self, *, api_key: str, model: str = "meta-llama/llama-guard-4-12b"):
+        self._input_classifier = SafetyInputClassifier(api_key=api_key, model=model)
         self._safety_classifier = SafetyClassifier()
 
         super().__init__(
             [],
-            [self._context_aggregator.user(), safety_llm, self._safety_classifier],
+            [self._input_classifier, self._safety_classifier],
         )
 
     def add_event_handler(self, event_name: str, handler):

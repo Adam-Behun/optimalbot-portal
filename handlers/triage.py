@@ -21,7 +21,7 @@ def setup_triage_handlers(
     """Configure event handlers for triage classification.
 
     Args:
-        pipeline: ConversationPipeline with transcripts, patient_id, etc.
+        pipeline: CallSession with transcripts, patient_id, etc.
         triage_detector: TriageDetector parallel pipeline
         ivr_processor: IVRNavigationProcessor for menu navigation
         flow: Client flow instance with get_triage_config(), create_greeting_node_*()

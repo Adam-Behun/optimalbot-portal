@@ -1,17 +1,11 @@
 from typing import Dict, Any
 from loguru import logger
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
-from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.transports.daily.transport import DailyDialinSettings, DailyParams, DailyTransport
-from pipecat.pipeline.llm_switcher import LLMSwitcher
-from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyManual
-from pipecat.audio.vad.vad_analyzer import VADParams
-# Silero VAD and Smart Turn imports are lazy-loaded only when needed
 
 from utils.function_call_text_filter import FunctionCallTextFilter
 
@@ -23,10 +17,9 @@ class ServiceFactory:
         room_url: str,
         room_token: str,
         room_name: str,
-        dialin_settings: Dict[str, str] = None,
-        turn_detection_config: Dict[str, Any] = None
+        dialin_settings: Dict[str, str] = None
     ) -> DailyTransport:
-        # Build DailyParams based on call type
+        """Create Daily transport for telephony calls."""
         params_dict = {
             'api_key': config['api_key'],
             'audio_in_enabled': True,
@@ -35,198 +28,65 @@ class ServiceFactory:
         }
 
         if dialin_settings:
-            # Dial-in: use DailyDialinSettings
-            daily_dialin_settings = DailyDialinSettings(
+            params_dict['dialin_settings'] = DailyDialinSettings(
                 call_id=dialin_settings['call_id'],
                 call_domain=dialin_settings['call_domain']
             )
-            params_dict['dialin_settings'] = daily_dialin_settings
         else:
-            # Dial-out: use phone_number_id
             params_dict['phone_number_id'] = config['phone_number_id']
 
-        # Add VAD and Smart Turn analyzers if configured
-        if turn_detection_config:
-            vad_config = turn_detection_config.get('vad', {})
-            smart_turn_config = turn_detection_config.get('smart_turn', {})
-
-            # Configure Silero VAD (lazy import - requires pipecat-ai[silero])
-            if vad_config.get('type') == 'silero':
-                try:
-                    from pipecat.audio.vad.silero import SileroVADAnalyzer
-                except ImportError as e:
-                    raise ImportError(
-                        "Silero VAD requires additional dependencies. "
-                        "Install with: pip install pipecat-ai[silero]"
-                    ) from e
-
-                vad_params = VADParams(
-                    stop_secs=vad_config.get('stop_secs', 0.2),
-                    start_secs=vad_config.get('start_secs', 0.2),
-                    confidence=vad_config.get('confidence', 0.7),
-                    min_volume=vad_config.get('min_volume', 0.6)
-                )
-                params_dict['vad_analyzer'] = SileroVADAnalyzer(params=vad_params)
-                logger.info(f"VAD configured: stop_secs={vad_params.stop_secs}, confidence={vad_params.confidence}")
-
-            # Configure Smart Turn v3 (lazy import - requires pipecat-ai[local-smart-turn-v3])
-            if smart_turn_config.get('type') == 'local_v3':
-                try:
-                    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-                    from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
-                except ImportError as e:
-                    raise ImportError(
-                        "Smart Turn v3 requires additional dependencies. "
-                        "Install with: pip install pipecat-ai[local-smart-turn-v3]"
-                    ) from e
-
-                smart_turn_params = SmartTurnParams(
-                    stop_secs=smart_turn_config.get('stop_secs', 3.0),
-                    max_duration_secs=smart_turn_config.get('max_duration_secs', 8.0)
-                )
-                params_dict['turn_analyzer'] = LocalSmartTurnAnalyzerV3(params=smart_turn_params)
-                logger.info(f"Smart Turn v3 configured: stop_secs={smart_turn_params.stop_secs}")
-
-        transport = DailyTransport(
+        return DailyTransport(
             room_url,
             room_token,
             room_name,
             params=DailyParams(**params_dict)
         )
-        return transport
 
     @staticmethod
-    def create_stt(config: Dict[str, Any]):
-        stt_type = config.get('type', 'flux')
+    def create_stt(config: Dict[str, Any]) -> DeepgramFluxSTTService:
+        """Create Deepgram Flux STT service (has built-in turn detection)."""
+        optional_params = ['eager_eot_threshold', 'eot_threshold', 'eot_timeout_ms',
+                          'keyterm', 'mip_opt_out', 'tag']
+        params_dict = {k: config[k] for k in optional_params if config.get(k) is not None}
 
-        if stt_type == 'deepgram':
-            # Regular Deepgram STT (use with Smart Turn for turn detection)
-            # Pipecat 0.0.95: simple API with just api_key
-            service = DeepgramSTTService(api_key=config['api_key'])
-            logger.info("Deepgram STT configured")
-            return service
-
-        else:
-            # Deepgram Flux STT (has built-in turn detection)
-            params_dict = {}
-            if 'eager_eot_threshold' in config and config['eager_eot_threshold'] is not None:
-                params_dict['eager_eot_threshold'] = config['eager_eot_threshold']
-            if 'eot_threshold' in config and config['eot_threshold'] is not None:
-                params_dict['eot_threshold'] = config['eot_threshold']
-            if 'eot_timeout_ms' in config and config['eot_timeout_ms'] is not None:
-                params_dict['eot_timeout_ms'] = config['eot_timeout_ms']
-            if 'keyterm' in config and config['keyterm']:
-                params_dict['keyterm'] = config['keyterm']
-            if 'mip_opt_out' in config and config['mip_opt_out'] is not None:
-                params_dict['mip_opt_out'] = config['mip_opt_out']
-            if 'tag' in config and config['tag']:
-                params_dict['tag'] = config['tag']
-
-            params = DeepgramFluxSTTService.InputParams(**params_dict)
-
-            service = DeepgramFluxSTTService(
-                api_key=config['api_key'],
-                model=config.get('model', 'flux-general-en'),
-                params=params
-            )
-            logger.info(f"Deepgram Flux STT configured: model={config.get('model', 'flux-general-en')}")
-            return service
+        return DeepgramFluxSTTService(
+            api_key=config['api_key'],
+            model=config.get('model', 'flux-general-en'),
+            params=DeepgramFluxSTTService.InputParams(**params_dict)
+        )
 
     @staticmethod
-    def create_llm(config: Dict[str, Any]):
+    def create_llm(config: Dict[str, Any], is_classifier: bool = False):
         provider = config.get('provider', 'openai')
 
-        if provider == 'groq':
-            llm = GroqLLMService(
-                api_key=config['api_key'],
-                model=config['model'],
-                temperature=config.get('temperature', 0.4)
-            )
-        elif provider == 'anthropic':
-            llm = AnthropicLLMService(
-                api_key=config['api_key'],
-                model=config['model'],
-                temperature=config.get('temperature', 0.4)
-            )
-        elif provider == 'openai':
-            params = None
-            if config.get('service_tier'):
-                params = OpenAILLMService.InputParams(
-                    service_tier=config['service_tier']
-                )
-            llm = OpenAILLMService(
-                api_key=config['api_key'],
-                model=config['model'],
-                temperature=config.get('temperature', 0.4),
-                params=params
-            )
-        else:
-            raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: openai, groq, anthropic")
+        kwargs = {
+            'api_key': config['api_key'],
+            'model': config['model'],
+            'temperature': 0 if is_classifier else config.get('temperature', 0.4),
+        }
 
-        return llm
+        max_tokens = 10 if is_classifier else config.get('max_tokens')
+        if max_tokens:
+            kwargs['max_tokens'] = max_tokens
+
+        # OpenAI-specific: service_tier
+        if provider == 'openai' and not is_classifier and config.get('service_tier'):
+            kwargs['params'] = OpenAILLMService.InputParams(service_tier=config['service_tier'])
+
+        providers = {
+            'groq': GroqLLMService,
+            'anthropic': AnthropicLLMService,
+            'openai': OpenAILLMService,
+        }
+
+        if provider not in providers:
+            raise ValueError(f"Unsupported LLM provider: {provider}. Supported: {', '.join(providers)}")
+
+        return providers[provider](**kwargs)
 
     @staticmethod
-    def create_classifier_llm(config: Dict[str, Any]):
-        provider = config.get('provider', 'openai')
-
-        if provider == 'groq':
-            llm = GroqLLMService(
-                api_key=config['api_key'],
-                model=config['model'],
-                temperature=0,
-                max_tokens=10
-            )
-        elif provider == 'anthropic':
-            llm = AnthropicLLMService(
-                api_key=config['api_key'],
-                model=config['model'],
-                temperature=0,
-                max_tokens=10
-            )
-        elif provider == 'openai':
-            llm = OpenAILLMService(
-                api_key=config['api_key'],
-                model=config['model'],
-                temperature=0,
-                max_tokens=10
-            )
-        else:
-            raise ValueError(f"Unsupported classifier LLM provider: {provider}. Supported providers: openai, groq, anthropic")
-
-        return llm
-
-    @staticmethod
-    def create_safety_llm(config: Dict[str, Any]):
-        provider = config.get('provider', 'groq')
-
-        if provider == 'groq':
-            llm = GroqLLMService(
-                api_key=config['api_key'],
-                model=config.get('model', 'llama-guard-4-12b'),
-                temperature=0,
-                max_tokens=20
-            )
-        else:
-            raise ValueError(f"Unsupported safety LLM provider: {provider}. Currently only groq is supported.")
-
-        return llm
-
-    @staticmethod
-    def create_tts(config: Dict[str, Any]):
-        """Create TTS service based on provider configuration."""
-        provider = config.get('provider', 'elevenlabs')  # Default to elevenlabs for backwards compatibility
-
-        if provider == 'cartesia':
-            return ServiceFactory._create_cartesia_tts(config)
-        elif provider == 'elevenlabs':
-            return ServiceFactory._create_elevenlabs_tts(config)
-        else:
-            raise ValueError(f"Unsupported TTS provider: {provider}. Supported providers: elevenlabs, cartesia")
-
-    @staticmethod
-    def _create_cartesia_tts(config: Dict[str, Any]) -> CartesiaTTSService:
-        """Create Cartesia TTS service instance."""
-        # Build generation config if provided
+    def create_tts(config: Dict[str, Any]) -> CartesiaTTSService:
+        """Create Cartesia TTS service."""
         generation_config = None
         if config.get('generation_config'):
             gc = config['generation_config']
@@ -240,7 +100,7 @@ class ServiceFactory:
             generation_config=generation_config
         )
 
-        service = CartesiaTTSService(
+        return CartesiaTTSService(
             api_key=config['api_key'],
             voice_id=config['voice_id'],
             model=config['model'],
@@ -248,56 +108,4 @@ class ServiceFactory:
             aggregate_sentences=config.get('aggregate_sentences', True),
             text_filters=[FunctionCallTextFilter()]
         )
-        return service
-
-    @staticmethod
-    def _create_elevenlabs_tts(config: Dict[str, Any]) -> ElevenLabsTTSService:
-        """Create ElevenLabs TTS service instance."""
-        # Build pronunciation dictionary locators if provided
-        pronunciation_dict_locators = None
-        if config.get('pronunciation_dictionary_locators'):
-            from pipecat.services.elevenlabs.tts import PronunciationDictionaryLocator
-            pronunciation_dict_locators = [
-                PronunciationDictionaryLocator(
-                    pronunciation_dictionary_id=locator['pronunciation_dictionary_id'],
-                    version_id=locator['version_id']
-                )
-                for locator in config['pronunciation_dictionary_locators']
-            ]
-
-        # Build input params with all available settings
-        params = ElevenLabsTTSService.InputParams(
-            language=config.get('language'),  # Language enum if specified
-            stability=config.get('stability'),
-            similarity_boost=config.get('similarity_boost'),
-            style=config.get('style'),
-            use_speaker_boost=config.get('use_speaker_boost'),
-            speed=config.get('speed'),
-            auto_mode=config.get('auto_mode', True),  # Default to True for optimal performance
-            enable_ssml_parsing=config.get('enable_ssml_parsing', True),  # Default to True for SSML support
-            enable_logging=config.get('enable_logging'),
-            apply_text_normalization=config.get('apply_text_normalization', 'auto'),  # 'auto', 'on', or 'off'
-            pronunciation_dictionary_locators=pronunciation_dict_locators
-        )
-
-        service = ElevenLabsTTSService(
-            api_key=config['api_key'],
-            voice_id=config['voice_id'],
-            model=config['model'],
-            params=params,
-            aggregate_sentences=config.get('aggregate_sentences', True),
-            text_filters=[FunctionCallTextFilter()]
-        )
-        return service
-
-    @staticmethod
-    def create_llm_switcher(config: Dict[str, Any]) -> tuple:
-        classifier_llm = ServiceFactory.create_classifier_llm(config['classifier_llm'])
-        main_llm = ServiceFactory.create_llm(config['llm'])
-
-        llm_switcher = LLMSwitcher(
-            llms=[classifier_llm, main_llm],
-            strategy_type=ServiceSwitcherStrategyManual
-        )
-
-        return llm_switcher, classifier_llm, main_llm
+        

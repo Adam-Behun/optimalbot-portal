@@ -2,7 +2,7 @@ import os
 from loguru import logger
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -16,6 +16,7 @@ from services.service_factory import ServiceFactory
 from pipeline.triage_detector import TriageDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
 from pipeline.safety_processors import SafetyMonitor, OutputValidator
+from pipeline.types import ConversationComponents
 from core.flow_loader import FlowLoader
 
 
@@ -31,60 +32,44 @@ class PipelineFactory:
         organization_slug = session_data.get('organization_slug')
         services_config = PipelineFactory._load_services_config(organization_slug, client_name)
 
-        # Extract call_type from services config (required field)
         call_type = services_config.get('call_type')
         if not call_type:
             raise ValueError(f"Missing required 'call_type' in services.yaml for {organization_slug}/{client_name}")
 
-        main_llm = ServiceFactory.create_llm(
-            services_config['services']['llm']
+        # Create services directly
+        transport = ServiceFactory.create_transport(
+            services_config['services']['transport'],
+            room_config['room_url'],
+            room_config['room_token'],
+            room_config['room_name'],
+            dialin_settings
         )
+        stt = ServiceFactory.create_stt(services_config['services']['stt'])
+        tts = ServiceFactory.create_tts(services_config['services']['tts'])
+        main_llm = ServiceFactory.create_llm(services_config['services']['llm'])
 
         classifier_llm_config = services_config['services'].get('classifier_llm')
         if classifier_llm_config:
-            classifier_llm = ServiceFactory.create_classifier_llm(classifier_llm_config)
+            classifier_llm = ServiceFactory.create_llm(classifier_llm_config, is_classifier=True)
         else:
             classifier_llm = None
             logger.info("classifier_llm not configured - triage detection disabled")
 
-        safety_monitors_config = services_config.get('safety_monitors', {})
-        safety_llm_config = safety_monitors_config.get('safety_llm')
-        safety_llm = ServiceFactory.create_safety_llm(safety_llm_config) if safety_llm_config else None
-
-        active_llm = main_llm
-
-        # Extract turn_detection config if present (for Smart Turn + VAD)
-        turn_detection_config = services_config.get('turn_detection')
-
-        services = {
-            'stt': ServiceFactory.create_stt(services_config['services']['stt']),
-            'tts': ServiceFactory.create_tts(services_config['services']['tts']),
-            'transport': ServiceFactory.create_transport(
-                services_config['services']['transport'],
-                room_config['room_url'],
-                room_config['room_token'],
-                room_config['room_name'],
-                dialin_settings,
-                turn_detection_config
-            ),
-            'main_llm': main_llm,
-            'classifier_llm': classifier_llm,
-            'safety_llm': safety_llm,
-            'active_llm': active_llm,
-            'cold_transfer': services_config.get('cold_transfer')
-        }
-
         components = PipelineFactory._create_conversation_components(
-            client_name,
-            session_data,
-            services,
-            call_type,
-            services_config
+            client_name=client_name,
+            session_data=session_data,
+            transport=transport,
+            stt=stt,
+            tts=tts,
+            main_llm=main_llm,
+            classifier_llm=classifier_llm,
+            call_type=call_type,
+            services_config=services_config,
         )
 
-        pipeline, params = PipelineFactory._assemble_pipeline(services, components)
+        pipeline, params = PipelineFactory._assemble_pipeline(components)
 
-        return pipeline, params, services['transport'], components
+        return pipeline, params, components
 
     @staticmethod
     def _load_services_config(organization_slug: str, client_name: str) -> Dict[str, Any]:
@@ -115,18 +100,17 @@ class PipelineFactory:
     def _create_conversation_components(
         client_name: str,
         session_data: Dict[str, Any],
-        services: Dict[str, Any],
+        transport: Any,
+        stt: Any,
+        tts: Any,
+        main_llm: Any,
+        classifier_llm: Any,
         call_type: str,
-        services_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Create FlowManager and conversation components."""
-
+        services_config: Dict[str, Any],
+    ) -> ConversationComponents:
+        """Create flow and conversation components."""
         context = LLMContext()
         context_aggregator = LLMContextAggregatorPair(context)
-
-        # Store context separately for direct access in handlers
-        # (LLMContextAggregatorPair doesn't expose _context in all pipecat versions)
-
         transcript_processor = TranscriptProcessor()
 
         organization_slug = session_data.get('organization_slug')
@@ -138,29 +122,29 @@ class PipelineFactory:
             'call_data': session_data['call_data'],
             'session_id': session_data['session_id'],
             'flow_manager': None,
-            'main_llm': services['main_llm'],
+            'main_llm': main_llm,
             'context_aggregator': context_aggregator,
             'organization_id': organization_id
         }
-        if services['classifier_llm']:
-            flow_kwargs['classifier_llm'] = services['classifier_llm']
-        if services.get('cold_transfer'):
-            flow_kwargs['cold_transfer_config'] = services['cold_transfer']
+        if classifier_llm:
+            flow_kwargs['classifier_llm'] = classifier_llm
+        cold_transfer_config = services_config.get('cold_transfer')
+        if cold_transfer_config:
+            flow_kwargs['cold_transfer_config'] = cold_transfer_config
 
         flow = FlowClass(**flow_kwargs)
 
         triage_detector = None
         ivr_processor = None
-        safety_monitor = None
 
         if call_type == "dial-out":
             triage_config = services_config.get('triage', {})
 
-            if triage_config.get('enabled', True) and services['classifier_llm']:
+            if triage_config.get('enabled', True) and classifier_llm:
                 flow_triage_config = flow.get_triage_config()
 
                 triage_detector = TriageDetector(
-                    classifier_llm=services['classifier_llm'],
+                    classifier_llm=classifier_llm,
                     classifier_prompt=flow_triage_config['classifier_prompt'],
                     voicemail_response_delay=triage_config.get('voicemail_response_delay', 2.0),
                 )
@@ -170,73 +154,77 @@ class PipelineFactory:
                 )
 
         safety_config = services_config.get('safety_monitors', {})
-        if safety_config.get('enabled') and services['safety_llm']:
-            safety_monitor = SafetyMonitor(safety_llm=services['safety_llm'])
+        safety_llm_config = safety_config.get('safety_llm')
+
+        safety_monitor = None
+        if safety_config.get('enabled') and safety_llm_config:
+            safety_monitor = SafetyMonitor(
+                api_key=safety_llm_config['api_key'],
+                model=safety_llm_config.get('model', 'meta-llama/llama-guard-4-12b')
+            )
 
         output_validator = None
-        safety_llm_config = safety_config.get('safety_llm')
         if safety_config.get('output_validator', {}).get('enabled') and safety_llm_config:
             output_validator = OutputValidator(
                 api_key=safety_llm_config['api_key'],
-                model=safety_llm_config.get('model', 'llama-guard-4-12b')
+                model=safety_llm_config.get('model', 'meta-llama/llama-guard-4-12b')
             )
 
-        return {
-            'context': context,
-            'context_aggregator': context_aggregator,
-            'transcript_processor': transcript_processor,
-            'triage_detector': triage_detector,
-            'ivr_processor': ivr_processor,
-            'safety_monitor': safety_monitor,
-            'output_validator': output_validator,
-            'safety_config': safety_config,
-            'flow': flow,
-            'main_llm': services['main_llm'],
-            'classifier_llm': services['classifier_llm'],
-            'active_llm': services['active_llm'],
-            'call_type': call_type
-        }
+        return ConversationComponents(
+            transport=transport,
+            stt=stt,
+            tts=tts,
+            main_llm=main_llm,
+            active_llm=main_llm,
+            context=context,
+            context_aggregator=context_aggregator,
+            transcript_processor=transcript_processor,
+            flow=flow,
+            call_type=call_type,
+            classifier_llm=classifier_llm,
+            triage_detector=triage_detector,
+            ivr_processor=ivr_processor,
+            safety_monitor=safety_monitor,
+            output_validator=output_validator,
+            safety_config=safety_config,
+        )
 
     @staticmethod
-    def _assemble_pipeline(
-        services: Dict[str, Any],
-        components: Dict[str, Any]
-    ) -> tuple[Pipeline, PipelineParams]:
-
+    def _assemble_pipeline(components: ConversationComponents) -> tuple[Pipeline, PipelineParams]:
         stt_mute_processor = STTMuteFilter(
             config=STTMuteConfig(strategies={STTMuteStrategy.FIRST_SPEECH})
         )
 
-        processors = [services['transport'].input(), services['stt']]
+        processors = [components.transport.input(), components.stt]
 
-        if components.get('safety_monitor'):
-            processors.append(components['safety_monitor'])
+        if components.safety_monitor:
+            processors.append(components.safety_monitor)
 
-        if components.get('triage_detector'):
+        if components.triage_detector:
             processors.extend([
-                components['triage_detector'].detector(),
-                components['ivr_processor'],
+                components.triage_detector.detector(),
+                components.ivr_processor,
             ])
 
         processors.extend([
             stt_mute_processor,
-            components['transcript_processor'].user(),
-            components['context_aggregator'].user(),
-            components['active_llm'],
+            components.transcript_processor.user(),
+            components.context_aggregator.user(),
+            components.active_llm,
         ])
 
-        if components.get('output_validator'):
-            processors.append(components['output_validator'])
+        if components.output_validator:
+            processors.append(components.output_validator)
 
-        processors.append(services['tts'])
+        processors.append(components.tts)
 
-        if components.get('triage_detector'):
-            processors.append(components['triage_detector'].gate())
+        if components.triage_detector:
+            processors.append(components.triage_detector.gate())
 
         processors.extend([
-            components['transcript_processor'].assistant(),
-            components['context_aggregator'].assistant(),
-            services['transport'].output()
+            components.transcript_processor.assistant(),
+            components.context_aggregator.assistant(),
+            components.transport.output()
         ])
 
         pipeline = Pipeline(processors)

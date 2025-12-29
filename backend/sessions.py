@@ -19,6 +19,8 @@ class AsyncSessionRecord:
         try:
             from bson import ObjectId
             await self.sessions.create_index([("organization_id", 1), ("created_at", -1)])
+            # Unique index on call_id for dial-in dedup (sparse to allow null for dial-out)
+            await self.sessions.create_index("call_id", unique=True, sparse=True)
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
@@ -49,6 +51,14 @@ class AsyncSessionRecord:
             return await self.sessions.find_one(query)
         except Exception as e:
             logger.error(f"Error finding session {session_id}: {e}")
+            return None
+
+    async def find_by_call_id(self, call_id: str) -> Optional[dict]:
+        """Find session by Daily call_id for dedup."""
+        try:
+            return await self.sessions.find_one({"call_id": call_id})
+        except Exception as e:
+            logger.error(f"Error finding session by call_id {call_id}: {e}")
             return None
 
     async def update_session(self, session_id: str, updates: dict, organization_id: str = None) -> bool:

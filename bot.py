@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.runner.types import DailyRunnerArguments
-from pipeline.runner import ConversationPipeline
+from pipeline.session import CallSession
 from backend.sessions import get_async_session_db
 from backend.models import get_async_patient_db
 from backend.utils import mask_id, mask_phone
@@ -40,7 +40,7 @@ elif IS_TRACING_ENABLED and not TRACING_AVAILABLE:
 
 async def bot(args: DailyRunnerArguments):
     session_db = get_async_session_db()
-    pipeline = None
+    call_session = None
 
     try:
         body = args.body
@@ -74,7 +74,7 @@ async def bot(args: DailyRunnerArguments):
             "pid": os.getpid()
         }, organization_id)
 
-        pipeline = ConversationPipeline(
+        call_session = CallSession(
             client_name=client_name,
             session_id=session_id,
             patient_id=patient_id,  # None for dial-in
@@ -89,7 +89,7 @@ async def bot(args: DailyRunnerArguments):
         )
 
         room_name = f"call_{session_id}"
-        await pipeline.run(args.room_url, args.token, room_name)
+        await call_session.run(args.room_url, args.token, room_name)
 
         await session_db.update_session(session_id, {
             "status": "completed",

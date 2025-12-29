@@ -1,5 +1,6 @@
 import os
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from cachetools import TTLCache
 from fastapi import APIRouter, HTTPException, Request, status
@@ -17,6 +18,7 @@ router = APIRouter()
 ENV = os.getenv("ENV", "local")
 
 _processing_calls: TTLCache[str, bool] = TTLCache(maxsize=1000, ttl=300)
+_background_tasks: set = set()  # prevent GC of background tasks
 
 
 class DailyCallData(BaseModel):
@@ -50,13 +52,24 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
 
     call_data = await call_data_from_request(request)
 
+    # Fast in-memory dedup (same instance, handles Daily retries)
     if call_data.call_id in _processing_calls:
-        logger.warning(f"Duplicate webhook ignored: {call_data.call_id}")
+        logger.warning(f"Duplicate webhook ignored (cache): {call_data.call_id}")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"status": "already_processing", "call_id": call_data.call_id}
         )
     _processing_calls[call_data.call_id] = True
+
+    # MongoDB dedup (cross-instance, handles multi-server deployments)
+    session_db = get_async_session_db()
+    existing_session = await session_db.find_by_call_id(call_data.call_id)
+    if existing_session:
+        logger.warning(f"Duplicate webhook ignored (db): {call_data.call_id}")
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "already_processing", "call_id": call_data.call_id}
+        )
 
     org_db = get_async_organization_db()
     organization = await org_db.get_by_slug(client_name)
@@ -72,9 +85,10 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
     http_session = request.app.state.http_session
 
     # Create session only - patient lookup/creation handled by flow
-    session_db = get_async_session_db()
+    # Store call_id for dedup across restarts/instances
     session_created = await session_db.create_session({
         "session_id": session_id,
+        "call_id": call_data.call_id,  # For dedup
         "patient_id": None,  # Flow will find/create patient
         "phone_number": call_data.from_phone,
         "client_name": f"{client_name}/{workflow_name}",
@@ -120,21 +134,34 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
         transfer_config=transfer_config
     )
 
-    try:
-        if ENV == "production":
-            await start_bot_production(body_data, http_session)
-        else:
-            daily_config = await create_daily_room(call_data.from_phone, http_session)
-            body_data.room_url = daily_config.room_url
-            body_data.token = daily_config.token
-            await start_bot_local(body_data, http_session)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting dial-in bot: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start bot: {str(e)}")
+    # Start bot in background - respond to Daily immediately to prevent timeout/retry
+    async def start_bot_background():
+        try:
+            if ENV == "production":
+                await start_bot_production(body_data, http_session)
+            else:
+                daily_config = await create_daily_room(call_data.from_phone, http_session)
+                body_data.room_url = daily_config.room_url
+                body_data.token = daily_config.token
+                await start_bot_local(body_data, http_session)
+            logger.info(f"Dial-in bot started - session={mask_id(session_id)}")
+        except Exception as e:
+            logger.error(f"Error starting dial-in bot: {e}")
+            # Update session status to failed
+            try:
+                await session_db.update_session(session_id, {
+                    "status": "failed",
+                    "error": str(e)
+                }, organization_id)
+            except Exception:
+                pass
 
-    logger.info(f"Dial-in bot started - session={mask_id(session_id)}")
+    # Schedule background task and prevent GC
+    task = asyncio.create_task(start_bot_background())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    logger.info(f"Dial-in webhook processed - session={mask_id(session_id)}")
 
     return JSONResponse({
         "status": "success",

@@ -35,7 +35,7 @@ cd frontend && vercel --prod
 - **Backend:** FastAPI, MongoDB (Motor async)
 - **Frontend:** React, Shadcn/Radix UI, TailwindCSS
 - **Voice:** Pipecat AI + Pipecat Flows
-- **Services:** OpenAI (main LLM), Groq (fast classifier), Deepgram Flux (STT), ElevenLabs (TTS), Daily.co (telephony)
+- **Services:** OpenAI (main LLM), Groq (fast classifier), Deepgram Flux (STT), Cartesia (TTS), Daily.co (telephony)
 - **Observability:** OpenTelemetry + Langfuse
 
 ## Key Files

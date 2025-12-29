@@ -9,7 +9,7 @@ safety_monitors:
 
   safety_llm:
     provider: groq
-    model: llama-guard-4-12b
+    model: meta-llama/llama-guard-4-12b
     api_key: ${GROQ_API_KEY}
 
 cold_transfer:
