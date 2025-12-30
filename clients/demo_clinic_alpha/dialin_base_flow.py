@@ -103,6 +103,23 @@ class DialinBaseFlow(ABC):
     def _phone_last4(self, phone: str) -> str:
         return phone[-4:] if len(phone) >= 4 else ""
 
+    def _normalize_sip_endpoint(self, number: str) -> str:
+        """Ensure SIP endpoint has proper format for Daily (sip: or + prefix)."""
+        if not number:
+            return number
+        if number.startswith("sip:"):
+            return number
+        if number.startswith("+"):
+            return number
+        # Normalize to E.164 format
+        digits = ''.join(c for c in number if c.isdigit())
+        if len(digits) == 10:
+            return f"+1{digits}"
+        elif len(digits) == 11 and digits.startswith("1"):
+            return f"+{digits}"
+        else:
+            return f"+{digits}"
+
     async def _try_db_update(self, patient_id: str, method: str, *args, error_msg: str = "DB update error"):
         if not patient_id:
             return
@@ -410,7 +427,7 @@ If caller says goodbye:
     # ==================== Transfer Handlers ====================
 
     async def _initiate_sip_transfer(self, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-        staff_number = self.cold_transfer_config.get("staff_number")
+        staff_number = self._normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
         if not staff_number:
             logger.warning("No staff transfer number configured")
             return None, self.create_transfer_failed_node()
@@ -418,7 +435,12 @@ If caller says goodbye:
             if self.pipeline:
                 self.pipeline.transfer_in_progress = True
             if self.transport:
-                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                error = await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                if error:
+                    logger.error(f"SIP transfer failed: {error}")
+                    if self.pipeline:
+                        self.pipeline.transfer_in_progress = False
+                    return None, self.create_transfer_failed_node()
                 logger.info(f"SIP transfer initiated: {staff_number}")
             patient_id = flow_manager.state.get("patient_id")
             await self._try_db_update(patient_id, "update_patient", {"call_status": "Transferred"}, error_msg="Error updating call status")

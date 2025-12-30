@@ -432,6 +432,25 @@ If patient has tried twice and you still can't identify:
             pre_actions=[{"type": "tts_say", "text": intro}] if attempts == 0 else None,
         )
 
+    def _build_pharmacy_section(self) -> str:
+        """Build pharmacy info section for status node prompts."""
+        state = self.flow_manager.state
+        pharmacy_name = state.get("pharmacy_name", "")
+        pharmacy_phone = state.get("pharmacy_phone", "")
+        pharmacy_address = state.get("pharmacy_address", "")
+
+        lines = []
+        if pharmacy_name:
+            lines.append(f"Name: {pharmacy_name}")
+        if pharmacy_address:
+            lines.append(f"Address: {pharmacy_address}")
+        if pharmacy_phone:
+            lines.append(f"Phone: {pharmacy_phone}")
+
+        if not lines:
+            return "No pharmacy info on file."
+        return "\n".join(lines)
+
     def _status_base_functions(self) -> list:
         return [
             FlowsFunctionSchema(
@@ -447,8 +466,7 @@ If patient has tried twice and you still can't identify:
 
     def create_status_sent_node(self) -> NodeConfig:
         status_message = self._format_status_message("status_sent")
-        state = self.flow_manager.state
-        pharmacy_phone = state.get("pharmacy_phone", "")
+        pharmacy_section = self._build_pharmacy_section()
         return NodeConfig(
             name="status_sent",
             task_messages=[{
@@ -458,13 +476,19 @@ If patient has tried twice and you still can't identify:
 # What Was Said
 "{status_message}"
 
-# Caller Options
-- Satisfied → call proceed_to_completion
-- Questions about pharmacy/timing → call request_staff with reason="pharmacy questions"
-- Another medication → call check_another_medication
+# Pharmacy Information
+{pharmacy_section}
 
-# Pharmacy Contact
-{f"They can reach the pharmacy at {pharmacy_phone}." if pharmacy_phone else ""}
+# Answering Questions
+- Pharmacy address/location/directions → Provide address above (or say "I don't have the address, but you can call them")
+- Pharmacy phone number → Provide phone above
+- Pharmacy hours → "I don't have hours on file, but you can call them"
+
+# Caller Actions (call a function)
+- Satisfied → call proceed_to_completion
+- Pickup problems (wrong med, not ready, issue at pharmacy) → call request_staff with reason
+- Another medication → call check_another_medication
+- Frustrated/wants human → call request_staff
 
 Do NOT offer to send again - it's already sent.""",
             }],
@@ -475,6 +499,7 @@ Do NOT offer to send again - it's already sent.""",
 
     def create_status_pending_node(self) -> NodeConfig:
         status_message = self._format_status_message("status_pending")
+        pharmacy_section = self._build_pharmacy_section()
         return NodeConfig(
             name="status_pending",
             task_messages=[{
@@ -484,10 +509,19 @@ Do NOT offer to send again - it's already sent.""",
 # What Was Said
 "{status_message}"
 
-# Caller Options
+# Pharmacy Information
+{pharmacy_section}
+
+# Answering Questions
+- Pharmacy address/location/directions → Provide address above (or say "I don't have the address, but you can call them")
+- Pharmacy phone number → Provide phone above
+- When will it be ready → "Once the prior authorization is approved, it will be sent to your pharmacy"
+
+# Caller Actions (call a function)
 - Satisfied → call proceed_to_completion
 - Urgent/need to expedite → call request_staff with reason="expedite prior auth"
 - Another medication → call check_another_medication
+- Frustrated/wants human → call request_staff
 
 Do NOT submit another request - one is already pending.""",
             }],
@@ -498,8 +532,7 @@ Do NOT submit another request - one is already pending.""",
 
     def create_status_ready_node(self) -> NodeConfig:
         status_message = self._format_status_message("status_ready")
-        state = self.flow_manager.state
-        pharmacy_phone = state.get("pharmacy_phone", "")
+        pharmacy_section = self._build_pharmacy_section()
         return NodeConfig(
             name="status_ready",
             task_messages=[{
@@ -509,13 +542,19 @@ Do NOT submit another request - one is already pending.""",
 # What Was Said
 "{status_message}"
 
-# Caller Options
-- Satisfied → call proceed_to_completion
-- Pharmacy issues → call request_staff with reason="pharmacy issues"
-- Another medication → call check_another_medication
+# Pharmacy Information
+{pharmacy_section}
 
-# Pharmacy Contact
-{f"They can reach the pharmacy at {pharmacy_phone}." if pharmacy_phone else ""}""",
+# Answering Questions
+- Pharmacy address/location/directions → Provide address above (or say "I don't have the address, but you can call them")
+- Pharmacy phone number → Provide phone above
+- Pharmacy hours → "I don't have hours on file, but you can call them"
+
+# Caller Actions (call a function)
+- Satisfied → call proceed_to_completion
+- Pickup problems (wrong med, not ready, issue at pharmacy) → call request_staff with reason
+- Another medication → call check_another_medication
+- Frustrated/wants human → call request_staff""",
             }],
             functions=self._status_base_functions(),
             respond_immediately=False,
@@ -524,6 +563,7 @@ Do NOT submit another request - one is already pending.""",
 
     def create_status_too_early_node(self) -> NodeConfig:
         status_message = self._format_status_message("status_too_early")
+        pharmacy_section = self._build_pharmacy_section()
         return NodeConfig(
             name="status_too_early",
             task_messages=[{
@@ -533,10 +573,19 @@ Do NOT submit another request - one is already pending.""",
 # What Was Said
 "{status_message}"
 
-# Caller Options
+# Pharmacy Information
+{pharmacy_section}
+
+# Answering Questions
+- Pharmacy address/location/directions → Provide address above (or say "I don't have the address, but you can call them")
+- Pharmacy phone number → Provide phone above
+- When can I refill → Refer to the date mentioned in status message
+
+# Caller Actions (call a function)
 - Accepts, satisfied → call proceed_to_completion
 - Exception needed (lost, broken, traveling) → call request_staff with reason="early refill exception"
 - Another medication → call check_another_medication
+- Frustrated/wants human → call request_staff
 
 If they need an early refill, connect with staff who can review exceptions.""",
             }],
@@ -549,6 +598,7 @@ If they need an early refill, connect with staff who can review exceptions.""",
         status_message = self._format_status_message("status_refills")
         state = self.flow_manager.state
         pharmacy_name = state.get("pharmacy_name", "your pharmacy")
+        pharmacy_section = self._build_pharmacy_section()
         return NodeConfig(
             name="status_refills",
             task_messages=[{
@@ -558,11 +608,20 @@ If they need an early refill, connect with staff who can review exceptions.""",
 # What Was Said
 "{status_message}"
 
-# Caller Options
+# Pharmacy Information
+{pharmacy_section}
+
+# Answering Questions
+- Pharmacy address/location/directions → Provide address above (or say "I don't have the address, but you can call them")
+- Pharmacy phone number → Provide phone above
+- Pharmacy hours → "I don't have hours on file, but you can call them"
+
+# Caller Actions (call a function)
 - Yes, send refill → call submit_refill
 - No thanks → call proceed_to_completion
 - Pharmacy change/dosage questions → call request_staff with reason="pharmacy change"
 - Another medication → call check_another_medication
+- Frustrated/wants human → call request_staff
 
 If patient confirms, submit the refill to {pharmacy_name}.""",
             }],
@@ -592,6 +651,7 @@ If patient confirms, submit the refill to {pharmacy_name}.""",
         status_message = self._format_status_message("status_renewal")
         state = self.flow_manager.state
         prescribing_physician = state.get("prescribing_physician", "your doctor")
+        pharmacy_section = self._build_pharmacy_section()
         return NodeConfig(
             name="status_renewal",
             task_messages=[{
@@ -601,11 +661,20 @@ If patient confirms, submit the refill to {pharmacy_name}.""",
 # What Was Said
 "{status_message}"
 
-# Caller Options
+# Pharmacy Information
+{pharmacy_section}
+
+# Answering Questions
+- Pharmacy address/location/directions → Provide address above (or say "I don't have the address, but you can call them")
+- Pharmacy phone number → Provide phone above
+- When will it be ready → "Once {prescribing_physician} approves the renewal, it will be sent to your pharmacy"
+
+# Caller Actions (call a function)
 - Yes, submit renewal → call submit_renewal_request
 - No thanks → call proceed_to_completion
 - Dosage change → call request_staff with reason="dosage change request"
 - Another medication → call check_another_medication
+- Frustrated/wants human → call request_staff
 
 If patient confirms, submit renewal request to {prescribing_physician}.""",
             }],

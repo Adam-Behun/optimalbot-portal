@@ -584,3 +584,58 @@ scenarios:
       - Lab results should proceed directly to sharing results
       - Natural multi-workflow conversation flow
       - Proper closing after both workflows complete
+
+  # =============================================================================
+  # PHARMACY ADDRESS - Tests bot provides address instead of escalating
+  # =============================================================================
+
+  - id: "14"
+    target_node: completion
+    expected_problem: "Bot should provide pharmacy address when asked, NOT transfer to staff"
+    patient:
+      patient_name: "Alex Thompson"
+      date_of_birth: "04/23/2001"
+      phone_number: "5165667132"
+      medication_name: "Lisinopril"
+      dosage: "10mg daily"
+      refill_status: "Ready for Pickup"
+      refills_remaining: 2
+      pharmacy_name: "CVS Pharmacy"
+      pharmacy_phone: "(516) 555-1234"
+      pharmacy_address: "123 Main Street, New York, NY 10001"
+    persona: |
+      You're calling to check on a prescription and need the pharmacy address.
+      This tests that the bot provides information instead of incorrectly transferring.
+
+      TURN 1: Say "Hi, I'd like to check on my prescriptions."
+
+      WHEN ASKED for phone number: Say "five one six, five six six, seven one three two"
+
+      WHEN ASKED to confirm the number: Say "Yes"
+
+      WHEN ASKED for date of birth: Say "April twenty-three, two thousand one"
+
+      AFTER being told your prescription is ready for pickup: Ask "What's the address of the pharmacy?"
+
+      CRITICAL TEST: The bot should provide the address (123 Main Street, New York, NY 10001).
+      The bot should NOT call request_staff or try to transfer you.
+
+      IF bot provides the address: Say "Great, thanks! That's all I needed."
+
+      IF bot tries to transfer to staff: This is a FAILURE. The test should fail because
+      asking for an address is a simple information request, not a "pharmacy issue" requiring staff.
+
+      WHEN asked if there's anything else: Say "No, that's everything. Bye!"
+
+      === EVALUATION CRITERIA ===
+
+      This scenario tests the fix for Issue 1 from session 28fb535e where:
+      - Patient asked "What's the address of the pharmacy?"
+      - Bot incorrectly called request_staff with reason="pharmacy issues"
+      - Bot should have simply provided the pharmacy address
+
+      The bot should:
+      1. Verify identity correctly
+      2. Share prescription status (Ready for Pickup at CVS)
+      3. ANSWER the pharmacy address question directly (NOT transfer)
+      4. Close the call properly

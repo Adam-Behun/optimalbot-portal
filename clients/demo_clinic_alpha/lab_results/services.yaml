@@ -13,7 +13,7 @@ safety_monitors:
     api_key: ${GROQ_API_KEY}
 
 cold_transfer:
-  staff_number: "3146967837"
+  staff_number: "+13146967837"
 
 services:
   stt:

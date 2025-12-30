@@ -2,16 +2,34 @@ from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame
 
 
+def _normalize_sip_endpoint(number: str) -> str:
+    """Ensure SIP endpoint has proper format for Daily (sip: or + prefix)."""
+    if not number:
+        return number
+    if number.startswith("sip:") or number.startswith("+"):
+        return number
+    digits = ''.join(c for c in number if c.isdigit())
+    if len(digits) == 10:
+        return f"+1{digits}"
+    elif len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return f"+{digits}"
+
+
 async def _initiate_transfer(pipeline):
     cold_transfer = getattr(pipeline.flow, 'cold_transfer_config', None) or {}
-    staff_number = cold_transfer.get('staff_number')
+    staff_number = _normalize_sip_endpoint(cold_transfer.get('staff_number'))
     if not staff_number:
         logger.warning("No staff_number configured for transfer")
         return False
 
     try:
         pipeline.transfer_in_progress = True
-        await pipeline.transport.sip_call_transfer({"toEndPoint": staff_number})
+        error = await pipeline.transport.sip_call_transfer({"toEndPoint": staff_number})
+        if error:
+            logger.error(f"SIP transfer failed: {error}")
+            pipeline.transfer_in_progress = False
+            return False
         logger.info(f"SIP transfer initiated to {staff_number}")
         return True
     except Exception as e:
