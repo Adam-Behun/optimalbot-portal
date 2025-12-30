@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SessionTable } from '../shared/SessionTable';
 import { SessionDetailSheet } from '../shared/SessionDetailSheet';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { Session } from '@/types';
-import { getSessions, getSession, deleteSession } from '@/api';
+import { getSession } from '@/api';
+import { useSessions, useDeleteSession, useDeleteSessions } from '@/hooks/useSessions';
 import { RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -18,6 +19,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+const WORKFLOW = 'patient_scheduling';
+
 // Workflow-specific patient fields for patient_scheduling
 const PATIENT_SCHEDULING_FIELDS = [
   { key: 'appointment_type', label: 'Appointment Type' },
@@ -27,56 +30,15 @@ const PATIENT_SCHEDULING_FIELDS = [
 ];
 
 export function PatientSchedulingCallList() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: sessions = [], isLoading, error, refetch } = useSessions(WORKFLOW);
+  const deleteSessionMutation = useDeleteSession(WORKFLOW);
+  const deleteSessionsMutation = useDeleteSessions(WORKFLOW);
 
   // Sheet states
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<Session | null>(null);
-
-  const loadSessions = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await getSessions('patient_scheduling');
-      setSessions(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load calls');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadSessions();
-  }, [loadSessions]);
-
-  // Poll only active sessions
-  useEffect(() => {
-    const activeSessionIds = sessions
-      .filter(s => s.status === 'starting' || s.status === 'running')
-      .map(s => s.session_id);
-
-    if (activeSessionIds.length === 0) return;
-
-    const interval = setInterval(async () => {
-      for (const sessionId of activeSessionIds) {
-        try {
-          const updatedSession = await getSession(sessionId);
-          setSessions(prev => prev.map(s =>
-            s.session_id === sessionId ? updatedSession : s
-          ));
-        } catch {
-          // Session fetch failed, skip
-        }
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [sessions]);
 
   const handleViewSession = async (session: Session) => {
     try {
@@ -97,39 +59,27 @@ export function PatientSchedulingCallList() {
     if (!sessionToDelete) return;
 
     try {
-      await deleteSession(sessionToDelete.session_id);
+      await deleteSessionMutation.mutateAsync(sessionToDelete.session_id);
       toast.success('Call record deleted');
       setDeleteDialogOpen(false);
       setSessionToDelete(null);
-      await loadSessions();
     } catch {
       toast.error('Failed to delete call record');
     }
   };
 
   const handleDeleteSessions = async (selectedSessions: Session[]) => {
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const session of selectedSessions) {
-      try {
-        await deleteSession(session.session_id);
-        successCount++;
-      } catch {
-        failCount++;
-      }
-    }
-
-    await loadSessions();
-    toast.success(`Deleted: ${successCount} success, ${failCount} failed`);
+    const sessionIds = selectedSessions.map(s => s.session_id);
+    const result = await deleteSessionsMutation.mutateAsync(sessionIds);
+    toast.success(`Deleted: ${result.successCount} success, ${result.failCount} failed`);
   };
 
   if (error) {
     return (
-      <WorkflowLayout workflowName="patient_scheduling" title="Calls">
+      <WorkflowLayout workflowName={WORKFLOW} title="Calls">
         <div className="flex flex-col items-center justify-center py-8 gap-4">
-          <p className="text-destructive">{error}</p>
-          <Button onClick={loadSessions} variant="outline">
+          <p className="text-destructive">{error instanceof Error ? error.message : 'Failed to load calls'}</p>
+          <Button onClick={() => refetch()} variant="outline">
             Retry
           </Button>
         </div>
@@ -139,10 +89,10 @@ export function PatientSchedulingCallList() {
 
   return (
     <WorkflowLayout
-      workflowName="patient_scheduling"
+      workflowName={WORKFLOW}
       title="Calls"
       actions={
-        <Button onClick={loadSessions} variant="outline" size="sm">
+        <Button onClick={() => refetch()} variant="outline" size="sm">
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
@@ -154,7 +104,7 @@ export function PatientSchedulingCallList() {
         </p>
         <SessionTable
           sessions={sessions}
-          loading={loading}
+          loading={isLoading}
           onRowClick={handleViewSession}
           onViewSession={handleViewSession}
           onDeleteSession={handleDeleteSessionSingle}

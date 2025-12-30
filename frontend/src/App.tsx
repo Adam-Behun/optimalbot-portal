@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { LoginRedirect, ForgotPasswordRedirect, ResetPasswordRedirect } from './components/LoginRedirect';
@@ -59,10 +60,21 @@ function SessionCleanup() {
   return null;
 }
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 30,        // Data fresh for 30s
+      refetchOnWindowFocus: false, // Disable for healthcare (avoid surprise refreshes)
+      retry: 1,
+    },
+  },
+});
+
 const App = () => {
   return (
-    <ThemeProvider defaultTheme="dark" storageKey="healthcare-ui-theme">
-      <OrganizationProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="dark" storageKey="healthcare-ui-theme">
+        <OrganizationProvider>
         <SessionCleanup />
         <Router>
           <SessionTimeoutModal>
@@ -184,8 +196,9 @@ const App = () => {
             <Toaster />
           </SessionTimeoutModal>
         </Router>
-      </OrganizationProvider>
-    </ThemeProvider>
+        </OrganizationProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 };
 

@@ -1,23 +1,19 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Patient } from '@/types';
 import { getPatients } from '@/api';
 import { Phone, CheckCircle, XCircle, Clock, PhoneForwarded, PhoneIncoming } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 
+const WORKFLOW = 'mainline';
+
 export function MainlineDashboard() {
   const navigate = useNavigate();
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getPatients('mainline')
-      .then(setPatients)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: patients = [], isLoading } = useQuery({
+    queryKey: ['patients', WORKFLOW],
+    queryFn: () => getPatients(WORKFLOW),
+  });
 
   // Calculate metrics based on call data
   const today = new Date().toISOString().split('T')[0];
@@ -31,9 +27,9 @@ export function MainlineDashboard() {
     today: patients.filter(p => p.created_at?.startsWith(today)).length,
   };
 
-  if (loading) {
+  if (isLoading) {
     return (
-      <WorkflowLayout workflowName="mainline" title="Dashboard">
+      <WorkflowLayout workflowName={WORKFLOW} title="Dashboard">
         <p className="text-muted-foreground">Loading...</p>
       </WorkflowLayout>
     );
@@ -41,7 +37,7 @@ export function MainlineDashboard() {
 
   return (
     <WorkflowLayout
-      workflowName="mainline"
+      workflowName={WORKFLOW}
       title="Dashboard"
       actions={
         <Button onClick={() => navigate('/workflows/mainline/calls')}>

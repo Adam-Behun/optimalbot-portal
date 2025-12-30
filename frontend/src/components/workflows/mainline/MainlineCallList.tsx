@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { TranscriptViewer } from '../shared/TranscriptViewer';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { Session, TranscriptMessage } from '@/types';
-import { getSessions } from '@/api';
+import { useSessions } from '@/hooks/useSessions';
 import { formatDatetime } from '@/lib/utils';
 import {
   Table,
@@ -21,6 +21,8 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { RefreshCw } from 'lucide-react';
+
+const WORKFLOW = 'mainline';
 
 function getStatusStyle(status: string): string {
   switch (status) {
@@ -58,41 +60,10 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
 }
 
 export function MainlineCallList() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: sessions = [], isLoading, error, refetch } = useSessions(WORKFLOW);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
-
-  const loadSessions = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await getSessions('mainline');
-      setSessions(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load calls');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadSessions();
-  }, [loadSessions]);
-
-  // Poll for active sessions
-  useEffect(() => {
-    const hasActiveSessions = sessions.some(s => s.status === 'running' || s.status === 'starting');
-    if (!hasActiveSessions) return;
-
-    const interval = setInterval(() => {
-      loadSessions();
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [sessions, loadSessions]);
 
   const handleViewSession = (session: Session) => {
     setSelectedSession(session);
@@ -106,10 +77,10 @@ export function MainlineCallList() {
 
   if (error) {
     return (
-      <WorkflowLayout workflowName="mainline" title="Calls">
+      <WorkflowLayout workflowName={WORKFLOW} title="Calls">
         <div className="flex flex-col items-center justify-center py-8 gap-4">
-          <p className="text-destructive">{error}</p>
-          <Button onClick={loadSessions} variant="outline">
+          <p className="text-destructive">{error instanceof Error ? error.message : 'Failed to load calls'}</p>
+          <Button onClick={() => refetch()} variant="outline">
             Retry
           </Button>
         </div>
@@ -119,10 +90,10 @@ export function MainlineCallList() {
 
   return (
     <WorkflowLayout
-      workflowName="mainline"
+      workflowName={WORKFLOW}
       title="Calls"
       actions={
-        <Button onClick={loadSessions} variant="outline" size="sm">
+        <Button onClick={() => refetch()} variant="outline" size="sm">
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
@@ -145,7 +116,7 @@ export function MainlineCallList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading ? (
+              {isLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                     Loading...

@@ -1,23 +1,15 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Session } from '@/types';
-import { getSessions } from '@/api';
+import { useSessions } from '@/hooks/useSessions';
 import { Phone, CheckCircle, XCircle, Clock, PhoneForwarded, Calendar } from 'lucide-react';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 
+const WORKFLOW = 'patient_scheduling';
+
 export function PatientSchedulingDashboard() {
   const navigate = useNavigate();
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getSessions('patient_scheduling')
-      .then(setSessions)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: sessions = [], isLoading } = useSessions(WORKFLOW);
 
   // Calculate metrics based on session status
   const today = new Date().toISOString().split('T')[0];
@@ -30,9 +22,9 @@ export function PatientSchedulingDashboard() {
     today: sessions.filter(s => s.created_at?.startsWith(today)).length,
   };
 
-  if (loading) {
+  if (isLoading) {
     return (
-      <WorkflowLayout workflowName="patient_scheduling" title="Dashboard">
+      <WorkflowLayout workflowName={WORKFLOW} title="Dashboard">
         <p className="text-muted-foreground">Loading...</p>
       </WorkflowLayout>
     );
@@ -40,7 +32,7 @@ export function PatientSchedulingDashboard() {
 
   return (
     <WorkflowLayout
-      workflowName="patient_scheduling"
+      workflowName={WORKFLOW}
       title="Dashboard"
       actions={
         <Button onClick={() => navigate('/workflows/patient_scheduling/calls')}>
