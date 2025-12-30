@@ -51,8 +51,10 @@ fi
 source "$PORTAL_DIR/.venv/bin/activate"
 cd "$PORTAL_DIR"
 
-# Reset Adam Behun test patient
-python scripts/insert_adam_test.py 2>/dev/null || echo -e "${RED}Failed to reset Adam test patient${NC}"
+# Reset test patients
+echo ""
+echo "Test Patients:"
+python scripts/insert_adam_test.py 2>/dev/null || echo -e "${RED}Failed to reset test patients${NC}"
 
 # Start services with logs captured to files
 ENV=local python app.py > "$LOG_DIR/backend.log" 2>&1 &

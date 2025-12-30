@@ -11,6 +11,7 @@ from backend.models import get_async_patient_db
 from backend.sessions import get_async_session_db
 from backend.utils import parse_natural_date
 from handlers.transcript import save_transcript_to_db
+from .schema import MEDICATIONS, PRESCRIPTION_STATUS
 
 
 class _MockFlowManager:
@@ -116,6 +117,15 @@ class PrescriptionStatusFlow:
         state.setdefault("routed_to", "")
         state.setdefault("callback_confirmed", False)
 
+        # Retry counters (max 2 for each)
+        state.setdefault("lookup_attempts", 0)
+        state.setdefault("medication_select_attempts", 0)
+        state.setdefault("transfer_attempts", 0)
+
+        # Prescription flow state
+        state.setdefault("mentioned_medication", None)
+        state.setdefault("selected_prescription", None)
+
     # ==================== Helpers: Database ====================
 
     async def _try_db_update(self, patient_id: str, method: str, *args, error_msg: str = "DB update error"):
@@ -184,6 +194,71 @@ class PrescriptionStatusFlow:
     def _phone_last4(self, phone: str) -> str:
         return phone[-4:] if len(phone) >= 4 else ""
 
+    # ==================== Helpers: Medication Matching ====================
+
+    def _find_medication_match(self, mentioned: str, prescriptions: list) -> dict | None:
+        """Match mentioned medication against prescriptions using GLP-1 aliases."""
+        if not mentioned:
+            return None
+        mentioned_lower = mentioned.lower().strip()
+
+        for rx in prescriptions:
+            rx_name = rx.get("medication_name", "").lower()
+
+            # Direct match
+            if mentioned_lower in rx_name or rx_name in mentioned_lower:
+                return rx
+
+            # Check against MEDICATIONS aliases from schema
+            for brand_name, med_info in MEDICATIONS.items():
+                if rx_name in brand_name.lower() or brand_name.lower() in rx_name:
+                    aliases = [a.lower() for a in med_info.get("aliases", [])]
+                    if mentioned_lower in aliases or any(a in mentioned_lower for a in aliases):
+                        return rx
+                    # Also check generic name
+                    generic = med_info.get("generic", "").lower()
+                    if generic and (mentioned_lower == generic or generic in mentioned_lower):
+                        return rx
+
+        return None
+
+    def _get_status_key(self, prescription: dict) -> str:
+        """Determine the status key for routing to appropriate status node."""
+        status = prescription.get("status", prescription.get("refill_status", "")).lower()
+        refills = prescription.get("refills_remaining", 0)
+
+        # Map various status strings to status node keys
+        if status in ("sent", "sent to pharmacy"):
+            return "status_sent"
+        elif status in ("pending", "pending prior auth", "pending doctor approval", "awaiting prior auth"):
+            return "status_pending"
+        elif status in ("ready", "ready for pickup"):
+            return "status_ready"
+        elif status in ("too early", "too early to refill"):
+            return "status_too_early"
+        elif status in ("renewal", "needs renewal", "expired"):
+            return "status_renewal"
+        elif refills > 0 or status in ("active", "refills", "refills available"):
+            return "status_refills"
+        else:
+            # Default to pending if unclear
+            return "status_pending"
+
+    def _format_status_message(self, status_key: str) -> str:
+        """Format status message using template from schema."""
+        state = self.flow_manager.state
+        template = PRESCRIPTION_STATUS.get(status_key, {}).get("template", "")
+
+        return template.format(
+            medication_name=state.get("medication_name", "your medication"),
+            dosage=state.get("dosage", ""),
+            pharmacy_name=state.get("pharmacy_name", "your pharmacy"),
+            pharmacy_phone=state.get("pharmacy_phone", ""),
+            next_refill_date=state.get("next_refill_date", ""),
+            refills_remaining=state.get("refills_remaining", 0),
+            prescribing_physician=state.get("prescribing_physician", "your doctor"),
+        )
+
     # ==================== Helpers: Prompts ====================
 
     def _get_global_instructions(self) -> str:
@@ -204,8 +279,8 @@ Input is transcribed from speech and may contain errors:
 - If truly unclear, ask them to repeat naturally: "Sorry, I didn't catch that"
 
 # HIPAA Compliance
-- You MUST verify patient identity before discussing any prescription information. This step is important.
-- Ask for full name AND date of birth
+- You MUST verify the patient before discussing any prescription information
+- Verification is handled by the flow functions - do NOT ask for name/DOB directly
 - If verification fails, do not provide any prescription details
 
 # Guardrails
@@ -231,7 +306,6 @@ Input is transcribed from speech and may contain errors:
             name="request_staff",
             description="Transfer to human staff. Use for: third-party callers, pharmacy changes, expedite requests, medical concerns, or explicit human requests.",
             properties={
-                "urgent": {"type": "boolean", "description": "True for urgent/medical concerns"},
                 "patient_confirmed": {"type": "boolean", "description": "True if patient explicitly asked for human"},
                 "reason": {"type": "string", "description": "Brief reason: third_party, pharmacy_change, expedite, medical_question"},
             },
@@ -251,13 +325,13 @@ Input is transcribed from speech and may contain errors:
             handler=self._route_to_workflow_handler,
         )
 
-    def _check_another_prescription_schema(self) -> FlowsFunctionSchema:
+    def _check_another_medication_schema(self) -> FlowsFunctionSchema:
         return FlowsFunctionSchema(
-            name="check_another_prescription",
+            name="check_another_medication",
             description="Patient asks about another medication/prescription/refill.",
             properties={},
             required=[],
-            handler=self._check_another_prescription_handler,
+            handler=self._check_another_medication_handler,
         )
 
     # ==================== Node Creators: Entry Points ====================
@@ -275,41 +349,55 @@ Input is transcribed from speech and may contain errors:
             task_messages=[{
                 "role": "system",
                 "content": """# Goal
-Determine what the caller needs and route appropriately. This step is important.
+Route the caller by calling the appropriate function.
 
-# Expected Responses
-If caller mentions prescription, refill, or medication:
-→ Call start_verification immediately
+# CRITICAL: Do NOT speak - just call a function
+- Do NOT generate any speech or text response
+- Do NOT ask for medication names or any other information
+- Your ONLY job is to call the right function - the next node will handle everything
 
-If caller needs something else (appointments, billing, medical questions):
-→ Say "Let me connect you with someone who can help with that." and call request_staff
+# Rules - CALL FUNCTION IMMEDIATELY
+If caller mentions prescription, refill, medication, or Rx:
+→ CALL proceed_to_prescription_status (do NOT say anything)
+→ Include mentioned_medication ONLY if caller already named a specific medication
 
-# Example Flow
-Caller: "Hi, I need to check on a prescription refill."
-→ Call start_verification
+If caller mentions scheduling, appointment, lab results, or blood work:
+→ CALL proceed_to_other (do NOT say anything)
 
-Caller: "I need to schedule an appointment."
-→ "Let me connect you with someone who can help with that."
-→ Call request_staff
+If caller mentions billing, insurance, or asks for a human:
+→ CALL request_staff (do NOT say anything)
 
-# Guardrails
-- Do NOT ask for any personal information yet (name, DOB, etc.)
-- Do NOT discuss prescriptions until identity is verified
-- Route to verification as soon as caller mentions prescription/refill/medication
-- Stay on topic: prescription inquiries only
+# Examples
+Caller: "I'm calling about my Ozempic prescription."
+→ Call proceed_to_prescription_status with mentioned_medication="Ozempic"
 
-# Error Handling
-If you don't understand the caller:
-- Ask naturally: "I'm sorry, could you repeat that?"
-- Never guess or assume what they need""",
+Caller: "I need to check on a refill."
+→ Call proceed_to_prescription_status (NO medication param - do NOT ask)
+
+Caller: "I'd like to check on my prescription stuff."
+→ Call proceed_to_prescription_status (NO medication param - do NOT ask)
+
+# Unrecognized Intent
+ONLY if truly unclear, ask: "I can help with prescriptions, appointments, or lab results. What are you calling about?"
+
+IMPORTANT: Call a function immediately. Do NOT generate any speech.""",
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="proceed_to_verification",
-                    description="Caller asks about prescription/refill/medication. Transitions to identity verification.",
+                    name="proceed_to_prescription_status",
+                    description="Caller asks about prescription/refill/medication. Include mentioned_medication if caller named a specific medication.",
+                    properties={
+                        "mentioned_medication": {"type": "string", "description": "Medication name if caller mentioned one (e.g., 'Ozempic', 'Wegovy')"},
+                    },
+                    required=[],
+                    handler=self._proceed_to_prescription_status_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="proceed_to_other",
+                    description="Caller needs scheduling, lab results, or other non-prescription services.",
                     properties={},
                     required=[],
-                    handler=self._proceed_to_verification_handler,
+                    handler=self._proceed_to_other_handler,
                 ),
                 self._request_staff_schema(),
             ],
@@ -329,19 +417,76 @@ If you don't understand the caller:
             patient_id = self.flow_manager.state.get("patient_id")
             logger.info(f"Flow: Caller already verified as {first_name}, loading domain data")
             await self._load_domain_data(patient_id)
-            return self.create_status_node()
+            # Route to appropriate status node
+            prescriptions = self.flow_manager.state.get("prescriptions", [])
+            if len(prescriptions) == 1:
+                return self._route_to_status_node(prescriptions[0])
+            elif len(prescriptions) > 1:
+                return self.create_medication_select_node()
+            return self._route_to_status_node()
 
         logger.info(f"Flow: Handoff entry - context stored, proceeding to phone lookup")
-        return self.create_returning_patient_lookup_node()
+        return self.create_patient_lookup_node()
+
+    def create_other_requests_node(self) -> NodeConfig:
+        """Handle non-prescription requests: scheduling, lab results, billing."""
+        return NodeConfig(
+            name="other_requests",
+            role_messages=[{"role": "system", "content": self._get_global_instructions()}],
+            task_messages=[{
+                "role": "system",
+                "content": """# Goal
+Route the caller to the appropriate service.
+
+# Routing Table
+| Caller needs | Action |
+|--------------|--------|
+| Scheduling, appointment, follow-up | call route_to_workflow with workflow="scheduling" |
+| Lab results, blood work, test results | call route_to_workflow with workflow="lab_results" |
+| Billing, insurance, human staff | call request_staff |
+| Prescription status (changed mind) | call proceed_to_prescription_status |
+
+# Example Flow
+Caller: "I need to schedule a follow-up appointment."
+→ Call route_to_workflow with workflow="scheduling", reason="follow-up appointment"
+
+Caller: "Can I check my lab results?"
+→ Call route_to_workflow with workflow="lab_results", reason="lab results inquiry"
+
+Caller: "Actually, I wanted to check on my prescription."
+→ Call proceed_to_prescription_status
+
+# Unrecognized Intent
+If unclear, ask: "I can help with scheduling, lab results, or prescriptions. Which would you like?"
+
+# Guardrails
+- Don't ask for personal information yet - the target workflow will handle verification
+- Provide brief context in the reason field when routing""",
+            }],
+            functions=[
+                self._route_to_workflow_schema(),
+                FlowsFunctionSchema(
+                    name="proceed_to_prescription_status",
+                    description="Caller wants to check prescription status instead.",
+                    properties={
+                        "mentioned_medication": {"type": "string", "description": "Medication name if mentioned"},
+                    },
+                    required=[],
+                    handler=self._proceed_to_prescription_status_handler,
+                ),
+                self._request_staff_schema(),
+            ],
+            respond_immediately=True,
+        )
 
     # ==================== Node Creators: Phone Lookup Verification ====================
 
-    def create_returning_patient_lookup_node(self) -> NodeConfig:
+    def create_patient_lookup_node(self) -> NodeConfig:
         return NodeConfig(
-            name="returning_patient_lookup",
+            name="patient_lookup",
             task_messages=[{
                 "role": "system",
-                "content": """Ask for their phone number: "What's the phone number on your account?"
+                "content": """You just asked for the phone number. Wait for the caller to provide it.
 
 # Phone Normalization
 Spoken → Written (digits only):
@@ -365,203 +510,163 @@ If caller doesn't know their number, call request_staff.""",
             functions=[
                 FlowsFunctionSchema(
                     name="lookup_by_phone",
-                    description="Look up patient record by phone number.",
+                    description="Look up patient by phone. Call after collecting phone number.",
                     properties={
-                        "phone_number": {"type": "string", "description": "Phone number (digits only)"},
+                        "phone_number": {"type": "string", "description": "Digits only (e.g., '5551234567')"},
                     },
                     required=["phone_number"],
                     handler=self._lookup_by_phone_handler,
                 ),
                 self._request_staff_schema(),
             ],
-            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": "Sounds good! What's the phone number on your account?"}],
+            respond_immediately=False,
         )
 
-    def create_returning_patient_verify_dob_node(self) -> NodeConfig:
+    def create_verify_dob_node(self) -> NodeConfig:
         return NodeConfig(
-            name="returning_patient_verify_dob",
+            name="verify_dob",
             task_messages=[{
                 "role": "system",
-                "content": """Found a record. Ask for date of birth to verify: "I found your record. Can you confirm your date of birth?"
+                "content": """Wait for the caller to provide their date of birth.
 
-Once they provide DOB, call verify_dob.""",
+# Date Normalization
+Spoken → Written:
+- "march twenty second seventy eight" → "March 22, 1978"
+- "three twenty two nineteen seventy eight" → "March 22, 1978"
+
+Once you have DOB, call verify_dob immediately.
+
+If unclear, ask: "Could you repeat that date?"
+If caller can't verify, call request_staff.""",
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="verify_dob",
-                    description="Verify patient identity by date of birth.",
+                    description="Verify patient by DOB. Call after collecting date of birth.",
                     properties={
-                        "date_of_birth": {"type": "string", "description": "DOB in natural format"},
+                        "date_of_birth": {"type": "string", "description": "Natural format (e.g., 'March 22, 1978')"},
                     },
                     required=["date_of_birth"],
                     handler=self._verify_dob_handler,
                 ),
                 self._request_staff_schema(),
             ],
-            respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": "Can you confirm your date of birth please?"}],
+            post_actions=[{"type": "tts_say", "text": "Let me pull up your account."}],
+            respond_immediately=False,
         )
 
-    def create_returning_patient_not_found_node(self) -> NodeConfig:
+    def create_patient_not_found_node(self) -> NodeConfig:
+        """Patient not found on first attempt - allow retry."""
+        state = self.flow_manager.state
+        phone = state.get("_last_lookup_phone", "")
+        dob = state.get("_last_lookup_dob", "")
+
+        # Format phone for display
+        phone_display = f"{phone[:3]}-{phone[3:6]}-{phone[6:]}" if len(phone) == 10 else phone
+
         return NodeConfig(
-            name="returning_patient_not_found",
+            name="patient_not_found",
+            task_messages=[{
+                "role": "system",
+                "content": """The patient wasn't found. Allow them to retry with different info.
+
+# Rules
+- If caller provides new phone AND/OR date of birth → call retry_lookup with the new values
+- If caller wants to speak to someone → call request_staff
+- If caller says goodbye → call end_call
+
+# Phone/DOB Normalization
+Phone: digits only (e.g., "5551234567")
+DOB: natural format (e.g., "March 22, 1978")""",
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="retry_lookup",
+                    description="Retry lookup with corrected phone and/or DOB.",
+                    properties={
+                        "phone_number": {"type": "string", "description": "Corrected phone (digits only), or same if unchanged"},
+                        "date_of_birth": {"type": "string", "description": "Corrected DOB (natural format), or same if unchanged"},
+                    },
+                    required=["phone_number", "date_of_birth"],
+                    handler=self._retry_lookup_handler,
+                ),
+                self._request_staff_schema(),
+                self._end_call_schema(),
+            ],
+            pre_actions=[{"type": "tts_say", "text": f"I'm sorry, I couldn't find a record for {phone_display} with that date of birth. Could you double-check those for me?"}],
+            respond_immediately=False,
+        )
+
+    def create_patient_not_found_final_node(self) -> NodeConfig:
+        """Final not found after max retries - transfer to staff."""
+        return NodeConfig(
+            name="patient_not_found_final",
             task_messages=[],
             functions=[],
-            pre_actions=[{"type": "tts_say", "text": "I couldn't find your record in our system. Let me connect you with a colleague who can help. One moment."}],
+            pre_actions=[{"type": "tts_say", "text": "I still couldn't find your record. Let me connect you with a colleague who can help."}],
             post_actions=[{"type": "end_conversation"}],
         )
 
     # ==================== Node Creators: Main Flow ====================
 
-    def create_verification_node(self) -> NodeConfig:
-        state = self.flow_manager.state
-        first_name = state.get("first_name", "")
-        last_name = state.get("last_name", "")
-        stored_name = f"{first_name} {last_name}".strip() if first_name or last_name else state.get("patient_name", "")
-        stored_dob = state.get("date_of_birth", "")
-
-        return NodeConfig(
-            name="verification",
-            task_messages=[{
-                "role": "system",
-                "content": f"""# Goal
-Verify the caller's identity before sharing any prescription information. This step is important.
-
-# Patient Record on File
-- Name: {stored_name}
-- Date of Birth: {stored_dob}
-
-# Third-Party Caller Detection (CRITICAL)
-If caller indicates they are NOT the patient, you MUST transfer to staff:
-- "I'm calling for my mother/father/spouse/parent"
-- "I'm calling on behalf of..."
-- "I manage their medications"
-- "They can't come to the phone"
-
-Response: "For privacy reasons, I can only discuss prescription information directly with the patient or with documented authorization on file. Let me connect you with a staff member who can help."
-→ Call request_staff immediately
-
-# Verification Steps (only if caller IS the patient)
-1. Ask for their first and last name
-2. Ask for their date of birth
-3. Compare against the record on file
-4. Call verify_identity with the information they provide
-
-# Example Flow
-The pre-action already asked for their name.
-Caller: "Jennifer Martinez"
-You: "Thank you, Jennifer. And what is your date of birth?"
-Caller: "September 12, 1980"
-→ Call verify_identity with name="Jennifer Martinez" and date_of_birth="September 12, 1980"
-
-# If caller already provided BOTH name and DOB
-Caller: "I'm Jennifer Martinez, born September 12, 1980"
-→ Call verify_identity immediately with name="Jennifer Martinez" and date_of_birth="September 12, 1980"
-
-# Data Normalization
-**Dates** (spoken → written):
-- "september twelfth nineteen eighty" → "September 12, 1980"
-- "nine twelve eighty" → "September 12, 1980"
-
-Always normalize dates before calling verify_identity.
-
-# Guardrails
-- Collect BOTH name AND date of birth before calling verify_identity. This step is important.
-- Do NOT reveal any patient information during verification
-- Do NOT say whether the name or DOB matches until both are collected
-- Be patient if caller needs to repeat information
-- If caller refuses to verify, explain it's required for privacy and offer to transfer to staff
-- If caller is a third party, transfer to staff immediately
-
-# Error Handling
-If you miss information:
-- Ask naturally: "I'm sorry, could you repeat that?"
-- Never guess or make up values
-- If caller is unclear, ask for clarification: "Could you spell that for me?" """,
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="verify_identity",
-                    description="After collecting BOTH name AND date of birth. Verifies against stored record.",
-                    properties={
-                        "name": {"type": "string", "description": "Caller's full name (first and last)"},
-                        "date_of_birth": {"type": "string", "description": "Date of birth in natural format (e.g., 'September 12, 1980')"},
-                    },
-                    required=["name", "date_of_birth"],
-                    handler=self._verify_identity_handler,
-                ),
-                self._request_staff_schema(),
-            ],
-            respond_immediately=False,
-        )
-
-    def create_medication_identification_node(self) -> NodeConfig:
+    def create_medication_select_node(self) -> NodeConfig:
+        """Multi-rx: Ask which medication caller is asking about."""
         state = self.flow_manager.state
         prescriptions = state.get("prescriptions", [])
+        attempts = state.get("medication_select_attempts", 0)
 
-        multi_rx_context = ""
-        if len(prescriptions) > 1:
-            rx_list = "\n".join([f"- {rx.get('medication_name', 'Unknown')} ({rx.get('dosage', '')})" for rx in prescriptions])
-            multi_rx_context = f"""# Multiple Prescriptions on File
-{rx_list}
+        # Build medication list for prompt
+        rx_list = "\n".join([f"- {rx.get('medication_name', 'Unknown')} ({rx.get('dosage', '')})" for rx in prescriptions])
 
-Ask which medication they're calling about. If they describe it vaguely, help identify it:
-"I see you have Amoxicillin and Chlorhexidine on file. Which one are you calling about?"
-"""
+        # Different prompt based on retry attempts
+        if attempts > 0:
+            intro = f"I didn't catch that. Your medications on file are:\n{rx_list}\n\nWhich one are you calling about?"
+        else:
+            intro = f"I see you have multiple medications on file:\n{rx_list}\n\nWhich one are you calling about today?"
 
         return NodeConfig(
-            name="medication_identification",
+            name="medication_select",
             task_messages=[{
                 "role": "system",
                 "content": f"""# Goal
-Determine which prescription the patient is asking about. This step is important.
+Determine which prescription the patient is asking about.
 
-{multi_rx_context}
+# Medications on File
+{rx_list}
 
-# Single Prescription Flow
-If patient only has one prescription, confirm it:
-"I see you have a prescription for [medication]. Is that the one you're calling about?"
-
-# Identification Strategies
-If patient describes medication vaguely:
-- "the antibiotic" → match to antibiotic-type medications
-- "the mouth rinse" → match to oral rinse medications
-- "the one Dr. Smith prescribed" → match by prescribing physician
-
-# When to Call Functions
-Once medication is identified → call select_medication with the medication name
+# Matching Rules
+Match caller's description to medications using:
+1. Exact medication name (e.g., "Ozempic")
+2. Generic name (e.g., "semaglutide" → Ozempic or Wegovy)
+3. Common aliases (e.g., "my weekly shot" → Ozempic/Wegovy/Mounjaro)
+4. Descriptions (e.g., "the weight loss one" → match to GLP-1)
 
 # Example Flow
 You: "Which medication are you calling about today?"
-Patient: "The Chlorhexidine mouth rinse."
-→ Call select_medication with medication_name="Chlorhexidine"
+Patient: "The Ozempic"
+→ Call select_medication with medication_name="Ozempic"
 
-Patient: "I'm not sure of the name. It's the antibiotic from my tooth extraction."
-You: "I see you have Amoxicillin 500mg prescribed by Dr. Park following your extraction. Is that the one?"
-Patient: "Yes, that's it."
-→ Call select_medication with medication_name="Amoxicillin"
+Patient: "My weekly shot"
+→ If only one injectable on file, call select_medication
+→ If multiple, ask: "I see you have Ozempic and Wegovy. Which one?"
 
-# Data Normalization
-Medication names may be spoken differently:
-- "Chlorhexidine" / "that mouth rinse" / "the rinse" → match to Chlorhexidine
-- Brand vs generic names should match when possible
-- Descriptions like "the antibiotic" → match by medication type
+# No Match After 2 Attempts
+If patient has tried twice and you still can't identify:
+→ Call request_staff with reason="couldn't identify medication"
 
 # Guardrails
-- Never guess which medication—always confirm with the patient
-- If unable to identify medication, ask for more details
-- Stay on topic: medication identification only
-
-# Error Handling
-If you don't understand the medication name:
-- Ask naturally: "I'm sorry, could you spell that for me?" or "Could you describe it?"
-- Never assume—always confirm before proceeding""",
+- Always confirm before selecting
+- Use GLP-1 aliases: Ozempic, Wegovy, Mounjaro, Zepbound, Trulicity
+- Don't guess—ask for clarification if unclear""",
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="select_medication",
-                    description="Select medication patient is asking about after confirmation.",
+                    description="Select medication after matching caller's description. Use GLP-1 aliases for matching.",
                     properties={
-                        "medication_name": {"type": "string", "description": "Name of the medication selected"},
+                        "medication_name": {"type": "string", "description": "Name of the medication (brand name preferred)"},
                     },
                     required=["medication_name"],
                     handler=self._select_medication_handler,
@@ -570,190 +675,248 @@ If you don't understand the medication name:
                 self._request_staff_schema(),
             ],
             respond_immediately=True,
+            pre_actions=[{"type": "tts_say", "text": intro}] if attempts == 0 else None,
         )
 
-    def create_status_node(self) -> NodeConfig:
+    # ==================== Status Nodes (6 separate per blueprint) ====================
+
+    def _status_base_functions(self) -> list:
+        """Common functions for all status nodes."""
+        return [
+            FlowsFunctionSchema(
+                name="proceed_to_completion",
+                description="Patient satisfied with status info. Ask if anything else needed.",
+                properties={},
+                required=[],
+                handler=self._proceed_to_completion_handler,
+            ),
+            self._check_another_medication_schema(),
+            self._request_staff_schema(),
+        ]
+
+    def create_status_sent_node(self) -> NodeConfig:
+        """Status: Prescription sent to pharmacy."""
+        status_message = self._format_status_message("status_sent")
         state = self.flow_manager.state
-        medication_name = state.get("medication_name", "Unknown")
-        dosage = state.get("dosage", "")
-        prescribing_physician = state.get("prescribing_physician", "your doctor")
-        refill_status = state.get("refill_status", "Unknown")
-        refills_remaining = state.get("refills_remaining", 0)
-        last_filled_date = state.get("last_filled_date", "Unknown")
-        next_refill_date = state.get("next_refill_date", "")
-        pharmacy_name = state.get("pharmacy_name", "your pharmacy")
         pharmacy_phone = state.get("pharmacy_phone", "")
-        pharmacy_address = state.get("pharmacy_address", "")
 
         return NodeConfig(
-            name="status",
+            name="status_sent",
             task_messages=[{
                 "role": "system",
-                "content": f"""# CRITICAL: SPEAK FIRST
-You MUST immediately share the prescription status below. Do NOT call any function before speaking.
-Say the status info FIRST, then ask if there's anything else you can help with.
+                "content": f"""Status has been communicated. The prescription was sent to the pharmacy.
 
-# Current Prescription Information
-- Medication: {medication_name} {dosage}
-- Prescribing Physician: {prescribing_physician}
-- Refill Status: {refill_status}
-- Refills Remaining: {refills_remaining}
-- Last Filled: {last_filled_date}
-- Next Eligible Refill: {next_refill_date}
+# What Was Said
+"{status_message}"
 
-# Pharmacy on File
-- Name: {pharmacy_name}
-- Phone: {pharmacy_phone}
-- Address: {pharmacy_address}
+# Caller Options
+- Satisfied → call proceed_to_completion
+- Questions about pharmacy/timing → call request_staff with reason="pharmacy questions"
+- Another medication → call check_another_medication
 
-# Scenario Handling
+# Pharmacy Contact
+{f"They can reach the pharmacy at {pharmacy_phone}." if pharmacy_phone else ""}
 
-## Already Sent to Pharmacy (status is "Sent to Pharmacy")
-1. Confirm: "Your refill for {medication_name} has already been sent to {pharmacy_name}."
-2. Provide pharmacy contact: "You can reach them at {pharmacy_phone} to check if it's ready for pickup."
-3. Do NOT offer to send it again - it's already been sent
-4. If patient wants to check on timing, suggest calling the pharmacy directly
+Do NOT offer to send again - it's already sent.""",
+            }],
+            functions=self._status_base_functions(),
+            respond_immediately=False,
+            pre_actions=[{"type": "tts_say", "text": status_message}],
+        )
 
-## Pending Doctor Approval (status is "Pending Doctor Approval")
-1. Explain: "I see your refill request for {medication_name} is currently awaiting approval from {prescribing_physician}."
-2. Provide timeline: "The doctor's office typically reviews these within 1 to 2 business days."
-3. Do NOT offer to submit another renewal request - one is already pending
-4. If patient expresses urgency or needs it sooner → call request_staff to connect with someone who can help expedite
+    def create_status_pending_node(self) -> NodeConfig:
+        """Status: Pending prior authorization."""
+        status_message = self._format_status_message("status_pending")
 
-## Refills Available (refills_remaining > 0, status is Active/Ready)
-1. Confirm medication details
-2. Offer to send refill: "You have {refills_remaining} refills remaining. Would you like me to send the refill to your pharmacy?"
-3. If yes → confirm pharmacy → call submit_refill
-4. Inform: "Your pharmacy should have it ready within 2 to 4 hours."
+        return NodeConfig(
+            name="status_pending",
+            task_messages=[{
+                "role": "system",
+                "content": f"""Status has been communicated. The prescription is pending prior authorization.
 
-## No Refills Remaining (refills_remaining = 0, status is NOT "Pending Doctor Approval")
-1. Explain: "This prescription has no refills remaining."
-2. Offer to request renewal: "I can submit a refill request to {prescribing_physician} for review. This typically takes 1 to 2 business days."
-3. If yes → call submit_renewal_request
+# What Was Said
+"{status_message}"
 
-## Too Early to Refill (status is "Too Early")
-1. Explain: "Based on your last fill date, it's a bit early for a refill."
-2. Provide next eligible date: "You'll be eligible for a refill on {next_refill_date}."
-3. If patient insists they need it early (vacation, running low, etc.) → call request_staff to connect with someone who can review the exception request
+# Caller Options
+- Satisfied → call proceed_to_completion
+- Urgent/need to expedite → call request_staff with reason="expedite prior auth"
+- Another medication → call check_another_medication
 
-## Prescription Expired or Completed
-1. Explain the prescription is no longer active
-2. Recommend scheduling follow-up if needed
+Do NOT submit another request - one is already pending.""",
+            }],
+            functions=self._status_base_functions(),
+            respond_immediately=False,
+            pre_actions=[{"type": "tts_say", "text": status_message}],
+        )
 
-# Pharmacy Changes
-If patient wants to change pharmacy:
-→ "I'll need to connect you with a staff member who can update your pharmacy on file."
-→ Call request_staff
-Do NOT update pharmacy directly - staff must verify and process pharmacy changes
+    def create_status_ready_node(self) -> NodeConfig:
+        """Status: Ready for pickup at pharmacy."""
+        status_message = self._format_status_message("status_ready")
+        state = self.flow_manager.state
+        pharmacy_phone = state.get("pharmacy_phone", "")
 
-# Guardrails
-- Never provide medical advice about medications
-- Record information immediately via function calls. This step is important.
-- If patient asks about dosage changes or medical concerns, recommend speaking with their doctor
+        return NodeConfig(
+            name="status_ready",
+            task_messages=[{
+                "role": "system",
+                "content": f"""Status has been communicated. The prescription is ready for pickup.
 
-# Error Handling
-If you don't understand the patient's request:
-- Ask naturally: "I'm sorry, could you repeat that?"
-- Never guess what action to take—always confirm
-- If function call fails, continue naturally without mentioning technical issues""",
+# What Was Said
+"{status_message}"
+
+# Caller Options
+- Satisfied → call proceed_to_completion
+- Pharmacy issues → call request_staff with reason="pharmacy issues"
+- Another medication → call check_another_medication
+
+# Pharmacy Contact
+{f"They can reach the pharmacy at {pharmacy_phone}." if pharmacy_phone else ""}""",
+            }],
+            functions=self._status_base_functions(),
+            respond_immediately=False,
+            pre_actions=[{"type": "tts_say", "text": status_message}],
+        )
+
+    def create_status_too_early_node(self) -> NodeConfig:
+        """Status: Too early to refill."""
+        status_message = self._format_status_message("status_too_early")
+
+        return NodeConfig(
+            name="status_too_early",
+            task_messages=[{
+                "role": "system",
+                "content": f"""Status has been communicated. It's too early to refill.
+
+# What Was Said
+"{status_message}"
+
+# Caller Options
+- Accepts, satisfied → call proceed_to_completion
+- Exception needed (lost, broken, traveling) → call request_staff with reason="early refill exception"
+- Another medication → call check_another_medication
+
+If they need an early refill, connect with staff who can review exceptions.""",
+            }],
+            functions=self._status_base_functions(),
+            respond_immediately=False,
+            pre_actions=[{"type": "tts_say", "text": status_message}],
+        )
+
+    def create_status_refills_node(self) -> NodeConfig:
+        """Status: Refills available - offer to send."""
+        status_message = self._format_status_message("status_refills")
+        state = self.flow_manager.state
+        pharmacy_name = state.get("pharmacy_name", "your pharmacy")
+
+        return NodeConfig(
+            name="status_refills",
+            task_messages=[{
+                "role": "system",
+                "content": f"""Status has been communicated. Patient has refills available.
+
+# What Was Said
+"{status_message}"
+
+# Caller Options
+- Yes, send refill → call submit_refill
+- No thanks → call proceed_to_completion
+- Pharmacy change/dosage questions → call request_staff with reason="pharmacy change"
+- Another medication → call check_another_medication
+
+If patient confirms, submit the refill to {pharmacy_name}.""",
             }],
             functions=[
                 FlowsFunctionSchema(
                     name="submit_refill",
-                    description="Submit refill when patient has refills available AND confirms.",
-                    properties={
-                        "pharmacy_name": {"type": "string", "description": "Pharmacy name (use current if not changed)"},
-                    },
-                    required=["pharmacy_name"],
+                    description="Patient confirmed - send refill to pharmacy.",
+                    properties={},
+                    required=[],
                     handler=self._submit_refill_handler,
                 ),
                 FlowsFunctionSchema(
-                    name="submit_renewal_request",
-                    description="Submit renewal to physician when no refills remaining AND patient wants renewal.",
-                    properties={},
-                    required=[],
-                    handler=self._submit_renewal_request_handler,
-                ),
-                self._check_another_prescription_schema(),
-                FlowsFunctionSchema(
                     name="proceed_to_completion",
-                    description="Patient satisfied with prescription info. Transitions to ask 'anything else?'",
+                    description="Patient declines refill or is satisfied.",
                     properties={},
                     required=[],
                     handler=self._proceed_to_completion_handler,
                 ),
-                self._request_staff_schema(),
-            ],
-            respond_immediately=True,
-        )
-
-    def create_closing_node(self) -> NodeConfig:
-        state = self.flow_manager.state
-        first_name = state.get("first_name", "")
-
-        return NodeConfig(
-            name="closing",
-            task_messages=[{
-                "role": "system",
-                "content": f"""# Goal
-Wrap up the call professionally.
-
-# Closing Flow
-1. Ask: "Is there anything else I can help you with?"
-2. If no → thank them and say goodbye
-3. If yes → handle the request appropriately
-
-# CRITICAL: Another Medication/Prescription Question
-If patient asks about ANOTHER MEDICATION, PRESCRIPTION, REFILL, or any medicine:
-→ Call check_another_prescription IMMEDIATELY
-
-Examples that require check_another_prescription:
-- "Can you check on my other prescription?"
-- "What about my fluoride rinse?"
-- "Can you also look at my blood pressure medication?"
-- "I also need to ask about [any medication name]"
-
-# CRITICAL: Scheduling/Appointment Requests
-If patient asks to SCHEDULE an APPOINTMENT or FOLLOW-UP:
-→ Call route_to_workflow with workflow="scheduling" IMMEDIATELY
-
-Examples that require route_to_workflow(scheduling):
-- "I need to schedule a follow-up appointment"
-- "Can I schedule an appointment with Dr. Williams?"
-- "I want to book a visit"
-
-DO NOT use request_staff for scheduling - use route_to_workflow instead.
-
-# Lab Results Requests
-If they ask about LAB RESULTS or BLOOD WORK (test results, not medications):
-→ Call route_to_workflow with workflow="lab_results"
-
-# Example Goodbye
-You: "Is there anything else I can help you with today?"
-Patient: "No, that's everything. Thank you."
-You: "You're welcome{', ' + first_name if first_name else ''}. Thank you for calling {self.organization_name}. Have a great day."
-→ Call end_call
-
-# Guardrails
-- Always ask if there's anything else before ending
-- If patient asks about another medication → check_another_prescription
-- If patient asks about scheduling or appointments → route_to_workflow(scheduling)
-- If patient asks about lab results → route_to_workflow(lab_results)
-- Keep the closing warm and professional
-
-# Error Handling
-If you don't understand the patient's response:
-- Ask naturally: "I'm sorry, did you need help with something else?"
-- Never assume they're done—always confirm""",
-            }],
-            functions=[
-                self._route_to_workflow_schema(),
-                self._check_another_prescription_schema(),
-                self._end_call_schema(),
+                self._check_another_medication_schema(),
                 self._request_staff_schema(),
             ],
             respond_immediately=False,
+            pre_actions=[{"type": "tts_say", "text": status_message}],
         )
+
+    def create_status_renewal_node(self) -> NodeConfig:
+        """Status: Needs renewal/prior auth."""
+        status_message = self._format_status_message("status_renewal")
+        state = self.flow_manager.state
+        prescribing_physician = state.get("prescribing_physician", "your doctor")
+
+        return NodeConfig(
+            name="status_renewal",
+            task_messages=[{
+                "role": "system",
+                "content": f"""Status has been communicated. Prescription needs renewal.
+
+# What Was Said
+"{status_message}"
+
+# Caller Options
+- Yes, submit renewal → call submit_renewal_request
+- No thanks → call proceed_to_completion
+- Dosage change → call request_staff with reason="dosage change request"
+- Another medication → call check_another_medication
+
+If patient confirms, submit renewal request to {prescribing_physician}.""",
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="submit_renewal_request",
+                    description="Patient confirmed - submit renewal request to physician.",
+                    properties={},
+                    required=[],
+                    handler=self._submit_renewal_request_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="proceed_to_completion",
+                    description="Patient declines renewal or is satisfied.",
+                    properties={},
+                    required=[],
+                    handler=self._proceed_to_completion_handler,
+                ),
+                self._check_another_medication_schema(),
+                self._request_staff_schema(),
+            ],
+            respond_immediately=False,
+            pre_actions=[{"type": "tts_say", "text": status_message}],
+        )
+
+    def _route_to_status_node(self, prescription: dict = None) -> NodeConfig:
+        """Route to appropriate status node based on prescription status."""
+        if prescription:
+            # Load prescription data into state
+            state = self.flow_manager.state
+            state["medication_name"] = prescription.get("medication_name", "")
+            state["dosage"] = prescription.get("dosage", "")
+            state["refill_status"] = prescription.get("status", prescription.get("refill_status", ""))
+            state["refills_remaining"] = prescription.get("refills_remaining", 0)
+            state["next_refill_date"] = prescription.get("next_refill_date", "")
+            state["selected_prescription"] = prescription
+
+        status_key = self._get_status_key(prescription or self.flow_manager.state)
+
+        status_node_map = {
+            "status_sent": self.create_status_sent_node,
+            "status_pending": self.create_status_pending_node,
+            "status_ready": self.create_status_ready_node,
+            "status_too_early": self.create_status_too_early_node,
+            "status_refills": self.create_status_refills_node,
+            "status_renewal": self.create_status_renewal_node,
+        }
+
+        creator = status_node_map.get(status_key, self.create_status_pending_node)
+        return creator()
 
     def create_completion_node(self) -> NodeConfig:
         state = self.flow_manager.state
@@ -786,11 +949,11 @@ NOTE: "Thank you" or "Great, thank you" alone is NOT a goodbye signal.
 → Only end_call if they respond with clear goodbye like "No, that's all" or "Bye"
 
 If patient asks about ANOTHER MEDICATION, PRESCRIPTION, REFILL:
-→ Call check_another_prescription IMMEDIATELY
+→ Call check_another_medication IMMEDIATELY
 
 Examples:
-- "What about my other prescription?" → check_another_prescription
-- "Can you also check my [medication]?" → check_another_prescription
+- "What about my other prescription?" → check_another_medication
+- "Can you also check my [medication]?" → check_another_medication
 
 If patient asks to SCHEDULE an APPOINTMENT or FOLLOW-UP:
 → Call route_to_workflow with workflow="scheduling" IMMEDIATELY
@@ -818,14 +981,14 @@ Caller: "No, that's everything. Thank you!"
 → Call end_call
 
 # Guardrails
-- The caller's identity is already verified - no need to re-verify for scheduling or lab results
+- The caller is already verified - no need to re-verify for scheduling or lab results
 - Include relevant context in the reason field when routing
 - Keep responses brief and warm
 - If caller is frustrated or asks for a human, call request_staff""",
             }],
             functions=[
                 self._route_to_workflow_schema(),
-                self._check_another_prescription_schema(),
+                self._check_another_medication_schema(),
                 self._end_call_schema(),
                 self._request_staff_schema(),
             ],
@@ -890,7 +1053,7 @@ If caller has a question you can answer:
             name="verification_failed",
             task_messages=[],
             functions=[],
-            pre_actions=[{"type": "tts_say", "text": "I'm sorry, I wasn't able to verify your identity. For your security, I'll need to transfer you to a staff member who can assist you. One moment please."}],
+            pre_actions=[{"type": "tts_say", "text": "I'm sorry, I couldn't find your record. Let me transfer you to a staff member who can assist you. One moment please."}],
             post_actions=[{"type": "end_conversation"}],
         )
 
@@ -899,6 +1062,9 @@ If caller has a question you can answer:
     async def _lookup_by_phone_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
         phone_digits = self._normalize_phone(args.get("phone_number", ""))
         logger.info(f"Flow: Looking up phone: {self._phone_last4(phone_digits)}")
+
+        # Store for patient_not_found node display
+        flow_manager.state["_last_lookup_phone"] = phone_digits
 
         if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id, "prescription_status"):
             # Store lookup record for DOB verification
@@ -921,91 +1087,137 @@ If caller has a question you can answer:
                 "prescriptions": patient.get("prescriptions", []),
             }
             logger.info("Flow: Found record, requesting DOB")
-            return None, self.create_returning_patient_verify_dob_node()
+            return None, self.create_verify_dob_node()
 
-        # Not found - transfer to staff (protected flow)
-        logger.info("Flow: No patient found - transferring to staff")
+        # Not found - offer retry or transfer (max 2 attempts)
+        flow_manager.state["lookup_attempts"] = flow_manager.state.get("lookup_attempts", 0) + 1
+        if flow_manager.state["lookup_attempts"] >= 2:
+            logger.info("Flow: No patient found after 2 attempts - transferring to staff")
+            await self._initiate_sip_transfer(flow_manager)
+            return None, self.create_patient_not_found_final_node()
+
+        logger.info("Flow: No patient found - offering retry")
+        flow_manager.state["_last_lookup_dob"] = ""
+        return None, self.create_patient_not_found_node()
+
+    async def _retry_lookup_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+        """Retry patient lookup with new phone/DOB - increments lookup_attempts."""
+        phone_digits = self._normalize_phone(args.get("phone_number", ""))
+        provided_dob = args.get("date_of_birth", "")
+
+        logger.info(f"Flow: Retry lookup with phone: {self._phone_last4(phone_digits)}")
+
+        if patient := await get_async_patient_db().find_patient_by_phone(phone_digits, self.organization_id, "prescription_status"):
+            # Found patient - verify DOB if provided, otherwise ask for it
+            flow_manager.state["_lookup_record"] = {
+                "patient_id": patient.get("patient_id"),
+                "first_name": patient.get("first_name", ""),
+                "last_name": patient.get("last_name", ""),
+                "date_of_birth": patient.get("date_of_birth", ""),
+                "phone_number": patient.get("phone_number", ""),
+                "medication_name": patient.get("medication_name", ""),
+                "dosage": patient.get("dosage", ""),
+                "prescribing_physician": patient.get("prescribing_physician", ""),
+                "refill_status": patient.get("refill_status", ""),
+                "refills_remaining": patient.get("refills_remaining", 0),
+                "last_filled_date": patient.get("last_filled_date", ""),
+                "next_refill_date": patient.get("next_refill_date", ""),
+                "pharmacy_name": patient.get("pharmacy_name", ""),
+                "pharmacy_phone": patient.get("pharmacy_phone", ""),
+                "pharmacy_address": patient.get("pharmacy_address", ""),
+                "prescriptions": patient.get("prescriptions", []),
+            }
+            logger.info("Flow: Found record on retry, requesting DOB")
+            return None, self.create_verify_dob_node()
+
+        # Still not found after retry - go to final not found
+        logger.info("Flow: Still no patient found on retry - transferring to staff")
         await self._initiate_sip_transfer(flow_manager)
-        return None, self.create_returning_patient_not_found_node()
+        return None, self.create_patient_not_found_final_node()
 
     async def _verify_dob_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+        """Verify DOB and route using software logic per blueprint."""
         provided = parse_natural_date(args.get("date_of_birth", "").strip())
         lookup = flow_manager.state.get("_lookup_record", {})
         stored = lookup.get("date_of_birth", "")
         logger.info(f"Flow: Verifying DOB - provided: {provided}, stored: {stored}")
 
-        if provided and provided == stored:
-            # DOB matches - mark verified and load domain data
-            flow_manager.state["identity_verified"] = True
-            flow_manager.state["patient_id"] = lookup.get("patient_id")
-            flow_manager.state["first_name"] = lookup.get("first_name", "")
-            flow_manager.state["last_name"] = lookup.get("last_name", "")
-            flow_manager.state["date_of_birth"] = stored
-            flow_manager.state["phone_number"] = lookup.get("phone_number", "")
-            flow_manager.state["patient_name"] = f"{lookup.get('first_name', '')} {lookup.get('last_name', '')}".strip()
+        # Store for patient_not_found display
+        flow_manager.state["_last_lookup_dob"] = provided or args.get("date_of_birth", "").strip()
 
-            # Load domain-specific data for prescriptions
-            flow_manager.state["medication_name"] = lookup.get("medication_name", "")
-            flow_manager.state["dosage"] = lookup.get("dosage", "")
-            flow_manager.state["prescribing_physician"] = lookup.get("prescribing_physician", "")
-            flow_manager.state["refill_status"] = lookup.get("refill_status", "")
-            flow_manager.state["refills_remaining"] = lookup.get("refills_remaining", 0)
-            flow_manager.state["last_filled_date"] = lookup.get("last_filled_date", "")
-            flow_manager.state["next_refill_date"] = lookup.get("next_refill_date", "")
-            flow_manager.state["pharmacy_name"] = lookup.get("pharmacy_name", "")
-            flow_manager.state["pharmacy_phone"] = lookup.get("pharmacy_phone", "")
-            flow_manager.state["pharmacy_address"] = lookup.get("pharmacy_address", "")
-            flow_manager.state["prescriptions"] = lookup.get("prescriptions", [])
-
+        # DOB mismatch - go to patient_not_found (offer retry)
+        if not provided or provided != stored:
+            logger.warning("Flow: DOB mismatch")
             flow_manager.state.pop("_lookup_record", None)
-            first_name = lookup.get("first_name", "")
-            logger.info(f"Flow: DOB verified for {first_name}")
+            flow_manager.state["lookup_attempts"] = flow_manager.state.get("lookup_attempts", 0) + 1
 
-            # Check if we have multiple prescriptions
-            prescriptions = flow_manager.state.get("prescriptions", [])
-            if len(prescriptions) > 1:
-                return f"Thank you, {first_name}. I've verified your identity. Which medication are you calling about today?", self.create_medication_identification_node()
+            if flow_manager.state["lookup_attempts"] >= 2:
+                await self._initiate_sip_transfer(flow_manager)
+                return None, self.create_patient_not_found_final_node()
 
-            # Single prescription - provide status directly
-            medication_name = flow_manager.state.get("medication_name", "your medication")
-            refill_status = flow_manager.state.get("refill_status", "")
-            pharmacy_name = flow_manager.state.get("pharmacy_name", "your pharmacy")
-            pharmacy_phone = flow_manager.state.get("pharmacy_phone", "")
-            prescribing_physician = flow_manager.state.get("prescribing_physician", "your doctor")
-            next_refill_date = flow_manager.state.get("next_refill_date", "")
+            return None, self.create_patient_not_found_node()
 
-            status_lower = refill_status.lower() if refill_status else ""
+        # DOB matches - mark verified and load domain data
+        flow_manager.state["identity_verified"] = True
+        flow_manager.state["patient_id"] = lookup.get("patient_id")
+        flow_manager.state["first_name"] = lookup.get("first_name", "")
+        flow_manager.state["last_name"] = lookup.get("last_name", "")
+        flow_manager.state["date_of_birth"] = stored
+        flow_manager.state["phone_number"] = lookup.get("phone_number", "")
+        flow_manager.state["patient_name"] = f"{lookup.get('first_name', '')} {lookup.get('last_name', '')}".strip()
 
-            if status_lower == "sent to pharmacy":
-                message = f"Thank you, {first_name}. I found your record. Your refill for {medication_name} has already been sent to {pharmacy_name}."
-                if pharmacy_phone:
-                    message += f" You can reach them at {pharmacy_phone} to check if it's ready for pickup."
-                return message, self.create_completion_node()
+        # Load domain-specific data for prescriptions
+        flow_manager.state["medication_name"] = lookup.get("medication_name", "")
+        flow_manager.state["dosage"] = lookup.get("dosage", "")
+        flow_manager.state["prescribing_physician"] = lookup.get("prescribing_physician", "")
+        flow_manager.state["refill_status"] = lookup.get("refill_status", "")
+        flow_manager.state["refills_remaining"] = lookup.get("refills_remaining", 0)
+        flow_manager.state["last_filled_date"] = lookup.get("last_filled_date", "")
+        flow_manager.state["next_refill_date"] = lookup.get("next_refill_date", "")
+        flow_manager.state["pharmacy_name"] = lookup.get("pharmacy_name", "")
+        flow_manager.state["pharmacy_phone"] = lookup.get("pharmacy_phone", "")
+        flow_manager.state["pharmacy_address"] = lookup.get("pharmacy_address", "")
+        flow_manager.state["prescriptions"] = lookup.get("prescriptions", [])
 
-            elif status_lower == "pending doctor approval":
-                message = f"Thank you, {first_name}. I found your record. I see your refill request for {medication_name} is currently awaiting approval from {prescribing_physician}. The doctor's office typically reviews these within 1 to 2 business days."
-                return message, self.create_completion_node()
-
-            elif status_lower == "too early":
-                message = f"Thank you, {first_name}. I found your record. Based on your last fill date, it's a bit early for a refill of {medication_name}."
-                if next_refill_date:
-                    message += f" You'll be eligible for a refill on {next_refill_date}."
-                message += " If you need an exception, I can connect you with our staff."
-                return message, self.create_status_node()
-
-            elif status_lower in ("ready for pickup", "ready"):
-                message = f"Thank you, {first_name}. I found your record. Your prescription for {medication_name} is ready for pickup at {pharmacy_name}."
-                if pharmacy_phone:
-                    message += f" You can reach them at {pharmacy_phone}."
-                return message, self.create_completion_node()
-
-            return f"Welcome back, {first_name}! Let me check on your prescription.", self.create_status_node()
-
-        # DOB mismatch - transfer to staff (protected flow)
-        logger.warning("Flow: DOB mismatch - transferring to staff")
         flow_manager.state.pop("_lookup_record", None)
-        await self._initiate_sip_transfer(flow_manager)
-        return "That doesn't match our records. Let me connect you with a colleague who can help.", self.create_returning_patient_not_found_node()
+        first_name = lookup.get("first_name", "")
+        logger.info(f"Flow: DOB verified for {first_name}")
+
+        # Software routing per blueprint:
+        prescriptions = flow_manager.state.get("prescriptions", [])
+        mentioned_medication = flow_manager.state.get("mentioned_medication")
+
+        # 1. Single prescription - route directly to status node
+        if len(prescriptions) == 1:
+            selected = prescriptions[0]
+            flow_manager.state["selected_prescription"] = selected
+            # Load prescription data into state
+            flow_manager.state["medication_name"] = selected.get("medication_name", "")
+            flow_manager.state["dosage"] = selected.get("dosage", "")
+            flow_manager.state["refill_status"] = selected.get("status", selected.get("refill_status", ""))
+            flow_manager.state["refills_remaining"] = selected.get("refills_remaining", 0)
+            flow_manager.state["next_refill_date"] = selected.get("next_refill_date", "")
+
+            logger.info(f"Flow: Single prescription - routing to status node")
+            return None, self._route_to_status_node(selected)
+
+        # 2. Multiple prescriptions + mentioned medication match
+        if mentioned_medication and len(prescriptions) > 1:
+            match = self._find_medication_match(mentioned_medication, prescriptions)
+            if match:
+                flow_manager.state["selected_prescription"] = match
+                flow_manager.state["medication_name"] = match.get("medication_name", "")
+                flow_manager.state["dosage"] = match.get("dosage", "")
+                flow_manager.state["refill_status"] = match.get("status", match.get("refill_status", ""))
+                flow_manager.state["refills_remaining"] = match.get("refills_remaining", 0)
+                flow_manager.state["next_refill_date"] = match.get("next_refill_date", "")
+
+                logger.info(f"Flow: Matched mentioned medication '{mentioned_medication}' - routing to status node")
+                return None, self._route_to_status_node(match)
+
+        # 3. Multiple prescriptions, no match - go to medication_select
+        logger.info(f"Flow: Multiple prescriptions, no match - routing to medication_select")
+        return None, self.create_medication_select_node()
 
     async def _initiate_sip_transfer(self, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         """Initiate SIP transfer for protected flow verification failures."""
@@ -1034,141 +1246,65 @@ If caller has a question you can answer:
                 self.pipeline.transfer_in_progress = False
             return None, self.create_transfer_failed_node()
 
-    # ==================== Handlers: Verification ====================
+    # ==================== Handlers: Routing ====================
 
-    async def _proceed_to_verification_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
-        logger.info("Flow: Proceeding to verification")
-        return "For privacy and security, I need to verify your identity first. May I have your first and last name?", self.create_returning_patient_lookup_node()
-
-    async def _verify_identity_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
-        provided_name = args.get("name", "").strip()
-        provided_dob = args.get("date_of_birth", "").strip()
-
-        first_name = flow_manager.state.get("first_name", "")
-        last_name = flow_manager.state.get("last_name", "")
-        stored_name = f"{first_name} {last_name}".strip() if first_name or last_name else flow_manager.state.get("patient_name", "")
-        stored_dob = flow_manager.state.get("date_of_birth", "")
-
-        provided_name_normalized = self._normalize_name(provided_name)
-        stored_name_normalized = self._normalize_name(stored_name)
-        provided_dob_normalized = self._normalize_dob(provided_dob)
-        stored_dob_normalized = self._normalize_dob(stored_dob)
-
-        name_match = provided_name_normalized == stored_name_normalized if stored_name_normalized else False
-        dob_match = provided_dob_normalized == stored_dob_normalized if stored_dob_normalized else False
-
-        logger.info(f"Flow: Identity verification - name_match={name_match}, dob_match={dob_match}")
-
-        caller_first_name = provided_name.strip().split()[0].title() if provided_name.strip() else "there"
-
-        if name_match and dob_match:
-            flow_manager.state["identity_verified"] = True
-
-            if "," in provided_name:
-                parts = [p.strip() for p in provided_name.split(",")]
-                if len(parts) == 2:
-                    flow_manager.state["last_name"] = parts[0]
-                    flow_manager.state["first_name"] = parts[1]
-            else:
-                parts = provided_name.strip().split()
-                if len(parts) >= 2:
-                    flow_manager.state["first_name"] = parts[0]
-                    flow_manager.state["last_name"] = " ".join(parts[1:])
-                elif len(parts) == 1:
-                    flow_manager.state["first_name"] = parts[0]
-
-            flow_manager.state["patient_name"] = provided_name
-            flow_manager.state["date_of_birth"] = stored_dob
-
-            logger.info(f"Flow: Identity verified for {caller_first_name}")
-
-            prescriptions = flow_manager.state.get("prescriptions", [])
-            if len(prescriptions) > 1:
-                return f"Thank you, {caller_first_name}. I've verified your identity. Which medication are you calling about today?", self.create_medication_identification_node()
-
-            medication_name = flow_manager.state.get("medication_name", "your medication")
-            refill_status = flow_manager.state.get("refill_status", "")
-            pharmacy_name = flow_manager.state.get("pharmacy_name", "your pharmacy")
-            pharmacy_phone = flow_manager.state.get("pharmacy_phone", "")
-            prescribing_physician = flow_manager.state.get("prescribing_physician", "your doctor")
-            next_refill_date = flow_manager.state.get("next_refill_date", "")
-
-            status_lower = refill_status.lower() if refill_status else ""
-
-            if status_lower == "sent to pharmacy":
-                message = f"Thank you, {caller_first_name}. I found your record. Your refill for {medication_name} has already been sent to {pharmacy_name}."
-                if pharmacy_phone:
-                    message += f" You can reach them at {pharmacy_phone} to check if it's ready for pickup."
-                return message, self.create_completion_node()
-
-            elif status_lower == "pending doctor approval":
-                message = f"Thank you, {caller_first_name}. I found your record. I see your refill request for {medication_name} is currently awaiting approval from {prescribing_physician}. The doctor's office typically reviews these within 1 to 2 business days."
-                return message, self.create_completion_node()
-
-            elif status_lower == "too early":
-                message = f"Thank you, {caller_first_name}. I found your record. Based on your last fill date, it's a bit early for a refill of {medication_name}."
-                if next_refill_date:
-                    message += f" You'll be eligible for a refill on {next_refill_date}."
-                message += " If you need an exception, I can connect you with our staff."
-                return message, self.create_status_node()
-
-            elif status_lower in ("ready for pickup", "ready"):
-                message = f"Thank you, {caller_first_name}. I found your record. Your prescription for {medication_name} is ready for pickup at {pharmacy_name}."
-                if pharmacy_phone:
-                    message += f" You can reach them at {pharmacy_phone}."
-                return message, self.create_completion_node()
-
-            else:
-                return f"Thank you, {caller_first_name}. I've verified your identity.", self.create_status_node()
+    async def _proceed_to_prescription_status_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str | None, NodeConfig]:
+        """Route to prescription status flow, capturing mentioned medication if provided."""
+        mentioned_medication = args.get("mentioned_medication", "")
+        if mentioned_medication:
+            flow_manager.state["mentioned_medication"] = mentioned_medication
+            logger.info(f"Flow: Proceeding to prescription status with mentioned medication: {mentioned_medication}")
         else:
-            logger.warning(f"Flow: Identity verification failed - provided: {provided_name}, {provided_dob}")
-            return None, self._create_verification_failed_node()
+            logger.info("Flow: Proceeding to prescription status")
+
+        return None, self.create_patient_lookup_node()
+
+    async def _proceed_to_other_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+        """Route to other requests node for scheduling/lab results."""
+        logger.info("Flow: Proceeding to other requests")
+        return None, self.create_other_requests_node()
 
     # ==================== Handlers: Prescription Actions ====================
 
     async def _select_medication_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+        """Select medication using GLP-1 alias matching and route to status node."""
         medication_name = args.get("medication_name", "").strip()
         logger.info(f"Flow: Selected medication: {medication_name}")
 
         prescriptions = flow_manager.state.get("prescriptions", [])
-        selected_rx = None
-        for rx in prescriptions:
-            if medication_name.lower() in rx.get("medication_name", "").lower():
-                selected_rx = rx
-                flow_manager.state["medication_name"] = rx.get("medication_name", "")
-                flow_manager.state["dosage"] = rx.get("dosage", "")
-                flow_manager.state["prescribing_physician"] = rx.get("prescribing_physician", "")
-                flow_manager.state["refill_status"] = rx.get("refill_status", "")
-                flow_manager.state["refills_remaining"] = rx.get("refills_remaining", 0)
-                flow_manager.state["last_filled_date"] = rx.get("last_filled_date", "")
-                flow_manager.state["next_refill_date"] = rx.get("next_refill_date", "")
-                break
+
+        # Use GLP-1 medication matching
+        selected_rx = self._find_medication_match(medication_name, prescriptions)
+
+        # Fallback to simple matching if GLP-1 matching didn't work
+        if not selected_rx:
+            for rx in prescriptions:
+                if medication_name.lower() in rx.get("medication_name", "").lower():
+                    selected_rx = rx
+                    break
 
         if not selected_rx:
-            return f"I couldn't find a prescription matching '{medication_name}'. Could you clarify which medication?", self.create_medication_identification_node()
+            # Increment attempt counter
+            flow_manager.state["medication_select_attempts"] = flow_manager.state.get("medication_select_attempts", 0) + 1
 
-        med_name = selected_rx.get("medication_name", medication_name)
-        refill_status = selected_rx.get("refill_status", "")
-        refills_remaining = selected_rx.get("refills_remaining", 0)
-        pharmacy_name = flow_manager.state.get("pharmacy_name", "your pharmacy")
-        pharmacy_phone = flow_manager.state.get("pharmacy_phone", "")
+            if flow_manager.state["medication_select_attempts"] >= 2:
+                logger.info("Flow: Couldn't identify medication after 2 attempts - transferring to staff")
+                return None, await self._request_staff_handler({"reason": "couldn't identify medication"}, flow_manager)
 
-        status_lower = refill_status.lower() if refill_status else ""
+            return f"I couldn't find a prescription matching '{medication_name}'. Could you clarify which medication?", self.create_medication_select_node()
 
-        if status_lower == "active" and refills_remaining > 0:
-            message = f"Your {med_name} prescription is active with {refills_remaining} refills remaining. Would you like me to send a refill to {pharmacy_name}?"
-            return message, self.create_status_node()
-        elif status_lower == "completed":
-            message = f"Your {med_name} prescription has been completed. You would need a new prescription from your doctor for more."
-            return message, self.create_completion_node()
-        elif status_lower == "sent to pharmacy":
-            message = f"Your {med_name} has already been sent to {pharmacy_name}."
-            if pharmacy_phone:
-                message += f" You can reach them at {pharmacy_phone} to check if it's ready."
-            return message, self.create_completion_node()
-        else:
-            message = f"Your {med_name} prescription status is: {refill_status}."
-            return message, self.create_status_node()
+        # Load prescription data into state
+        flow_manager.state["medication_name"] = selected_rx.get("medication_name", "")
+        flow_manager.state["dosage"] = selected_rx.get("dosage", "")
+        flow_manager.state["prescribing_physician"] = selected_rx.get("prescribing_physician", "")
+        flow_manager.state["refill_status"] = selected_rx.get("status", selected_rx.get("refill_status", ""))
+        flow_manager.state["refills_remaining"] = selected_rx.get("refills_remaining", 0)
+        flow_manager.state["last_filled_date"] = selected_rx.get("last_filled_date", "")
+        flow_manager.state["next_refill_date"] = selected_rx.get("next_refill_date", "")
+        flow_manager.state["selected_prescription"] = selected_rx
+
+        # Route to appropriate status node
+        return None, self._route_to_status_node(selected_rx)
 
     async def _submit_refill_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
         pharmacy_name = args.get("pharmacy_name", flow_manager.state.get("pharmacy_name", "your pharmacy"))
@@ -1203,12 +1339,12 @@ If caller has a question you can answer:
 
         return f"I've submitted the refill request to {physician} for review. Once approved, the prescription will be sent to {pharmacy_name}. You should hear back within 1 to 2 business days.", self.create_completion_node()
 
-    async def _check_another_prescription_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
+    async def _check_another_medication_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
         logger.info("Flow: Checking another prescription")
         prescriptions = flow_manager.state.get("prescriptions", [])
 
         if len(prescriptions) > 1:
-            return "", self.create_medication_identification_node()
+            return "", self.create_medication_select_node()
         else:
             return "I only see one prescription on file for you. Is there something else I can help you with?", self.create_completion_node()
 
@@ -1254,11 +1390,10 @@ If caller has a question you can answer:
     # ==================== Handlers: Transfers ====================
 
     async def _request_staff_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-        urgent = args.get("urgent", False)
         patient_confirmed = args.get("patient_confirmed", False)
         reason = args.get("reason", "general inquiry")
 
-        logger.info(f"Flow: Staff transfer requested - reason: {reason}, urgent: {urgent}, confirmed: {patient_confirmed}")
+        logger.info(f"Flow: Staff transfer requested - reason: {reason}, confirmed: {patient_confirmed}")
 
         staff_number = self.cold_transfer_config.get("staff_number")
 

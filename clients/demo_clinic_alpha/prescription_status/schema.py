@@ -1,3 +1,81 @@
+# Prescription status values - maps to status_* nodes in flow
+PRESCRIPTION_STATUS = {
+    "status_sent": {
+        "label": "Sent to Pharmacy",
+        "template": "Your {medication_name} {dosage} has been sent to {pharmacy_name}. You can reach them at {pharmacy_phone} to check if it's ready for pickup."
+    },
+    "status_pending": {
+        "label": "Pending Prior Auth",
+        "template": "Your {medication_name} is awaiting prior authorization approval. This typically takes 2-3 business days. We'll call you once it's approved."
+    },
+    "status_ready": {
+        "label": "Ready for Pickup",
+        "template": "Your {medication_name} {dosage} is ready for pickup at {pharmacy_name}."
+    },
+    "status_too_early": {
+        "label": "Too Early to Refill",
+        "template": "It's a bit early to refill your {medication_name}. Your insurance will cover the next fill on {next_refill_date}."
+    },
+    "status_refills": {
+        "label": "Refills Available",
+        "template": "You have {refills_remaining} refills remaining for your {medication_name} {dosage}. Would you like me to send one to {pharmacy_name}?"
+    },
+    "status_renewal": {
+        "label": "Needs Renewal",
+        "template": "Your {medication_name} prescription needs a new prior authorization. Would you like me to submit the request to {prescribing_physician}?"
+    },
+}
+
+# GLP-1 medications with STT aliases for matching
+MEDICATIONS = {
+    "Ozempic": {
+        "generic": "semaglutide",
+        "aliases": ["ozempic", "oh-zempic", "ozempik", "semaglutide", "my weekly shot", "diabetes shot"]
+    },
+    "Wegovy": {
+        "generic": "semaglutide",
+        "aliases": ["wegovy", "we-govy", "wegovi", "weight loss shot", "semaglutide"]
+    },
+    "Mounjaro": {
+        "generic": "tirzepatide",
+        "aliases": ["mounjaro", "moun-jaro", "mounjarro", "tirzepatide", "the new one"]
+    },
+    "Zepbound": {
+        "generic": "tirzepatide",
+        "aliases": ["zepbound", "zep-bound", "tirzepatide", "weight loss injection"]
+    },
+    "Trulicity": {
+        "generic": "dulaglutide",
+        "aliases": ["trulicity", "true-licity", "dulaglutide", "weekly diabetes medication"]
+    },
+}
+
+# Flow state variables (runtime, not persisted to DB)
+FLOW_STATE = {
+    # Identity
+    "patient_id": None,
+    "patient_name": None,
+    "first_name": None,
+    "last_name": None,
+    "date_of_birth": None,
+    "phone_number": None,
+    # Pharmacy
+    "pharmacy_name": None,
+    "pharmacy_phone": None,
+    "pharmacy_address": None,
+    # Prescriptions
+    "prescriptions": [],  # Array of prescription objects
+    "selected_prescription": None,  # Current prescription being discussed
+    "mentioned_medication": None,  # Medication volunteered before medication_select
+    # Flags
+    "identity_verified": False,
+    "routed_to": None,
+    # Retry counters (reset per attempt type)
+    "lookup_attempts": 0,  # max 2
+    "medication_select_attempts": 0,  # max 2
+    "transfer_attempts": 0,  # max 2
+}
+
 WORKFLOW_SCHEMA = {
     "enabled": True,
     "display_name": "Prescription Status",

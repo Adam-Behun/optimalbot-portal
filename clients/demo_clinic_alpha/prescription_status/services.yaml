@@ -19,9 +19,9 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.55
-    eot_threshold: 0.65
-    eot_timeout_ms: 3500
+    eager_eot_threshold: 0.4
+    eot_threshold: 0.5
+    eot_timeout_ms: 1200
     keyterm:
       - "prescription"
       - "refill"
@@ -33,17 +33,30 @@ services:
       - "date of birth"
       - "member ID"
       - "medical record number"
-      # Common medication names
-      - "Lisinopril"
-      - "Metformin"
-      - "Atorvastatin"
-      - "Amlodipine"
-      - "Omeprazole"
-      - "Losartan"
-      - "Gabapentin"
-      - "Hydrochlorothiazide"
-      - "Sertraline"
-      - "Levothyroxine"
+      # GLP-1 medications (brand names)
+      - "Ozempic"
+      - "Wegovy"
+      - "Mounjaro"
+      - "Zepbound"
+      - "Trulicity"
+      # GLP-1 medications (generic names)
+      - "semaglutide"
+      - "tirzepatide"
+      - "dulaglutide"
+      # Common STT misheard variants
+      - "oh-zempic"
+      - "ozempik"
+      - "we-govy"
+      - "wegovi"
+      - "moun-jaro"
+      - "mounjarro"
+      - "zep-bound"
+      - "true-licity"
+      # Colloquial references
+      - "weekly shot"
+      - "weight loss shot"
+      - "weight loss injection"
+      - "diabetes shot"
 
   llm:
     provider: openai
@@ -60,7 +73,7 @@ services:
     api_key: ${CARTESIA_API_KEY}
 
     generation_config:
-      speed: 0.95
+      speed: 1.0
       volume: 1.0
       emotion: neutral
     aggregate_sentences: true
