@@ -292,9 +292,15 @@ class MockFlowManager:
         self.state = {}
 
 
+class MockTask:
+    async def queue_frames(self, frames):
+        pass  # No-op in simulation
+
+
 class MockPipeline:
     transcripts = []
     transfer_in_progress = False
+    task = MockTask()
 
 
 class MockTransport:
@@ -484,6 +490,13 @@ class FlowRunner:
                                 self.context.add_assistant_message(pre_action_text)
 
                     post_actions = next_node.get("post_actions") or []
+                    for action in post_actions:
+                        if action.get("type") == "tts_say":
+                            post_action_text = action.get("text", "")
+                            if post_action_text:
+                                all_content.append(post_action_text)
+                                self.context.add_assistant_message(post_action_text)
+
                     ends_conversation = (
                         next_node_name == "end" or
                         next_node_name == "transfer_initiated" or

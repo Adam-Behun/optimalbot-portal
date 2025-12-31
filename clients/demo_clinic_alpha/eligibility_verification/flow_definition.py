@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
+from pipecat_flows.types import ActionConfig
 from loguru import logger
 from backend.models import get_async_patient_db
 from backend.sessions import get_async_session_db
@@ -1122,14 +1123,44 @@ EXAMPLES:
             name="transfer_initiated",
             task_messages=[],
             functions=[],
-            pre_actions=[{
-                "type": "tts_say",
-                "text": "Transferring you now, please hold."
-            }],
             post_actions=[{
                 "type": "end_conversation"
             }]
         )
+
+    def create_transfer_pending_node(self) -> NodeConfig:
+        """Node that plays TTS, then executes SIP transfer after speech completes."""
+        return NodeConfig(
+            name="transfer_pending",
+            task_messages=[],
+            functions=[],
+            pre_actions=[
+                {"type": "tts_say", "text": "Transferring you now, please hold."},
+                ActionConfig(type="function", handler=self._execute_sip_transfer),
+            ],
+        )
+
+    async def _execute_sip_transfer(self, action: dict, flow_manager: FlowManager):
+        """Post-action handler that executes SIP transfer after TTS completes."""
+        staff_number = self.cold_transfer_config.get("staff_number")
+        if not staff_number:
+            logger.warning("No staff transfer number configured")
+            return
+        try:
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
+            if self.transport:
+                error = await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                if error:
+                    logger.error(f"SIP transfer failed: {error}")
+                    if self.pipeline:
+                        self.pipeline.transfer_in_progress = False
+                    return
+                logger.info(f"SIP transfer initiated: {staff_number}")
+        except Exception:
+            logger.exception("SIP transfer failed")
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
 
     def create_transfer_failed_node(self) -> NodeConfig:
         return NodeConfig(
@@ -1624,30 +1655,11 @@ EXAMPLES:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         staff_number = self.cold_transfer_config.get("staff_number")
-
         if not staff_number:
             logger.warning("Cold transfer requested but no staff_number configured")
             return None, self.create_transfer_failed_node()
-
-        try:
-            logger.info(f"Cold transfer initiated to: {staff_number}")
-
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = True
-
-            if self.transport:
-                await self.transport.sip_call_transfer({"toEndPoint": staff_number})
-                logger.info(f"SIP call transfer initiated: {staff_number}")
-
-            return None, self.create_transfer_initiated_node()
-
-        except Exception as e:
-            logger.exception("Cold transfer failed")
-
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = False
-
-            return None, self.create_transfer_failed_node()
+        logger.info(f"Cold transfer initiated to: {staff_number}")
+        return None, self.create_transfer_pending_node()
 
     async def _return_to_verification_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager

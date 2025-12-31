@@ -4,6 +4,7 @@ from bson import ObjectId
 from evals.db import get_patient_db, ORG_ID_STR
 from backend.database import get_mongo_client, MONGO_DB_NAME
 from backend.sessions import AsyncSessionRecord
+from backend.utils import parse_natural_date
 
 
 class TestDB:
@@ -30,6 +31,12 @@ class TestDB:
 
         if "phone_number" in record:
             record["phone_number"] = ''.join(c for c in str(record["phone_number"]) if c.isdigit())
+
+        # Normalize date_of_birth to ISO format (YYYY-MM-DD) to match parse_natural_date output
+        if "date_of_birth" in record:
+            normalized_dob = parse_natural_date(record["date_of_birth"])
+            if normalized_dob:
+                record["date_of_birth"] = normalized_dob
 
         if "patient_name" in record and "first_name" not in record:
             parts = record["patient_name"].split()

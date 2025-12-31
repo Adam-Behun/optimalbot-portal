@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
+from pipecat_flows.types import ActionConfig
 from loguru import logger
 
 from backend.models import get_async_patient_db
@@ -308,12 +309,47 @@ DOB: natural format (e.g., "March 22, 1978")""",
 
     # ==================== Transfer Nodes ====================
 
+    def create_transfer_pending_node(self) -> NodeConfig:
+        """Node that plays TTS, then executes SIP transfer after speech completes."""
+        return NodeConfig(
+            name="transfer_pending",
+            task_messages=[],
+            functions=[],
+            pre_actions=[
+                {"type": "tts_say", "text": "Transferring you now, please hold."},
+                ActionConfig(type="function", handler=self._execute_sip_transfer),
+            ],
+        )
+
+    async def _execute_sip_transfer(self, action: dict, flow_manager: FlowManager):
+        """Post-action handler that executes SIP transfer after TTS completes."""
+        staff_number = self._normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
+        if not staff_number:
+            logger.warning("No staff transfer number configured")
+            return
+        try:
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = True
+            if self.transport:
+                error = await self.transport.sip_call_transfer({"toEndPoint": staff_number})
+                if error:
+                    logger.error(f"SIP transfer failed: {error}")
+                    if self.pipeline:
+                        self.pipeline.transfer_in_progress = False
+                    return
+                logger.info(f"SIP transfer initiated: {staff_number}")
+            patient_id = flow_manager.state.get("patient_id")
+            await self._try_db_update(patient_id, "update_patient", {"call_status": "Transferred"}, error_msg="Error updating call status")
+        except Exception:
+            logger.exception("SIP transfer failed")
+            if self.pipeline:
+                self.pipeline.transfer_in_progress = False
+
     def create_transfer_initiated_node(self) -> NodeConfig:
         return NodeConfig(
             name="transfer_initiated",
             task_messages=[],
             functions=[],
-            pre_actions=[{"type": "tts_say", "text": "Transferring you now, please hold."}],
             post_actions=[{"type": "end_conversation"}],
         )
 
@@ -356,16 +392,14 @@ If caller says goodbye:
             stored_dob = patient.get("date_of_birth", "")
             if not stored_dob:
                 logger.warning("Flow: Patient found but no DOB on file - transferring to staff")
-                await self._initiate_sip_transfer(flow_manager)
-                return None, self.create_patient_not_found_final_node()
+                return self._initiate_sip_transfer(flow_manager)
             flow_manager.state["_lookup_record"] = self._extract_lookup_record(patient)
             logger.info("Flow: Found record, requesting DOB")
             return None, self.create_verify_dob_node()
         flow_manager.state["lookup_attempts"] = flow_manager.state.get("lookup_attempts", 0) + 1
         if flow_manager.state["lookup_attempts"] >= 2:
             logger.info("Flow: No patient found after 2 attempts - transferring to staff")
-            await self._initiate_sip_transfer(flow_manager)
-            return None, self.create_patient_not_found_final_node()
+            return self._initiate_sip_transfer(flow_manager)
         logger.info("Flow: No patient found - offering retry")
         flow_manager.state["_last_lookup_dob"] = ""
         return None, self.create_patient_not_found_node()
@@ -381,8 +415,7 @@ If caller says goodbye:
             flow_manager.state.pop("_lookup_record", None)
             flow_manager.state["lookup_attempts"] = flow_manager.state.get("lookup_attempts", 0) + 1
             if flow_manager.state["lookup_attempts"] >= 2:
-                await self._initiate_sip_transfer(flow_manager)
-                return None, self.create_patient_not_found_final_node()
+                return self._initiate_sip_transfer(flow_manager)
             return None, self.create_patient_not_found_node()
         flow_manager.state["identity_verified"] = True
         flow_manager.state["patient_id"] = lookup.get("patient_id")
@@ -421,50 +454,32 @@ If caller says goodbye:
                 logger.info("Flow: Retry successful - patient verified")
                 return greeting, self._route_after_verification(flow_manager)
         logger.info("Flow: Retry failed - transferring to staff")
-        await self._initiate_sip_transfer(flow_manager)
-        return None, self.create_patient_not_found_final_node()
+        return self._initiate_sip_transfer(flow_manager)
 
     # ==================== Transfer Handlers ====================
 
-    async def _initiate_sip_transfer(self, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+    def _initiate_sip_transfer(self, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        """Return the transfer_pending node which handles TTS then transfer."""
         staff_number = self._normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
         if not staff_number:
             logger.warning("No staff transfer number configured")
             return None, self.create_transfer_failed_node()
-        try:
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = True
-            if self.transport:
-                error = await self.transport.sip_call_transfer({"toEndPoint": staff_number})
-                if error:
-                    logger.error(f"SIP transfer failed: {error}")
-                    if self.pipeline:
-                        self.pipeline.transfer_in_progress = False
-                    return None, self.create_transfer_failed_node()
-                logger.info(f"SIP transfer initiated: {staff_number}")
-            patient_id = flow_manager.state.get("patient_id")
-            await self._try_db_update(patient_id, "update_patient", {"call_status": "Transferred"}, error_msg="Error updating call status")
-            return None, self.create_transfer_initiated_node()
-        except Exception:
-            logger.exception("SIP transfer failed")
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = False
-            return None, self.create_transfer_failed_node()
+        return None, self.create_transfer_pending_node()
 
     async def _request_staff_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         reason = args.get("reason", "caller requested transfer")
         logger.info(f"Flow: Staff transfer requested - reason: {reason}")
         if self.CONFIRM_BEFORE_TRANSFER and hasattr(self, 'create_staff_confirmation_node'):
             return None, self.create_staff_confirmation_node()
-        return await self._initiate_sip_transfer(flow_manager)
+        return self._initiate_sip_transfer(flow_manager)
 
     async def _retry_transfer_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         logger.info("Flow: Retrying SIP transfer")
-        return await self._initiate_sip_transfer(flow_manager)
+        return self._initiate_sip_transfer(flow_manager)
 
     async def _initiate_transfer_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         logger.info("Flow: Initiating transfer after message")
-        return await self._initiate_sip_transfer(flow_manager)
+        return self._initiate_sip_transfer(flow_manager)
 
     # ==================== End Call Handler ====================
 

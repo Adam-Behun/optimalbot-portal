@@ -137,36 +137,52 @@ Input is transcribed from speech and may contain errors:
             logger.info("Flow: Single prescription - routing to status node")
             return self._route_to_status_node(selected)
         if mentioned_medication and len(prescriptions) > 1:
-            match = self._find_medication_match(mentioned_medication, prescriptions)
-            if match:
-                flow_manager.state["selected_prescription"] = match
-                flow_manager.state["medication_name"] = match.get("medication_name", "")
-                flow_manager.state["dosage"] = match.get("dosage", "")
-                flow_manager.state["refill_status"] = match.get("status", match.get("refill_status", ""))
-                flow_manager.state["refills_remaining"] = match.get("refills_remaining", 0)
-                flow_manager.state["next_refill_date"] = match.get("next_refill_date", "")
+            matches = self._find_matching_prescriptions(mentioned_medication, prescriptions)
+            if len(matches) == 1:
+                # Unambiguous match
+                selected = matches[0]
+                flow_manager.state["selected_prescription"] = selected
+                flow_manager.state["medication_name"] = selected.get("medication_name", "")
+                flow_manager.state["dosage"] = selected.get("dosage", "")
+                flow_manager.state["refill_status"] = selected.get("status", selected.get("refill_status", ""))
+                flow_manager.state["refills_remaining"] = selected.get("refills_remaining", 0)
+                flow_manager.state["next_refill_date"] = selected.get("next_refill_date", "")
                 logger.info(f"Flow: Matched mentioned medication '{mentioned_medication}' - routing to status node")
-                return self._route_to_status_node(match)
+                return self._route_to_status_node(selected)
+            elif len(matches) > 1:
+                # Ambiguous - multiple prescriptions match (e.g., "semaglutide" matches Ozempic AND Wegovy)
+                logger.info(f"Flow: Multiple matches for '{mentioned_medication}' ({len(matches)} meds) - routing to medication_select")
+                return self.create_medication_select_node()
         logger.info("Flow: Multiple prescriptions, no match - routing to medication_select")
         return self.create_medication_select_node()
 
-    def _find_medication_match(self, mentioned: str, prescriptions: list) -> dict | None:
+    def _find_matching_prescriptions(self, mentioned: str, prescriptions: list) -> list[dict]:
+        """Returns ALL prescriptions matching the mentioned medication."""
         if not mentioned:
-            return None
+            return []
+        matches = []
         mentioned_lower = mentioned.lower().strip()
         for rx in prescriptions:
-            rx_name = rx.get("medication_name", "").lower()
-            if mentioned_lower in rx_name or rx_name in mentioned_lower:
-                return rx
-            for brand_name, med_info in MEDICATIONS.items():
-                if rx_name in brand_name.lower() or brand_name.lower() in rx_name:
-                    aliases = [a.lower() for a in med_info.get("aliases", [])]
-                    if mentioned_lower in aliases or any(a in mentioned_lower for a in aliases):
-                        return rx
-                    generic = med_info.get("generic", "").lower()
-                    if generic and (mentioned_lower == generic or generic in mentioned_lower):
-                        return rx
-        return None
+            if self._rx_matches_mentioned(rx, mentioned_lower):
+                matches.append(rx)
+        return matches
+
+    def _rx_matches_mentioned(self, rx: dict, mentioned_lower: str) -> bool:
+        """Check if a single prescription matches the mentioned medication."""
+        rx_name = rx.get("medication_name", "").lower()
+        # Direct name match
+        if mentioned_lower in rx_name or rx_name in mentioned_lower:
+            return True
+        # Check aliases from MEDICATIONS schema
+        for brand_name, med_info in MEDICATIONS.items():
+            if rx_name in brand_name.lower() or brand_name.lower() in rx_name:
+                aliases = [a.lower() for a in med_info.get("aliases", [])]
+                if mentioned_lower in aliases or any(a in mentioned_lower for a in aliases):
+                    return True
+                generic = med_info.get("generic", "").lower()
+                if generic and (mentioned_lower == generic or generic in mentioned_lower):
+                    return True
+        return False
 
     def _get_status_key(self, prescription: dict) -> str:
         status = prescription.get("status", prescription.get("refill_status", "")).lower()
@@ -832,7 +848,8 @@ Caller: "No, that's everything. Thank you!"
         medication_name = args.get("medication_name", "").strip()
         logger.info(f"Flow: Selected medication: {medication_name}")
         prescriptions = flow_manager.state.get("prescriptions", [])
-        selected_rx = self._find_medication_match(medication_name, prescriptions)
+        matches = self._find_matching_prescriptions(medication_name, prescriptions)
+        selected_rx = matches[0] if matches else None
         if not selected_rx:
             for rx in prescriptions:
                 if medication_name.lower() in rx.get("medication_name", "").lower():

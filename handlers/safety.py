@@ -1,5 +1,13 @@
+import asyncio
+
 from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame
+
+
+def _estimate_tts_duration(text: str) -> float:
+    """Estimate TTS duration based on text length (~3 words/second + buffer)."""
+    words = len(text.split())
+    return (words / 3) + 0.5
 
 
 def _normalize_sip_endpoint(number: str) -> str:
@@ -47,12 +55,15 @@ def setup_safety_handlers(pipeline, safety_monitor, config):
         await pipeline.task.queue_frames([TTSSpeakFrame(msg)])
 
         if config.get("auto_transfer"):
+            await asyncio.sleep(_estimate_tts_duration(msg))
             await _initiate_transfer(pipeline)
 
     @safety_monitor.event_handler("on_staff_requested")
     async def handle_staff_request(processor):
         logger.info(f"Staff transfer requested - session {pipeline.session_id}")
-        await pipeline.task.queue_frames([TTSSpeakFrame("Let me transfer you to someone who can help.")])
+        msg = "Let me transfer you to someone who can help."
+        await pipeline.task.queue_frames([TTSSpeakFrame(msg)])
+        await asyncio.sleep(_estimate_tts_duration(msg))
         await _initiate_transfer(pipeline)
 
 

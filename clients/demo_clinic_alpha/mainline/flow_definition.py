@@ -413,51 +413,7 @@ If you don't understand the caller:
         flow_manager.state["call_reason"] = reason
         flow_manager.state["routed_to"] = "Staff"
         logger.info(f"Flow: Routing to staff - reason: {reason}")
-        return await self._initiate_sip_transfer(flow_manager)
-
-    async def _initiate_sip_transfer(
-        self, flow_manager: FlowManager
-    ) -> tuple[None, NodeConfig]:
-        transfer_number = self.cold_transfer_config.get("staff_number")
-        if not transfer_number:
-            logger.warning("No staff transfer number configured")
-            return None, self.create_transfer_failed_node()
-
-        try:
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = True
-
-            if self.transport:
-                await self.transport.sip_call_transfer({"toEndPoint": transfer_number})
-                logger.info(f"SIP transfer initiated: {transfer_number}")
-
-            patient_id = flow_manager.state.get("patient_id")
-            if patient_id:
-                try:
-                    db = get_async_patient_db()
-                    await db.update_call_status(patient_id, "Transferred", self.organization_id)
-                except Exception as e:
-                    logger.error(f"Error updating call status: {e}")
-
-            return None, NodeConfig(
-                name="transfer_initiated",
-                task_messages=[],
-                functions=[],
-                pre_actions=[{"type": "tts_say", "text": "Transferring you now, please hold."}],
-                post_actions=[{"type": "end_conversation"}],
-            )
-
-        except Exception as e:
-            logger.exception("SIP transfer failed")
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = False
-            return None, self.create_transfer_failed_node()
-
-    async def _retry_transfer_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, NodeConfig]:
-        logger.info("Flow: Retrying SIP transfer")
-        return await self._initiate_sip_transfer(flow_manager)
+        return self._initiate_sip_transfer(flow_manager)
 
     async def _end_call_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
