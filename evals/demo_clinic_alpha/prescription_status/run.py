@@ -55,7 +55,7 @@ def _call_grader(prompt: str) -> str:
 def _format_conversation(conversation: list[dict]) -> str:
     """Format conversation for graders."""
     return "\n".join([
-        f"{'BOT' if c['role'] == 'assistant' else 'CALLER'}: {c['content']}"
+        f"{'BOT' if c['role'] == 'assistant' else 'PATIENT'}: {c['content']}"
         for c in conversation if c.get('content')
     ])
 
@@ -262,7 +262,22 @@ def grade_node_reached(final_node: str, expected_node: str) -> dict:
     return {"pass": False, "reason": f"FAIL: Expected {expected_node}, got {final_node}"}
 
 
-def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict, patient: dict, final_node: str, expected_node: str) -> dict:
+def grade_db_state(db_state: dict, expected_db_state: dict) -> dict:
+    if not expected_db_state:
+        return {"pass": True, "reason": "PASS: No DB state assertions"}
+
+    failures = []
+    for key, expected_val in expected_db_state.items():
+        actual_val = db_state.get(key)
+        if actual_val != expected_val:
+            failures.append(f"{key}: expected {expected_val}, got {actual_val}")
+
+    if failures:
+        return {"pass": False, "reason": f"FAIL: {'; '.join(failures)}"}
+    return {"pass": True, "reason": "PASS: DB state correct"}
+
+
+def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict, patient: dict, final_node: str, expected_node: str, db_state: dict = None, expected_db_state: dict = None) -> dict:
     """
     Run all graders and combine results. ALL must pass for overall pass.
     Returns: {"pass": bool, "reason": str, "details": {...}}
@@ -280,9 +295,10 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
     quality = grade_conversation_quality(conv_text, final_state)
     functions = grade_function_calls(calls_text, conv_text, final_state, patient)
     node_reached = grade_node_reached(final_node, expected_node)
+    db_check = grade_db_state(db_state or {}, expected_db_state or {})
 
     # All must pass
-    all_passed = hipaa["pass"] and quality["pass"] and functions["pass"] and node_reached["pass"]
+    all_passed = hipaa["pass"] and quality["pass"] and functions["pass"] and node_reached["pass"] and db_check["pass"]
 
     # Build combined reason
     failures = []
@@ -294,6 +310,8 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         failures.append(f"functions: {functions['reason']}")
     if not node_reached["pass"]:
         failures.append(f"node: {node_reached['reason']}")
+    if not db_check["pass"]:
+        failures.append(f"db: {db_check['reason']}")
 
     if all_passed:
         reason = "PASS: All checks passed"
@@ -308,6 +326,7 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
             "quality": quality,
             "functions": functions,
             "node_reached": node_reached,
+            "db_state": db_check,
         }
     }
 
@@ -334,8 +353,12 @@ def list_scenarios() -> None:
     config = load_scenarios()
     print("\nAvailable scenarios:\n")
     for s in config["scenarios"]:
-        print(f"  {s['id']:<30} [{s['target_node']}]")
-        print(f"    Expected: {s['expected_problem']}\n")
+        handoff_marker = " [HANDOFF]" if s.get("handoff_context") else ""
+        print(f"  {s['id']:<30} [{s['target_node']}]{handoff_marker}")
+        print(f"    Expected: {s['expected_problem']}")
+        if s.get("handoff_context"):
+            print(f"    Context: {s['handoff_context'][:60]}...")
+        print()
 
 
 # === MOCKS ===
@@ -363,13 +386,14 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, call_data: dict, llm_config: dict, session_id: str, verbose: bool = False):
+    def __init__(self, call_data: dict, llm_config: dict, session_id: str, cold_transfer_config: dict, handoff_context: str = None, verbose: bool = False):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
         self.call_data = call_data
         self.session_id = session_id
+        self.handoff_context = handoff_context
         self.verbose = verbose
 
         self.flow = PrescriptionStatusFlow(
@@ -381,16 +405,22 @@ class FlowRunner:
             transport=self.mock_transport,
             pipeline=self.mock_pipeline,
             organization_id=ORG_ID_STR,
-            cold_transfer_config={"staff_number": "sip:+15551234567@sip.daily.co"},
+            cold_transfer_config=cold_transfer_config,
         )
 
-        self.current_node = self.flow.create_greeting_node()
-        self.current_node_name = "greeting"
-        self.function_calls = []
-        self.done = False
+        # Use handoff_entry node if context provided (simulates mainline handoff)
+        # Otherwise use greeting node (normal call start)
+        if handoff_context:
+            self.current_node = self.flow.create_handoff_entry_node(context=handoff_context)
+            self.current_node_name = "handoff_entry"
+        else:
+            self.current_node = self.flow.create_greeting_node()
+            self.current_node_name = "greeting"
 
         self.context = EvalContextManager()
         self.context.set_node(self.current_node)
+        self.function_calls = []
+        self.done = False
 
     def get_tools(self) -> list[dict]:
         functions = self.current_node.get("functions") or []
@@ -430,6 +460,28 @@ class FlowRunner:
         result, next_node = await handler(func_args, self.mock_flow_manager)
         return result, next_node
 
+    def _print_llm_context(self, messages: list[dict], tools: list[dict] | None, node_name: str, turn: int):
+        """Print what's being sent to the LLM for debugging."""
+        print(f"\n  {'─'*60}")
+        print(f"  LLM CONTEXT (turn {turn}, node: {node_name})")
+        print(f"  {'─'*60}")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "?")
+            content = msg.get("content", "")
+            if role == "system" and len(content) > 200:
+                content = content[:200] + "..."
+            if msg.get("tool_calls"):
+                tc = msg["tool_calls"][0]
+                print(f"  [{i}] {role}: (tool_call: {tc['function']['name']})")
+            elif role == "tool":
+                print(f"  [{i}] {role}: {content[:100]}")
+            else:
+                print(f"  [{i}] {role}: {content[:150]}{'...' if len(content) > 150 else ''}")
+        if tools:
+            tool_names = [t["function"]["name"] for t in tools]
+            print(f"  TOOLS: {tool_names}")
+        print(f"  {'─'*60}\n")
+
     @observe(name="jamie_turn")
     async def process_message(self, user_message: str, turn_number: int) -> str:
         if user_message:
@@ -442,6 +494,9 @@ class FlowRunner:
             functions = self.current_node.get("functions") or []
             tools = self.get_tools() if functions else None
             node_name = self.current_node.get("name", "unknown")
+
+            if self.verbose:
+                self._print_llm_context(messages, tools, node_name, turn_number)
 
             response = await self._call_llm(messages, tools, node_name)
             msg = response.choices[0].message
@@ -581,53 +636,68 @@ Stay in character. Be natural and conversational. Keep responses brief (1-2 sent
 async def run_simulation(
     scenario: dict,
     llm_config: dict,
+    cold_transfer_config: dict,
     seeded_patient: dict,
     session_id: str,
     verbose: bool = False,
 ) -> dict:
     """Run a single prescription status simulation for a scenario."""
     persona = scenario["persona"]
+    handoff_context = scenario.get("handoff_context")
 
     call_data = {
         "organization_name": "Demo Clinic Alpha",
         "session_id": session_id,
     }
 
-    runner = FlowRunner(call_data, llm_config, session_id, verbose=verbose)
-
-    pre_actions = runner.current_node.get("pre_actions") or []
-    greeting = pre_actions[0].get("text", "") if pre_actions else ""
-
-    runner.context.add_assistant_message(greeting)
+    runner = FlowRunner(call_data, llm_config, session_id, cold_transfer_config, handoff_context=handoff_context, verbose=verbose)
 
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
     print(f"TARGET: {scenario['target_node']}")
     print(f"EXPECTED: {scenario['expected_problem']}")
+    if handoff_context:
+        print(f"HANDOFF CONTEXT: {handoff_context}")
     print(f"{'='*70}\n")
 
-    print(f"JAMIE: {greeting}\n")
+    conversation = []
+    turn = 0
 
-    conversation = [{"role": "assistant", "content": greeting, "turn": 0}]
+    # Handle initial bot response based on entry point
+    if handoff_context:
+        # Handoff entry: bot should respond immediately (no greeting, uses context)
+        # The handoff_entry node has respond_immediately=True, so bot speaks first
+        print("[HANDOFF FROM MAINLINE - bot processes context and responds]\n")
+        bot_response = await runner.process_message("", turn)
+        if bot_response:
+            print(f"BOT: {bot_response}\n")
+            conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
+    else:
+        # Normal entry: bot greets first via pre_action
+        pre_actions = runner.current_node.get("pre_actions") or []
+        greeting = pre_actions[0].get("text", "") if pre_actions else ""
+        # Add greeting to context
+        runner.context.add_assistant_message(greeting)
+        print(f"BOT: {greeting}\n")
+        conversation.append({"role": "assistant", "content": greeting, "turn": 0})
 
     # Conversation loop
-    turn = 0
     while not runner.done and turn < 20:
         turn += 1
 
-        # Caller responds
-        caller_msg = await get_caller_response(
+        # Patient responds
+        patient_msg = await get_caller_response(
             [{"role": c["role"], "content": c["content"]} for c in conversation],
             seeded_patient,
             persona
         )
-        print(f"CALLER: {caller_msg}\n")
-        conversation.append({"role": "user", "content": caller_msg, "turn": turn})
+        print(f"PATIENT: {patient_msg}\n")
+        conversation.append({"role": "user", "content": patient_msg, "turn": turn})
 
-        # Jamie responds
-        bot_response = await runner.process_message(caller_msg, turn)
+        # Bot responds
+        bot_response = await runner.process_message(patient_msg, turn)
         if bot_response:
-            print(f"JAMIE: {bot_response}\n")
+            print(f"BOT: {bot_response}\n")
             conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
 
     final_state = runner.mock_flow_manager.state
@@ -669,7 +739,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
         f.write(f"FINAL NODE: {result['final_node']}\n")
         f.write(f"{'='*60}\n\n")
         for msg in result["conversation"]:
-            role = "JAMIE" if msg["role"] == "assistant" else "CALLER"
+            role = "BOT" if msg["role"] == "assistant" else "PATIENT"
             f.write(f"{role}: {msg['content']}\n\n")
         f.write(f"{'='*60}\n")
         f.write(f"GRADE: {'PASS' if grade['pass'] else 'FAIL'} - {grade['reason']}\n")
@@ -731,19 +801,25 @@ def sync_dataset_to_langfuse() -> None:
 
     # Create dataset items for each scenario
     for scenario in config["scenarios"]:
+        # Build input dict, including handoff_context if present
+        input_data = {
+            "patient": scenario["patient"],
+            "persona": scenario["persona"],
+        }
+        if scenario.get("handoff_context"):
+            input_data["handoff_context"] = scenario["handoff_context"]
+
         langfuse.create_dataset_item(
             dataset_name=dataset_name,
             id=scenario["id"],  # Use scenario ID as item ID for upsert
-            input={
-                "patient": scenario["patient"],
-                "persona": scenario["persona"],
-            },
+            input=input_data,
             expected_output={
                 "target_node": scenario["target_node"],
                 "expected_problem": scenario["expected_problem"],
             },
             metadata={
                 "target_node": scenario["target_node"],
+                "has_handoff_context": bool(scenario.get("handoff_context")),
             },
         )
         print(f"  Synced: {scenario['id']}")
@@ -759,23 +835,33 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
     """Run a single scenario and save results."""
     scenario = get_scenario(scenario_id)
 
+    # Load config
     services_path = Path(__file__).parent.parent.parent.parent / "clients/demo_clinic_alpha/prescription_status/services.yaml"
     with open(services_path) as f:
         services = yaml.safe_load(f)
 
     llm_config = services["services"]["llm"]
+    cold_transfer_config = services.get("cold_transfer", {})
 
     session_id = f"eval-{scenario_id}-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+    # Seed patient into test database
     test_db = TestDB()
     patient_id = await test_db.seed_patient(scenario, "prescription_status")
     seeded_patient = await test_db.get_full_patient(patient_id)
-    print(f"  [DB] Seeded patient: {seeded_patient.get('patient_name')} (id: {patient_id})")
+    print(f"  [DB] Seeded patient: {seeded_patient.get('patient_name', seeded_patient.get('first_name', ''))} (id: {patient_id})")
+
+    await test_db.create_session(session_id, workflow="prescription_status")
+    print(f"  [SESSION] Created session: {session_id}")
 
     try:
-        result = await run_simulation(scenario, llm_config, seeded_patient, session_id, verbose=verbose)
+        # Run simulation (trace is created by @observe decorator)
+        result = await run_simulation(scenario, llm_config, cold_transfer_config, seeded_patient, session_id, verbose=verbose)
 
-        # Grade the result (4 graders: hipaa, quality, functions, node_reached)
+        db_state = await test_db.get_patient_state(patient_id)
+        print(f"  [DB STATE] {db_state}")
+
+        # Grade the result (5 graders: hipaa, quality, functions, node_reached, db_state)
         grade = grade_scenario(
             result["conversation"],
             result["expected_problem"],
@@ -784,6 +870,8 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
             result["patient"],
             result["final_node"],
             result["target_node"],
+            db_state=db_state,
+            expected_db_state=scenario.get("expected_db_state"),
         )
 
         # Print grade
@@ -805,6 +893,7 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
     finally:
         # Cleanup seeded patient from test DB
         await test_db.cleanup()
+        print(f"  [CLEANUP] Removed test patient and session")
 
 
 async def run_all_scenarios(verbose: bool = False) -> list[dict]:

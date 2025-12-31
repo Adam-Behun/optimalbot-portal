@@ -8,7 +8,7 @@ from loguru import logger
 
 from backend.models import get_async_patient_db
 from backend.sessions import get_async_session_db
-from backend.utils import parse_natural_date
+from backend.utils import parse_natural_date, normalize_sip_endpoint
 from handlers.transcript import save_transcript_to_db
 
 
@@ -103,23 +103,6 @@ class DialinBaseFlow(ABC):
 
     def _phone_last4(self, phone: str) -> str:
         return phone[-4:] if len(phone) >= 4 else ""
-
-    def _normalize_sip_endpoint(self, number: str) -> str:
-        """Ensure SIP endpoint has proper format for Daily (sip: or + prefix)."""
-        if not number:
-            return number
-        if number.startswith("sip:"):
-            return number
-        if number.startswith("+"):
-            return number
-        # Normalize to E.164 format
-        digits = ''.join(c for c in number if c.isdigit())
-        if len(digits) == 10:
-            return f"+1{digits}"
-        elif len(digits) == 11 and digits.startswith("1"):
-            return f"+{digits}"
-        else:
-            return f"+{digits}"
 
     async def _try_db_update(self, patient_id: str, method: str, *args, error_msg: str = "DB update error"):
         if not patient_id:
@@ -310,20 +293,18 @@ DOB: natural format (e.g., "March 22, 1978")""",
     # ==================== Transfer Nodes ====================
 
     def create_transfer_pending_node(self) -> NodeConfig:
-        """Node that plays TTS, then executes SIP transfer after speech completes."""
         return NodeConfig(
             name="transfer_pending",
             task_messages=[],
             functions=[],
             pre_actions=[
                 {"type": "tts_say", "text": "Transferring you now, please hold."},
-                ActionConfig(type="function", handler=self._execute_sip_transfer),
+                ActionConfig(type="function", handler=self._regular_sip_transfer),
             ],
         )
 
-    async def _execute_sip_transfer(self, action: dict, flow_manager: FlowManager):
-        """Post-action handler that executes SIP transfer after TTS completes."""
-        staff_number = self._normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
+    async def _regular_sip_transfer(self, action: dict, flow_manager: FlowManager):
+        staff_number = normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
         if not staff_number:
             logger.warning("No staff transfer number configured")
             return
@@ -338,8 +319,8 @@ DOB: natural format (e.g., "March 22, 1978")""",
                         self.pipeline.transfer_in_progress = False
                     return
                 logger.info(f"SIP transfer initiated: {staff_number}")
-            patient_id = flow_manager.state.get("patient_id")
-            await self._try_db_update(patient_id, "update_patient", {"call_status": "Transferred"}, error_msg="Error updating call status")
+            session_db = get_async_session_db()
+            await session_db.update_session(self.session_id, {"call_status": "Transferred"}, self.organization_id)
         except Exception:
             logger.exception("SIP transfer failed")
             if self.pipeline:
@@ -459,8 +440,7 @@ If caller says goodbye:
     # ==================== Transfer Handlers ====================
 
     def _initiate_sip_transfer(self, flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-        """Return the transfer_pending node which handles TTS then transfer."""
-        staff_number = self._normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
+        staff_number = normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
         if not staff_number:
             logger.warning("No staff transfer number configured")
             return None, self.create_transfer_failed_node()

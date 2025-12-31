@@ -5,6 +5,7 @@ from pipecat_flows.types import ActionConfig
 from loguru import logger
 from backend.models import get_async_patient_db
 from backend.sessions import get_async_session_db
+from backend.utils import normalize_sip_endpoint
 from handlers.transcript import save_transcript_to_db
 
 
@@ -1136,13 +1137,12 @@ EXAMPLES:
             functions=[],
             pre_actions=[
                 {"type": "tts_say", "text": "Transferring you now, please hold."},
-                ActionConfig(type="function", handler=self._execute_sip_transfer),
+                ActionConfig(type="function", handler=self._regular_sip_transfer),
             ],
         )
 
-    async def _execute_sip_transfer(self, action: dict, flow_manager: FlowManager):
-        """Post-action handler that executes SIP transfer after TTS completes."""
-        staff_number = self.cold_transfer_config.get("staff_number")
+    async def _regular_sip_transfer(self, action: dict, flow_manager: FlowManager):
+        staff_number = normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
         if not staff_number:
             logger.warning("No staff transfer number configured")
             return
@@ -1157,6 +1157,8 @@ EXAMPLES:
                         self.pipeline.transfer_in_progress = False
                     return
                 logger.info(f"SIP transfer initiated: {staff_number}")
+            session_db = get_async_session_db()
+            await session_db.update_session(self.session_id, {"call_status": "Transferred"}, self.organization_id)
         except Exception:
             logger.exception("SIP transfer failed")
             if self.pipeline:
@@ -1654,7 +1656,7 @@ EXAMPLES:
     async def _dial_staff_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
-        staff_number = self.cold_transfer_config.get("staff_number")
+        staff_number = normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
         if not staff_number:
             logger.warning("Cold transfer requested but no staff_number configured")
             return None, self.create_transfer_failed_node()

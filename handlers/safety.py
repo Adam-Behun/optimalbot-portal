@@ -3,34 +3,21 @@ import asyncio
 from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame
 
+from backend.utils import normalize_sip_endpoint
+from backend.sessions import get_async_session_db
+
 
 def _estimate_tts_duration(text: str) -> float:
-    """Estimate TTS duration based on text length (~3 words/second + buffer)."""
     words = len(text.split())
     return (words / 3) + 0.5
 
 
-def _normalize_sip_endpoint(number: str) -> str:
-    """Ensure SIP endpoint has proper format for Daily (sip: or + prefix)."""
-    if not number:
-        return number
-    if number.startswith("sip:") or number.startswith("+"):
-        return number
-    digits = ''.join(c for c in number if c.isdigit())
-    if len(digits) == 10:
-        return f"+1{digits}"
-    elif len(digits) == 11 and digits.startswith("1"):
-        return f"+{digits}"
-    return f"+{digits}"
-
-
-async def _initiate_transfer(pipeline):
+async def _safety_sip_transfer(pipeline, status: str):
     cold_transfer = getattr(pipeline.flow, 'cold_transfer_config', None) or {}
-    staff_number = _normalize_sip_endpoint(cold_transfer.get('staff_number'))
+    staff_number = normalize_sip_endpoint(cold_transfer.get('staff_number'))
     if not staff_number:
         logger.warning("No staff_number configured for transfer")
         return False
-
     try:
         pipeline.transfer_in_progress = True
         error = await pipeline.transport.sip_call_transfer({"toEndPoint": staff_number})
@@ -39,6 +26,8 @@ async def _initiate_transfer(pipeline):
             pipeline.transfer_in_progress = False
             return False
         logger.info(f"SIP transfer initiated to {staff_number}")
+        session_db = get_async_session_db()
+        await session_db.update_session(pipeline.session_id, {"call_status": status}, pipeline.organization_id)
         return True
     except Exception as e:
         logger.error(f"Transfer failed: {e}")
@@ -50,21 +39,19 @@ def setup_safety_handlers(pipeline, safety_monitor, config):
     @safety_monitor.event_handler("on_emergency_detected")
     async def handle_emergency(processor):
         logger.warning(f"EMERGENCY detected - session {pipeline.session_id}")
-
         msg = config.get("emergency_message", "If this is an emergency, hang up and dial 911.")
         await pipeline.task.queue_frames([TTSSpeakFrame(msg)])
-
         if config.get("auto_transfer"):
             await asyncio.sleep(_estimate_tts_duration(msg))
-            await _initiate_transfer(pipeline)
+            await _safety_sip_transfer(pipeline, "Emergency")
 
     @safety_monitor.event_handler("on_staff_requested")
     async def handle_staff_request(processor):
         logger.info(f"Staff transfer requested - session {pipeline.session_id}")
-        msg = "Let me transfer you to someone who can help."
+        msg = "Transferring you now, please hold."
         await pipeline.task.queue_frames([TTSSpeakFrame(msg)])
         await asyncio.sleep(_estimate_tts_duration(msg))
-        await _initiate_transfer(pipeline)
+        await _safety_sip_transfer(pipeline, "Transferred")
 
 
 def setup_output_validator_handlers(pipeline, output_validator, config):

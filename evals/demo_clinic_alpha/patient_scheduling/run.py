@@ -26,7 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from evals.context import EvalContextManager
-from evals.db import get_patient_db, ORG_ID_STR
+from evals.db import ORG_ID_STR
+from evals.fixtures import TestDB
 
 import yaml
 from anthropic import Anthropic
@@ -60,12 +61,28 @@ def _format_conversation(conversation: list[dict]) -> str:
     ])
 
 
-def grade_goal(conv_text: str, expected_problem: str, calls_text: str) -> dict:
-    """Grade whether the scenario's expected problem occurred."""
-    prompt = f"""Grade this patient intake conversation. Be STRICT.
+def grade_scheduling_flow(conv_text: str, expected_problem: str, calls_text: str, final_state: dict, patient: dict) -> dict:
+    """Grade scheduling-specific behavior: classification, slot selection, info capture."""
+    appointment_type = final_state.get("appointment_type", "")
+    appointment_slot = final_state.get("appointment_slot", "")
+    appointment_reason = final_state.get("appointment_reason", "")
+    identity_verified = final_state.get("identity_verified", False)
 
-EXPECTED PROBLEM TO CHECK FOR:
+    prompt = f"""Grade this PATIENT SCHEDULING conversation. Be STRICT.
+
+EXPECTED BEHAVIOR TO CHECK:
 {expected_problem}
+
+PATIENT RECORD:
+- Name: {patient.get("patient_name", patient.get("first_name", ""))}
+- Phone: {patient.get("phone_number", "")}
+- DOB: {patient.get("date_of_birth", "")}
+
+FINAL STATE:
+- Appointment Type: {appointment_type}
+- Appointment Slot: {appointment_slot}
+- Appointment Reason: {appointment_reason}
+- Identity Verified: {identity_verified}
 
 CONVERSATION:
 {conv_text}
@@ -73,10 +90,17 @@ CONVERSATION:
 FUNCTION CALLS:
 {calls_text}
 
-Did the expected problem occur? Look for:
-- Bot confusion, loops, or wrong assumptions
-- Missing information, wrong data captured
-- Poor handling of the patient's behavior
+SCHEDULING FLOW CHECKS:
+1. Did bot correctly classify patient as new or returning?
+2. Did bot ask for appropriate info (new → all fields, returning → just verify)?
+3. If identity_verified=False for returning patient, did bot handle gracefully?
+4. Did bot confirm the appointment slot before ending?
+5. Did bot transfer when appropriate (billing, reschedule existing, frustrated caller)?
+
+NOT A PROBLEM:
+- Asking new/returning question once is expected
+- Collecting visit reason is expected
+- Offering available slots is expected
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -111,21 +135,46 @@ FAIL: <5 words what went wrong>"""
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
-def grade_function_calls(calls_text: str, final_state: dict) -> dict:
-    """Grade function call correctness - right functions, right data."""
-    prompt = f"""Grade whether the bot called functions correctly.
+def grade_function_calls(calls_text: str, conv_text: str, final_state: dict, patient: dict) -> dict:
+    """Grade function call correctness for patient scheduling."""
+    appointment_type = final_state.get("appointment_type", "")
+    identity_verified = final_state.get("identity_verified", False)
+
+    prompt = f"""Grade whether the bot called functions correctly for a PATIENT SCHEDULING flow.
+
+PATIENT INFO:
+- Name: {patient.get("patient_name", patient.get("first_name", ""))}
+- Phone: {patient.get("phone_number", "")}
+
+CONVERSATION:
+{conv_text}
 
 FUNCTION CALLS:
 {calls_text}
 
 FINAL STATE:
-{json.dumps(final_state, indent=2)}
+- appointment_type: {appointment_type}
+- identity_verified: {identity_verified}
 
-Check for:
-1. Called functions at appropriate times (not prematurely)
-2. Captured data correctly (no typos, wrong values)
-3. Didn't skip required functions
-4. Didn't call unnecessary functions
+GRADING RULES:
+1. set_new_patient OR set_returning_patient called after patient answers new/returning question
+2. For RETURNING patients - verification uses TWO functions in sequence:
+   - lookup_by_phone: caller provides phone number
+   - verify_dob: caller provides date of birth
+3. save_visit_reason called when patient specifies cleaning/checkup/consultation/etc.
+4. schedule_appointment called after patient picks a slot
+5. save_patient_info called after collecting ALL required fields (for new patients)
+6. request_staff called when:
+   - Caller wants to reschedule/cancel EXISTING appointment
+   - Caller asks about billing/insurance
+   - Caller explicitly asks for human
+   - Verification fails (wrong DOB after 2 attempts)
+7. end_call called when conversation concludes normally
+
+SCENARIO-SPECIFIC RULES:
+- If caller is new patient: Don't need lookup_by_phone/verify_dob
+- If caller is returning patient: lookup_by_phone and verify_dob required before scheduling
+- If transfer requested: no scheduling functions needed
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -136,7 +185,58 @@ FAIL: <5 words what went wrong>"""
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
-def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict = None) -> dict:
+def grade_node_reached(final_node: str, expected_node: str) -> dict:
+    """Grade whether the conversation reached the expected end node."""
+    # Handle equivalent end states
+    end_equivalents = {"end", "confirmation"}  # confirmation leads to end
+    transfer_equivalents = {"transfer_initiated", "transfer_failed", "staff_confirmation", "transfer_pending"}
+    scheduling_flow_nodes = {"greeting", "visit_reason", "scheduling", "collect_info", "confirmation", "end"}
+    verification_nodes = {"patient_lookup", "verify_dob", "patient_not_found", "patient_not_found_final"}
+
+    if expected_node == "end" and final_node in end_equivalents:
+        return {"pass": True, "reason": f"PASS: Reached {final_node} (equivalent to end)"}
+
+    if expected_node == "transfer_initiated" and final_node in transfer_equivalents:
+        return {"pass": True, "reason": f"PASS: Transfer was initiated"}
+
+    # Greeting target may end in various states
+    if expected_node == "greeting" and final_node in (scheduling_flow_nodes | transfer_equivalents | verification_nodes):
+        return {"pass": True, "reason": f"PASS: Reached {final_node} (handled from greeting)"}
+
+    # Scheduling target may complete or transfer
+    if expected_node == "scheduling" and final_node in (scheduling_flow_nodes | transfer_equivalents):
+        return {"pass": True, "reason": f"PASS: Reached {final_node} (scheduling attempted)"}
+
+    # Collect info target may complete or transfer
+    if expected_node == "collect_info" and final_node in {"collect_info", "confirmation", "end"} | transfer_equivalents:
+        return {"pass": True, "reason": f"PASS: Reached {final_node} (info collection handled)"}
+
+    # Verification failure leads to transfer
+    if expected_node == "verification_failed" and final_node in transfer_equivalents:
+        return {"pass": True, "reason": f"PASS: Verification failed, transferred to staff"}
+
+    if final_node == expected_node:
+        return {"pass": True, "reason": f"PASS: Reached expected node {expected_node}"}
+
+    return {"pass": False, "reason": f"FAIL: Expected {expected_node}, got {final_node}"}
+
+
+def grade_db_state(db_state: dict, expected_db_state: dict) -> dict:
+    if not expected_db_state:
+        return {"pass": True, "reason": "PASS: No DB state assertions"}
+
+    failures = []
+    for key, expected_val in expected_db_state.items():
+        actual_val = db_state.get(key)
+        if actual_val != expected_val:
+            failures.append(f"{key}: expected {expected_val}, got {actual_val}")
+
+    if failures:
+        return {"pass": False, "reason": f"FAIL: {'; '.join(failures)}"}
+    return {"pass": True, "reason": "PASS: DB state correct"}
+
+
+def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict, patient: dict, final_node: str, expected_node: str, db_state: dict = None, expected_db_state: dict = None) -> dict:
     """
     Run all graders and combine results. ALL must pass for overall pass.
     Returns: {"pass": bool, "reason": str, "details": {...}}
@@ -147,22 +247,30 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         for fc in function_calls
     ]) or "No function calls"
 
+    final_state = final_state or {}
+
     # Run all graders
-    goal = grade_goal(conv_text, expected_problem, calls_text)
+    scheduling = grade_scheduling_flow(conv_text, expected_problem, calls_text, final_state, patient)
     quality = grade_conversation_quality(conv_text)
-    functions = grade_function_calls(calls_text, final_state or {})
+    functions = grade_function_calls(calls_text, conv_text, final_state, patient)
+    node_reached = grade_node_reached(final_node, expected_node)
+    db_check = grade_db_state(db_state or {}, expected_db_state or {})
 
     # All must pass
-    all_passed = goal["pass"] and quality["pass"] and functions["pass"]
+    all_passed = scheduling["pass"] and quality["pass"] and functions["pass"] and node_reached["pass"] and db_check["pass"]
 
     # Build combined reason
     failures = []
-    if not goal["pass"]:
-        failures.append(f"goal: {goal['reason']}")
+    if not scheduling["pass"]:
+        failures.append(f"scheduling: {scheduling['reason']}")
     if not quality["pass"]:
         failures.append(f"quality: {quality['reason']}")
     if not functions["pass"]:
         failures.append(f"functions: {functions['reason']}")
+    if not node_reached["pass"]:
+        failures.append(f"node: {node_reached['reason']}")
+    if not db_check["pass"]:
+        failures.append(f"db: {db_check['reason']}")
 
     if all_passed:
         reason = "PASS: All checks passed"
@@ -173,9 +281,11 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         "pass": all_passed,
         "reason": reason,
         "details": {
-            "goal": goal,
+            "scheduling": scheduling,
             "quality": quality,
             "functions": functions,
+            "node_reached": node_reached,
+            "db_state": db_check,
         }
     }
 
@@ -216,9 +326,15 @@ class MockFlowManager:
         self.state = {}
 
 
+class MockTask:
+    async def queue_frames(self, frames):
+        pass  # No-op in simulation
+
+
 class MockPipeline:
     transcripts = []
     transfer_in_progress = False
+    task = MockTask()
 
 
 class MockTransport:
@@ -228,21 +344,25 @@ class MockTransport:
 
 # === FLOW RUNNER ===
 class FlowRunner:
-    def __init__(self, llm_config: dict, cold_transfer_config: dict, handoff_context: str = None):
+    def __init__(self, call_data: dict, llm_config: dict, session_id: str, cold_transfer_config: dict, handoff_context: str = None, verbose: bool = False):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
+        self.call_data = call_data
+        self.session_id = session_id
         self.handoff_context = handoff_context
+        self.verbose = verbose
 
         self.flow = PatientSchedulingFlow(
-            call_data={"organization_name": "Demo Clinic Alpha"},
-            session_id="eval-session",
+            call_data=call_data,
+            session_id=session_id,
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
             transport=self.mock_transport,
             pipeline=self.mock_pipeline,
+            organization_id=ORG_ID_STR,
             cold_transfer_config=cold_transfer_config,
         )
 
@@ -250,8 +370,10 @@ class FlowRunner:
         # Otherwise use greeting node (normal call start)
         if handoff_context:
             self.current_node = self.flow.create_handoff_entry_node(context=handoff_context)
+            self.current_node_name = "handoff_entry"
         else:
             self.current_node = self.flow.create_greeting_node()
+            self.current_node_name = "greeting"
 
         self.context = EvalContextManager()
         self.context.set_node(self.current_node)
@@ -333,7 +455,8 @@ class FlowRunner:
             tools = self.get_tools() if functions else None
             node_name = self.current_node.get("name", "unknown")
 
-            self._print_llm_context(messages, tools, node_name, turn_number)
+            if self.verbose:
+                self._print_llm_context(messages, tools, node_name, turn_number)
 
             response = await self._call_llm(messages, tools, node_name)
             msg = response.choices[0].message
@@ -386,8 +509,12 @@ class FlowRunner:
                     all_content.append(result)
 
                 if next_node:
+                    next_node_name = next_node.get("name", "unknown")
+
                     self.current_node = next_node
+                    self.current_node_name = next_node_name
                     self.context.set_node(next_node)
+
                     # Process pre_actions on the new node (e.g., tts_say)
                     pre_actions = self.current_node.get("pre_actions") or []
                     for action in pre_actions:
@@ -397,11 +524,19 @@ class FlowRunner:
                                 all_content.append(pre_action_text)
                                 self.context.add_assistant_message(pre_action_text)
 
-                    # Check if this node ends the conversation
-                    result_node_name = next_node.get("name")
+                    # Check post_actions for TTS and end_conversation
                     post_actions = next_node.get("post_actions") or []
+                    for action in post_actions:
+                        if action.get("type") == "tts_say":
+                            post_action_text = action.get("text", "")
+                            if post_action_text:
+                                all_content.append(post_action_text)
+                                self.context.add_assistant_message(post_action_text)
+
+                    # Check if this node ends the conversation
                     ends_conversation = (
-                        result_node_name == "end" or
+                        next_node_name == "end" or
+                        next_node_name == "transfer_initiated" or
                         any(a.get("type") == "end_conversation" for a in post_actions)
                     )
                     if ends_conversation:
@@ -421,17 +556,30 @@ class FlowRunner:
 
 @observe(as_type="generation", name="patient_simulator")
 async def get_patient_response(history: list[dict], patient: dict, persona: str) -> str:
+    """Get simulated patient response based on persona."""
+    # Extract patient info with fallbacks for field name variations
+    patient_name = patient.get("patient_name", "")
+    first_name = patient.get("first_name", "")
+    last_name = patient.get("last_name", "")
+    if not first_name and patient_name:
+        parts = patient_name.split()
+        first_name = parts[0] if parts else ""
+        last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+    phone = patient.get("phone_number", patient.get("phone", ""))
+    dob = patient.get("date_of_birth", patient.get("dob", ""))
+    email = patient.get("email", "")
+
     system_prompt = f"""You are a patient calling Demo Clinic Alpha.
 
 {persona}
 
 Your details (use these when asked):
-- Name: {patient['first_name']} {patient['last_name']}
-- Phone: {patient['phone']}
-- Date of birth: {patient['dob']}
-- Email: {patient['email']}
+- Name: {first_name} {last_name}
+- Phone: {phone}
+- Date of birth: {dob}
+- Email: {email}
 
-Stay in character. Be natural and conversational."""
+Stay in character. Be natural and conversational. Keep responses brief (1-2 sentences)."""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -461,23 +609,20 @@ async def run_simulation(
     scenario: dict,
     llm_config: dict,
     cold_transfer_config: dict,
+    seeded_patient: dict,
+    session_id: str,
+    verbose: bool = False,
 ) -> dict:
     """Run a single patient scheduling simulation for a scenario."""
-    caller = scenario["patient"]  # Caller info for the simulator
     persona = scenario["persona"]
     handoff_context = scenario.get("handoff_context")
 
-    # Look up patient from DB by phone (to verify DB connectivity)
-    caller_phone = caller.get("phone", "")
-    db = get_patient_db()
-    db_patient = await db.find_patient_by_phone(caller_phone, ORG_ID_STR, "patient_scheduling")
+    call_data = {
+        "organization_name": "Demo Clinic Alpha",
+        "session_id": session_id,
+    }
 
-    if db_patient:
-        print(f"  [DB] Found patient: {db_patient.get('patient_name', db_patient.get('first_name', ''))}")
-    else:
-        print(f"  [DB] Patient not found for {caller_phone}")
-
-    runner = FlowRunner(llm_config, cold_transfer_config, handoff_context=handoff_context)
+    runner = FlowRunner(call_data, llm_config, session_id, cold_transfer_config, handoff_context=handoff_context, verbose=verbose)
 
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
@@ -497,7 +642,7 @@ async def run_simulation(
         print("[HANDOFF FROM MAINLINE - bot processes context and responds]\n")
         bot_response = await runner.process_message("", turn)
         if bot_response:
-            print(f"MONICA: {bot_response}\n")
+            print(f"BOT: {bot_response}\n")
             conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
     else:
         # Normal entry: bot greets first via pre_action
@@ -505,7 +650,7 @@ async def run_simulation(
         greeting = pre_actions[0].get("text", "") if pre_actions else ""
         # Add greeting to context
         runner.context.add_assistant_message(greeting)
-        print(f"MONICA: {greeting}\n")
+        print(f"BOT: {greeting}\n")
         conversation.append({"role": "assistant", "content": greeting, "turn": 0})
 
     # Conversation loop
@@ -515,23 +660,25 @@ async def run_simulation(
         # Patient responds
         patient_msg = await get_patient_response(
             [{"role": c["role"], "content": c["content"]} for c in conversation],
-            caller,
+            seeded_patient,
             persona
         )
         print(f"PATIENT: {patient_msg}\n")
         conversation.append({"role": "user", "content": patient_msg, "turn": turn})
 
-        # Monica responds
+        # Bot responds
         bot_response = await runner.process_message(patient_msg, turn)
         if bot_response:
-            print(f"MONICA: {bot_response}\n")
+            print(f"BOT: {bot_response}\n")
             conversation.append({"role": "assistant", "content": bot_response, "turn": turn})
 
     final_state = runner.mock_flow_manager.state
+    final_node = runner.current_node_name
 
     print(f"\n{'='*70}")
+    print(f"FINAL NODE: {final_node}")
     print("FINAL STATE:")
-    print(json.dumps(final_state, indent=2))
+    print(json.dumps(final_state, indent=2, default=str))
     print(f"{'='*70}\n")
 
     return {
@@ -541,6 +688,8 @@ async def run_simulation(
         "conversation": conversation,
         "function_calls": runner.function_calls,
         "final_state": final_state,
+        "final_node": final_node,
+        "patient": seeded_patient,
         "turns": turn,
     }
 
@@ -558,12 +707,16 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
     with open(txt_file, "w") as f:
         f.write(f"SCENARIO: {result['scenario_id']}\n")
         f.write(f"EXPECTED: {result['expected_problem']}\n")
+        f.write(f"TARGET NODE: {result['target_node']}\n")
+        f.write(f"FINAL NODE: {result['final_node']}\n")
         f.write(f"{'='*60}\n\n")
         for msg in result["conversation"]:
-            role = "MONICA" if msg["role"] == "assistant" else "PATIENT"
+            role = "BOT" if msg["role"] == "assistant" else "PATIENT"
             f.write(f"{role}: {msg['content']}\n\n")
         f.write(f"{'='*60}\n")
         f.write(f"GRADE: {'PASS' if grade['pass'] else 'FAIL'} - {grade['reason']}\n")
+        if grade.get("details", {}).get("node_reached"):
+            f.write(f"NODE CHECK: {grade['details']['node_reached']['reason']}\n")
 
     # Structure follows Langfuse DatasetRunItem concept
     output = {
@@ -577,6 +730,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
         "input": {
             "target_node": result["target_node"],
             "expected_problem": result["expected_problem"],
+            "patient": result["patient"],
         },
 
         # Output (from run)
@@ -584,6 +738,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
             "conversation": result["conversation"],
             "function_calls": result["function_calls"],
             "final_state": result["final_state"],
+            "final_node": result["final_node"],
             "turns": result["turns"],
         },
 
@@ -595,7 +750,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
     }
 
     with open(result_file, "w") as f:
-        json.dump(output, f, indent=2)
+        json.dump(output, f, indent=2, default=str)
 
     return result_file
 
@@ -646,7 +801,7 @@ def sync_dataset_to_langfuse() -> None:
     print(f"View at: https://cloud.langfuse.com/datasets")
 
 
-async def run_scenario(scenario_id: str) -> dict:
+async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
     """Run a single scenario and save results."""
     scenario = get_scenario(scenario_id)
 
@@ -658,36 +813,59 @@ async def run_scenario(scenario_id: str) -> dict:
     llm_config = services["services"]["llm"]
     cold_transfer_config = services.get("cold_transfer", {})
 
-    # Run simulation (trace is created by @observe decorator)
-    result = await run_simulation(scenario, llm_config, cold_transfer_config)
+    session_id = f"eval-{scenario_id}-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Grade the result (3 graders: goal, quality, functions)
-    grade = grade_scenario(
-        result["conversation"],
-        result["expected_problem"],
-        result["function_calls"],
-        result["final_state"]
-    )
+    # Seed patient into test database
+    test_db = TestDB()
+    patient_id = await test_db.seed_patient(scenario, "patient_scheduling")
+    seeded_patient = await test_db.get_full_patient(patient_id)
+    print(f"  [DB] Seeded patient: {seeded_patient.get('patient_name', seeded_patient.get('first_name', ''))} (id: {patient_id})")
 
-    # Print grade
-    status = "✓ PASS" if grade["pass"] else "✗ FAIL"
-    print(f"\n{status} | {scenario_id}")
-    print(f"  {grade['reason']}")
+    await test_db.create_session(session_id, workflow="patient_scheduling")
+    print(f"  [SESSION] Created session: {session_id}")
 
-    # Get trace ID from the current context
-    trace_id = langfuse.get_current_trace_id() or langfuse.create_trace_id()
+    try:
+        # Run simulation (trace is created by @observe decorator)
+        result = await run_simulation(scenario, llm_config, cold_transfer_config, seeded_patient, session_id, verbose=verbose)
 
-    # Save locally
-    result_file = save_result(result, trace_id, grade)
-    print(f"Saved: {result_file}")
+        db_state = await test_db.get_patient_state(patient_id)
+        print(f"  [DB STATE] {db_state}")
 
-    # Flush to Langfuse
-    langfuse.flush()
+        # Grade the result (5 graders: scheduling_flow, quality, functions, node_reached, db_state)
+        grade = grade_scenario(
+            result["conversation"],
+            result["expected_problem"],
+            result["function_calls"],
+            result["final_state"],
+            result["patient"],
+            result["final_node"],
+            result["target_node"],
+            db_state=db_state,
+            expected_db_state=scenario.get("expected_db_state"),
+        )
 
-    return {**result, "grade": grade}
+        # Print grade
+        status = "✓ PASS" if grade["pass"] else "✗ FAIL"
+        print(f"\n{status} | {scenario_id}")
+        print(f"  {grade['reason']}")
+
+        # Get trace ID from the current context
+        trace_id = langfuse.get_current_trace_id() or langfuse.create_trace_id()
+
+        # Save locally
+        result_file = save_result(result, trace_id, grade)
+        print(f"Saved: {result_file}")
+
+        # Flush to Langfuse
+        langfuse.flush()
+
+        return {**result, "grade": grade}
+    finally:
+        # Cleanup seeded patient from test DB
+        await test_db.cleanup()
 
 
-async def run_all_scenarios() -> list[dict]:
+async def run_all_scenarios(verbose: bool = False) -> list[dict]:
     """Run all scenarios sequentially."""
     config = load_scenarios()
     results = []
@@ -697,7 +875,7 @@ async def run_all_scenarios() -> list[dict]:
         print(f"# Running: {scenario['id']}")
         print(f"{'#'*70}")
 
-        result = await run_scenario(scenario["id"])
+        result = await run_scenario(scenario["id"], verbose=verbose)
         results.append(result)
 
     # Summary
@@ -717,11 +895,12 @@ async def run_all_scenarios() -> list[dict]:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Patient Intake Flow Evaluation")
+    parser = argparse.ArgumentParser(description="Patient Scheduling Flow Evaluation")
     parser.add_argument("--scenario", "-s", help="Run specific scenario by ID")
     parser.add_argument("--all", "-a", action="store_true", help="Run all scenarios")
     parser.add_argument("--list", "-l", action="store_true", help="List available scenarios")
     parser.add_argument("--sync-dataset", action="store_true", help="Sync scenarios to Langfuse dataset")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print full LLM context for debugging")
 
     args = parser.parse_args()
 
@@ -734,19 +913,22 @@ async def main():
         return
 
     if args.all:
-        await run_all_scenarios()
+        await run_all_scenarios(verbose=args.verbose)
         return
 
     if args.scenario:
-        await run_scenario(args.scenario)
+        await run_scenario(args.scenario, verbose=args.verbose)
         return
 
     # Default: run first scenario
     config = load_scenarios()
+    if not config["scenarios"]:
+        print("No scenarios defined in scenarios.yaml")
+        return
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
-    await run_scenario(first_scenario)
+    await run_scenario(first_scenario, verbose=args.verbose)
 
 
 if __name__ == "__main__":

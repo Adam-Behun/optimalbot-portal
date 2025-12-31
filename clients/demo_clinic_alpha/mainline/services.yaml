@@ -37,7 +37,7 @@ services:
     audio_out_sample_rate: 24000
 
 cold_transfer:
-  staff_number: "+15165668219"
-  scheduling_number: "+15165668219"
-  billing_number: "+15165668219"
-  medical_number: "+15165668219"
+  staff_number: "+15165853321"
+  scheduling_number: "+15165853321"
+  billing_number: "+15165853321"
+  medical_number: "+15165853321"

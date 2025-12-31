@@ -144,3 +144,16 @@ def mask_email(email: str) -> str:
         return "***"
     local, domain = email.split('@', 1)
     return f"{local[0]}***@{domain}" if local else f"***@{domain}"
+
+
+def normalize_sip_endpoint(number: str) -> str:
+    if not number:
+        return number
+    if number.startswith("sip:") or number.startswith("+"):
+        return number
+    digits = ''.join(c for c in number if c.isdigit())
+    if len(digits) == 10:
+        return f"+1{digits}"
+    elif len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return f"+{digits}"

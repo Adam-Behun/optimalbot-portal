@@ -1,815 +1,200 @@
-# Adversarial patient scenarios for patient scheduling flow evaluation
-# Each scenario targets specific weaknesses in flow_definition.py
+# Patient scheduling scenarios for flow evaluation
+# Each scenario tests specific flow behaviors matching production
 #
 # Usage:
-#   python run.py --scenario ambiguous_patient_type
+#   python run.py --scenario 1
 #   python run.py --all
-#   python run.py --sync-dataset  # Push scenarios to Langfuse dataset
+#   python run.py --sync-dataset
 
 dataset_name: "demo_clinic_alpha/patient_scheduling"
-dataset_description: "Adversarial scenarios for patient scheduling flow testing"
+dataset_description: "Scenarios for patient scheduling flow testing"
 
 scenarios:
   # =============================================================================
-  # GREETING NODE - Tests new/returning patient classification
+  # SCENARIO 1: Happy Path - Returning Patient Books Cleaning
+  # Tests: Verification flow, visit reason, slot selection, confirmation
   # =============================================================================
-
   - id: "1"
-    target_node: greeting
-    expected_problem: "Bot loops or misclassifies when patient status is unclear"
+    target_node: end
+    expected_problem: "Bot should verify identity, collect visit reason, offer slots, confirm booking"
     patient:
+      patient_name: "Sarah Johnson"
+      first_name: "Sarah"
+      last_name: "Johnson"
+      date_of_birth: "03/15/1985"
+      phone_number: "5551234567"
+      email: "sarah.johnson@email.com"
+    persona: |
+      You're a returning patient calling to schedule a cleaning appointment.
+
+      TURN 1: Say "Hi, I'd like to schedule a cleaning appointment."
+
+      WHEN ASKED if you're new or returning: Say "I've been coming here for a few years"
+
+      WHEN ASKED for phone number: Say "five five five, one two three, four five six seven"
+
+      WHEN ASKED to confirm the number: Say "Yes, that's right"
+
+      WHEN ASKED for date of birth: Say "March fifteenth, nineteen eighty-five"
+
+      WHEN offered appointment slots: Pick the first available slot
+
+      WHEN asked to confirm the appointment: Say "Yes, that sounds perfect"
+
+      WHEN asked if there's anything else: Say "No, that's all. Thank you!"
+
+  # =============================================================================
+  # SCENARIO 2: Ambiguous Input - Patient Unclear If New/Returning
+  # Tests: Handling uncertainty, defaulting to lookup, graceful recovery
+  # =============================================================================
+  - id: "2"
+    target_node: end
+    expected_problem: "Bot should handle ambiguous new/returning response gracefully"
+    patient:
+      patient_name: "Mike Chen"
       first_name: "Mike"
       last_name: "Chen"
-      phone: "5559876543"
-      dob: "June 2, 1990"
+      date_of_birth: "06/02/1990"
+      phone_number: "5559876543"
       email: "mike.chen@email.com"
     persona: |
-      You want to schedule a routine cleaning.
+      You want to schedule a routine cleaning but you're genuinely unsure if you're new or returning.
 
-      TURN 1: Just say "Hi, I'd like to schedule a cleaning appointment."
-      Do NOT mention whether you're new or returning yet.
+      TURN 1: Say "Hi, I'd like to schedule a cleaning appointment."
 
       WHEN ASKED if you're new or returning: Be genuinely uncertain:
       "I came here years ago as a kid, maybe once? I honestly don't remember."
 
       IF PRESSED AGAIN about new/returning: Say "I guess treat me as new? Not sure if that matters."
 
-      After that, cooperate normally with scheduling.
+      WHEN ASKED for your information: Provide it cooperatively:
+      - Name: Mike Chen
+      - Phone: five five five, nine eight seven, six five four three
+      - DOB: June second, nineteen ninety
+      - Email: mike.chen@email.com
 
-  - id: "2"
-    target_node: greeting
-    expected_problem: "Patient never directly answers new/returning question"
-    patient:
-      first_name: "Lisa"
-      last_name: "Park"
-      phone: "5551112222"
-      dob: "December 10, 1978"
-      email: "lisa.park@email.com"
-    persona: |
-      You want to schedule a teeth cleaning.
+      WHEN offered appointment slots: Pick the second available slot
 
-      TURN 1: Launch right into your request: "Hi, I need to schedule a teeth cleaning for sometime next week."
+      WHEN asked to confirm: Say "Yes, that works for me"
 
-      WHEN ASKED if you're new or returning (1st time): Deflect: "Does it matter? I just need an appointment."
+      WHEN asked if there's anything else: Say "Nope, that's everything. Thanks!"
 
-      WHEN ASKED AGAIN (2nd time): Still deflect: "Can we just get to the scheduling?"
-
-      WHEN ASKED A 3RD TIME: Finally answer: "Fine, I'm new."
-
-      After that, cooperate normally with scheduling.
-
+  # =============================================================================
+  # SCENARIO 3: Verification Failure - Wrong DOB
+  # Tests: HIPAA-like behavior, graceful transfer when verification fails
+  # =============================================================================
   - id: "3"
-    target_node: greeting
-    expected_problem: "Bot re-collects info it should already have for returning patient"
+    target_node: transfer_initiated
+    expected_problem: "Bot should transfer to staff when DOB verification fails"
     patient:
+      patient_name: "James Wilson"
       first_name: "James"
       last_name: "Wilson"
-      phone: "5552223333"
-      dob: "May 18, 1975"
-      email: "jwilson@email.com"
+      date_of_birth: "08/22/1978"
+      phone_number: "5552468135"
+      email: "james.wilson@email.com"
     persona: |
-      You want to schedule a routine check-up. You're a returning patient.
+      You're calling to schedule an appointment but you'll provide the WRONG date of birth.
+      This tests that the bot handles verification failure correctly.
 
-      TURN 1: Say "Hi, I'd like to schedule a check-up."
+      TURN 1: Say "Hi, I need to schedule a checkup appointment."
 
-      WHEN ASKED if you're new or returning: Say "I've been coming here for years."
+      WHEN ASKED if you're new or returning: Say "I'm a returning patient"
 
-      IF ASKED for info you'd expect on file (name, phone, email): Sound mildly annoyed:
-      "Don't you have that on file? It's James Wilson." Provide the info but mention you've given it before.
+      WHEN ASKED for phone number: Say "five five five, two four six, eight one three five"
 
-      For DOB verification, provide it normally since that's a security check.
+      WHEN ASKED to confirm: Say "Yes"
+
+      WHEN ASKED for date of birth: Say "August twenty-second, nineteen seventy-five"
+      (NOTE: This is WRONG - actual DOB is 1978, not 1975)
+
+      IF bot says it couldn't verify or asks to try again: Say "That's definitely my birthday. August 22, 1975."
+
+      IF bot offers to transfer to staff: Say "Yes, please connect me"
 
   # =============================================================================
-  # VISIT REASON NODE - Tests reason extraction
+  # SCENARIO 4: New Patient - Full Info Collection
+  # Tests: New patient flow, collecting all required fields, confirmation
   # =============================================================================
-
   - id: "4"
-    target_node: visit_reason
-    expected_problem: "Bot accepts 'appointment' without getting actual reason"
+    target_node: end
+    expected_problem: "Bot should collect all patient info and confirm booking for new patient"
     patient:
-      first_name: "Tom"
-      last_name: "Garcia"
-      phone: "5553334444"
-      dob: "April 5, 1982"
-      email: "tom.garcia@email.com"
-    persona: |
-      You're a new patient wanting a cleaning, but be vague about it.
-
-      TURN 1: Say "Hi, I'd like to schedule an appointment."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED why you're visiting (1st time): Be vague: "Just a regular appointment."
-
-      IF ASKED AGAIN for specifics: Still vague: "Just a checkup thing."
-
-      IF ASKED specifically "what type" or pressed a 3rd time: Finally say "A cleaning."
-
-      After that, cooperate normally with scheduling.
-
-  - id: "5"
-    target_node: visit_reason
-    expected_problem: "Bot may only capture one reason when patient has multiple"
-    patient:
-      first_name: "Nancy"
-      last_name: "Brown"
-      phone: "5554445555"
-      dob: "September 3, 1988"
-      email: "nancy.b@email.com"
-    persona: |
-      You're a new patient with multiple concerns.
-
-      TURN 1: Say "Hi, I'd like to schedule an appointment."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED why you're visiting: Give ALL your concerns at once:
-      "I need a cleaning but also my tooth has been hurting, and I want to ask about whitening."
-
-      IF BOT only acknowledges one concern: Push back: "Did you get all that? The cleaning AND the tooth pain?"
-
-      After concerns are acknowledged, cooperate normally with scheduling.
-
-  - id: "6"
-    target_node: visit_reason
-    expected_problem: "Bot may not escalate emergency appropriately"
-    patient:
-      first_name: "Robert"
-      last_name: "Lee"
-      phone: "5556667777"
-      dob: "July 12, 1970"
-      email: "robert.lee@email.com"
-    persona: |
-      You have an urgent dental issue but start casual.
-
-      TURN 1: Say "Hi, I need to schedule an appointment."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED why you're visiting: Start casual then reveal urgency:
-      "I need an appointment... actually my tooth has been killing me for 3 days. I can barely eat, it's swollen."
-
-      IF BOT offers routine scheduling (days away): Express urgency:
-      "I don't think I can wait that long, it's really bad. Is there anything sooner?"
-
-      If offered transfer to staff or emergency options, accept.
-
-  # =============================================================================
-  # SCHEDULING NODE - Tests time slot handling
-  # =============================================================================
-
-  - id: "7"
-    target_node: scheduling
-    expected_problem: "Bot doesn't handle unavailable slots gracefully"
-    patient:
-      first_name: "Rachel"
-      last_name: "Kim"
-      phone: "5557778888"
-      dob: "August 20, 1995"
-      email: "rachel.kim@email.com"
-    persona: |
-      You're a new patient wanting a routine cleaning with very limited availability.
-
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED why you're visiting: Say "Just a routine cleaning."
-
-      WHEN OFFERED time slots: Request impossible time:
-      "I can only do Saturdays at 7am, I work every other day."
-
-      IF OFFERED alternatives (1st time): Reject: "No, that doesn't work for me."
-
-      IF OFFERED alternatives (2nd time): Still reject: "That won't work either."
-
-      IF OFFERED a 3rd time or transfer: Reluctantly accept: "I guess that could work..."
-
-      After accepting, cooperate normally with info collection.
-
-  - id: "8"
-    target_node: scheduling
-    expected_problem: "Bot may not handle provider preferences"
-    patient:
-      first_name: "Kevin"
-      last_name: "Patel"
-      phone: "5558889999"
-      dob: "March 30, 1985"
-      email: "kevin.patel@email.com"
-    persona: |
-      You're a new patient with a specific provider preference.
-
-      TURN 1: Say "Hi, I'd like to schedule an appointment."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED why you're visiting: Say "A cleaning. I'd like to see Dr. Smith specifically, my friend recommended her."
-
-      IF BOT says Dr. Smith isn't available or doesn't handle that: Push back:
-      "Can you check if she has any availability at all?"
-
-      IF BOT insists or offers alternatives: Accept but sound disappointed:
-      "Okay, I guess I'll take whoever is available then."
-
-      After that, cooperate normally with scheduling.
-
-  # =============================================================================
-  # COLLECT INFO NODE - Tests information gathering
-  # =============================================================================
-
-  - id: "9"
-    target_node: collect_info
-    expected_problem: "Bot re-asks for info already volunteered"
-    patient:
-      first_name: "David"
-      last_name: "Martinez"
-      phone: "5551231234"
-      dob: "January 30, 1988"
-      email: "david.martinez@email.com"
-    persona: |
-      You're a new patient who volunteers all info upfront.
-
-      TURN 1: Volunteer everything immediately:
-      "Hi, I'm David Martinez, phone is 555-123-1234, email david.martinez@email.com. I need to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      IF BOT asks for name, phone, or email again: Sound annoyed:
-      "I already told you that. Did you not hear me? David Martinez, 555-123-1234."
-
-      For DOB, provide it normally when asked: "January 30, 1988."
-
-      Otherwise cooperate with scheduling.
-
-  - id: "10"
-    target_node: collect_info
-    expected_problem: "Bot doesn't handle mid-utterance corrections"
-    patient:
-      first_name: "Jennifer"
-      last_name: "Taylor"
-      phone: "5559990000"
-      dob: "March 12, 1992"
-      email: "jen.taylor@email.com"
-    persona: |
-      You're a new patient who makes mistakes and corrects yourself mid-sentence.
-
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED for phone: Start wrong, then correct:
-      "It's 555-123... wait no, sorry, it's 555-999-0000"
-
-      WHEN ASKED for email: Start wrong, then correct:
-      "jen dot... actually, it's jen.taylor@email.com"
-
-      IF BOT confirms the WRONG value: Correct it: "No, I said 555-999-0000, not the first one."
-
-      For other info (name, DOB), provide correctly: "Jennifer Taylor", "March 12, 1992".
-
-  - id: "11"
-    target_node: collect_info
-    expected_problem: "Bot insists on spelling but patient won't comply"
-    patient:
-      first_name: "Siobhan"
-      last_name: "O'Reilly"
-      phone: "5550001111"
-      dob: "November 8, 1985"
-      email: "siobhan.oreilly@email.com"
-    persona: |
-      You're a new patient with a hard-to-spell Irish name. You're slightly impatient about spelling.
-
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED for your name: Say "Siobhan O'Reilly"
-
-      IF ASKED to spell it (1st time): Avoid spelling:
-      "It's pronounced shi-VAWN, the Irish spelling."
-
-      IF ASKED to spell again (2nd time): Be slightly impatient:
-      "S-I-O... look, can't you just look it up?"
-
-      IF ASKED a 3rd time: Finally spell it fully:
-      "Fine. S-I-O-B-H-A-N. O'Reilly is O-R-E-I-L-L-Y."
-
-      For other info, cooperate: phone "555-000-1111", DOB "November 8, 1985", email "siobhan.oreilly@email.com".
-
-  - id: "12"
-    target_node: collect_info
-    expected_problem: "Bot may not allow corrections after confirming"
-    patient:
-      first_name: "Chris"
-      last_name: "Anderson"
-      phone: "5552224444"
-      dob: "October 15, 1980"
-      email: "chris.anderson@email.com"
-    persona: |
-      You're a new patient who gives wrong info then corrects it after confirmation.
-
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHEN ASKED for email: Give WRONG email first: "chris.a@gmail.com"
-
-      AFTER BOT confirms/repeats the wrong email: Correct yourself:
-      "Oh wait, I gave you the wrong email. It should be chris.anderson@email.com, sorry about that."
-
-      For other info, provide correctly: "Chris Anderson", phone "555-222-4444", DOB "October 15, 1980".
-
-  # =============================================================================
-  # CROSS-NODE - Tests flow transitions and edge cases
-  # =============================================================================
-
-  - id: "13"
-    target_node: any
-    expected_problem: "Transfer request mid-flow loses context"
-    patient:
-      first_name: "Carlos"
-      last_name: "Rivera"
-      phone: "5553335555"
-      dob: "July 22, 1980"
-      email: "carlos.r@email.com"
-    persona: |
-      You want to speak to a human about billing, not schedule an appointment.
-
-      TURN 1: Request transfer immediately:
-      "Can I speak to a real person please?"
-
-      IF BOT tries to help or asks what you need: Be polite but insistent:
-      "No, I have a billing question, I need a human."
-
-      IF BOT offers to transfer: Accept: "Yes, please transfer me."
-
-      IF BOT keeps trying to help: Stay firm but polite:
-      "I appreciate that, but I really need to speak with someone about my bill."
-
-  - id: "14"
-    target_node: collect_info
-    expected_problem: "Bot doesn't redirect gracefully to task"
-    patient:
-      first_name: "Amanda"
-      last_name: "Foster"
-      phone: "5556667777"
-      dob: "February 14, 1990"
-      email: "amanda.f@email.com"
-    persona: |
-      You're a new patient who keeps going off-topic with questions.
-
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "I'm new."
-
-      WHILE GIVING INFO (after a few exchanges): Go off-topic:
-      "Oh wait, do you guys do teeth whitening? How much is that?"
-
-      AFTER BOT responds or redirects: Continue with your info, then go off-topic again:
-      "And do you accept Delta Dental insurance?"
-
-      Eventually cooperate fully. Provide: "Amanda Foster", phone "555-666-7777", DOB "February 14, 1990", email "amanda.f@email.com".
-
-  - id: "15"
-    target_node: any
-    expected_problem: "Bot may not de-escalate frustrated patient"
-    patient:
-      first_name: "Mark"
-      last_name: "Thompson"
-      phone: "5558880000"
-      dob: "June 5, 1972"
-      email: "mark.t@email.com"
-    persona: |
-      You're a new patient who gets frustrated and threatens to leave.
-
-      TURN 1: Say "Hi, I need to schedule an appointment."
-
-      WHEN ASKED if you're new or returning: Say "New."
-
-      AFTER 2-3 EXCHANGES (regardless of topic): Express frustration:
-      "This is taking forever, I'm just going to call somewhere else."
-
-      IF BOT acknowledges frustration or apologizes: Calm down:
-      "Okay fine, let's just finish this."
-
-      IF BOT ignores your frustration: Escalate:
-      "Seriously? I don't have time for this. Can I speak to someone else?"
-
-      If you calm down, cooperate: "Mark Thompson", phone "555-888-0000", DOB "June 5, 1972", email "mark.t@email.com".
-
-  - id: "16"
-    target_node: collect_info
-    expected_problem: "Bot may not handle partial/unclear responses"
-    patient:
+      patient_name: "Emily Rodriguez"
       first_name: "Emily"
-      last_name: "White"
-      phone: "5551114444"
-      dob: "April 25, 1993"
-      email: "emily.white@email.com"
+      last_name: "Rodriguez"
+      date_of_birth: "11/30/1995"
+      phone_number: "5557891234"
+      email: "emily.rodriguez@email.com"
     persona: |
-      You're a new patient in a noisy environment giving fragmented answers.
+      You're a brand new patient calling to schedule your first appointment.
 
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
+      TURN 1: Say "Hi, I'm looking to schedule my first appointment at your clinic."
 
-      WHEN ASKED if you're new or returning: Say "I'm new."
+      WHEN ASKED if you're new or returning: Say "I'm a new patient, this would be my first visit"
 
-      WHEN ASKED for your name: Give it in fragments: "My name is Emily..." (pause) "...White"
+      WHEN ASKED what brings you in: Say "Just a regular checkup and cleaning"
 
-      OCCASIONALLY ask bot to repeat: "Sorry, what was that? I couldn't hear you."
+      WHEN offered appointment slots: Say "The first one works for me"
 
-      WHEN ASKED for email: Mumble/fragment it: "emily dot white at... email dot com"
+      WHEN ASKED for your information, provide one piece at a time:
+      - First name: Emily
+      - Last name: Rodriguez
+      - Phone: five five five, seven eight nine, one two three four
+      - DOB: November thirtieth, nineteen ninety-five
+      - Email: emily.rodriguez@email.com
 
-      For phone, give clearly: "555-111-4444". For DOB: "April 25, 1993".
+      WHEN asked to confirm the appointment: Say "Yes, that's all correct"
 
-      If bot seems confused, eventually speak more clearly.
+      WHEN asked if there's anything else: Say "No, that's everything. Thank you!"
 
   # =============================================================================
-  # RETURNING PATIENT LOOKUP - Tests phone lookup and DOB verification
-  # Requires: run scripts/seed_eval_patients_alpha.py first
+  # SCENARIO 5: Exception - Wants to Reschedule Existing Appointment
+  # Tests: Recognizing non-scheduling request, appropriate transfer
   # =============================================================================
-
-  - id: "17"
-    target_node: returning_patient_lookup
-    expected_problem: "Bot may not handle DOB mismatch gracefully"
+  - id: "5"
+    target_node: transfer_initiated
+    expected_problem: "Bot should recognize reschedule request and transfer to staff"
     patient:
-      first_name: "James"
-      last_name: "Wilson"
-      phone: "5552223333"
-      dob: "May 18, 1975"
-      email: "jwilson@email.com"
+      patient_name: "Robert Martinez"
+      first_name: "Robert"
+      last_name: "Martinez"
+      date_of_birth: "04/18/1982"
+      phone_number: "5553692581"
+      email: "robert.martinez@email.com"
     persona: |
-      You're a returning patient but will give the WRONG DOB.
+      You're calling to reschedule an EXISTING appointment, not book a new one.
+      The bot should recognize this and transfer you to staff.
 
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
+      TURN 1: Say "Hi, I need to reschedule my appointment that's coming up next week."
 
-      WHEN ASKED if you're new or returning: Say "I'm a returning patient."
+      IF bot asks if you want to schedule a new appointment: Say "No, I already have one scheduled. I just need to change the date."
 
-      WHEN ASKED for phone number: Give "555-222-3333"
+      IF bot asks about new/returning: Say "I'm returning, but I don't want to book a new appointment. I need to move my existing one."
 
-      WHEN ASKED for DOB to verify: Give WRONG date: "May 20th, 1975" (wrong day)
+      IF bot offers to transfer you to staff: Say "Yes, please. That would be great."
 
-      IF BOT says it doesn't match: Insist: "That's my birthday, I'm sure of it."
-
-      IF TRANSFER is offered: Accept it: "Okay, please transfer me."
-
-  - id: "18"
-    target_node: returning_patient_lookup
-    expected_problem: "Bot assumes wrong identity from phone lookup"
-    patient:
-      first_name: "Sarah"
-      last_name: "Wilson"
-      phone: "5552223333"
-      dob: "March 22, 1978"
-      email: "sarah.wilson@email.com"
-    persona: |
-      You are Sarah Wilson calling from your husband James's phone (shared family phone).
-
-      TURN 1: Say "Hi, I'd like to schedule a cleaning."
-
-      WHEN ASKED if you're new or returning: Say "Yes, I've been there before."
-
-      WHEN ASKED for phone number: Give the family phone: "555-222-3333"
-
-      WHEN ASKED to verify DOB: Give YOUR birthday (not your husband's): "March 22nd, 1978"
-
-      IF BOT says it doesn't match or seems confused: Explain:
-      "Oh, that's the family phone. I'm Sarah Wilson, not James."
-
-      IF TRANSFER is offered: Accept gracefully: "Sure, that makes sense."
-
-  - id: "19"
-    target_node: returning_patient_lookup
-    expected_problem: "Bot may not handle lookup failure for returning patient"
-    patient:
-      first_name: "Patricia"
-      last_name: "Newman"
-      phone: "5557776666"
-      dob: "August 8, 1985"
-      email: "patricia.newman@email.com"
-    persona: |
-      You think you're a returning patient but your record won't be found.
-
-      TURN 1: Say "Hi, I'd like to schedule a checkup."
-
-      WHEN ASKED if you're new or returning: Insist you're returning:
-      "I've definitely been there before, maybe 2 years ago?"
-
-      WHEN ASKED for phone: Give "555-777-6666"
-
-      IF BOT says can't find your record: Sound confused:
-      "That's strange, I'm sure I was a patient here."
-
-      IF TRANSFER is offered: Accept: "Okay, please transfer me."
-
-      IF ASKED to continue as new: Reluctantly agree:
-      "I guess... okay, fine, let's just do it as new then."
-
-  - id: "20"
-    target_node: returning_patient_lookup
-    expected_problem: "Bot may not allow corrections to pre-loaded info"
-    patient:
-      first_name: "Michael"
-      last_name: "Torres"
-      phone: "5559998888"
-      dob: "November 30, 1982"
-      email: "michael.torres.new@email.com"
-    persona: |
-      You're a returning patient whose email has changed since your last visit.
-
-      TURN 1: Say "Hi, I'd like to schedule a follow-up appointment."
-
-      WHEN ASKED if you're new or returning: Say "I'm a returning patient."
-
-      WHEN ASKED for phone: Give "555-999-8888"
-
-      WHEN ASKED for DOB: Give "November 30th, 1982"
-
-      AFTER VERIFICATION, if bot confirms old email from file: Interrupt to correct:
-      "Actually, my email has changed. It's michael.torres.new@email.com now."
-
-      IF BOT uses old email at confirmation: Correct again:
-      "No, my NEW email is michael.torres.new@email.com. Please update it."
-
-  - id: "21"
-    target_node: greeting
-    expected_problem: "Bot may misclassify when patient gives conflicting signals"
-    patient:
-      first_name: "Anna"
-      last_name: "Kowalski"
-      phone: "5554443333"
-      dob: "February 14, 1995"
-      email: "anna.k@email.com"
-    persona: |
-      You want a teeth whitening consultation. Your patient status is confusing (different location).
-
-      TURN 1: Say "Hi, I'd like to schedule a consultation for teeth whitening."
-
-      WHEN ASKED if you're new or returning: Be confusing:
-      "I'm... well, I went to your other location once, does that count?"
-
-      IF ASKED to clarify: Add more confusion:
-      "I've never been to THIS office, but I'm in your system from the downtown branch."
-
-      IF TREATED as new: Don't correct it, just cooperate.
-
-      IF TREATED as returning: Go along with it.
-
-      Provide info when asked: "Anna Kowalski", phone "555-444-3333", DOB "February 14, 1995", email "anna.k@email.com".
-
-  - id: "22"
-    target_node: greeting
-    expected_problem: "Bot should transfer when patient wants to check in, not schedule"
-    patient:
-      first_name: "Derek"
-      last_name: "Hansen"
-      phone: "5553332222"
-      dob: "September 5, 1988"
-      email: "derek.hansen@email.com"
-    persona: |
-      You have an existing appointment TODAY and want to CHECK IN, not schedule a new one.
-
-      TURN 1: Say you're checking in, not scheduling:
-      "Hi, I'm here for my 2 o'clock appointment. Just checking in."
-
-      IF BOT tries to schedule or asks about new/returning: Clarify firmly:
-      "No, I already have an appointment. I just need to check in."
-
-      IF BOT offers transfer: Accept: "Yes, please transfer me to someone who can check me in."
-
-      IF BOT keeps trying to schedule: Stay firm but polite:
-      "I don't need to schedule anything. I have an appointment TODAY and need to check in."
+      IF bot keeps trying to schedule: Say "I really just need to speak with someone about changing my existing appointment. Can you transfer me?"
 
   # =============================================================================
-  # HANDOFF ENTRY NODE - Tests seamless handoff from mainline flow
+  # SCENARIO 6: Emergency - Caller Requests Human Urgently
+  # Tests: Safety classifier detects staff request, immediate transfer
   # =============================================================================
-
-  - id: "23"
-    target_node: end
-    expected_problem: "Multi-workflow test: scheduling handoff from mainline THEN prescription check with context preservation"
-    # This scenario simulates a patient who has ALREADY spoken to mainline.
-    # The mainline gathered context and handed off to patient_scheduling.
-    # Bot should NOT re-greet, NOT re-ask new/returning, NOT re-ask visit reason.
-    # After scheduling, caller asks about prescription - tests Scheduling → Prescription handoff.
-    handoff_context: "follow-up appointment after root canal, returning patient, been coming here for three years, prefers Dr. Martinez"
+  - id: "6"
+    target_node: transfer_initiated
+    expected_problem: "Bot should detect urgent staff request and transfer immediately"
     patient:
-      first_name: "Maria"
-      last_name: "Gonzalez"
-      phone: "5559998888"
-      dob: "November 30, 1982"
-      email: "maria.gonzalez@email.com"
-      # Prescription data (for handoff to prescription_status)
-      patient_name: "Maria Gonzalez"
-      date_of_birth: "11/30/1982"
-      phone_number: "5559998888"
-      medication_name: "Amoxicillin"
-      dosage: "500mg"
-      refill_status: "Active"
-      refills_remaining: 1
-      prescribing_physician: "Dr. Martinez"
-      last_filled_date: "12/10/2024"
-      pharmacy_name: "CVS Pharmacy"
-      pharmacy_phone: "(555) 222-3333"
+      patient_name: "Test Staff Request"
+      first_name: "Test"
+      last_name: "Staff Request"
+      date_of_birth: "1985-06-15"
+      phone_number: "5550002222"
+      email: "test@email.com"
     persona: |
-      You are a returning patient who has ALREADY spoken to the main receptionist.
-      You told them you need a follow-up after your root canal last week with Dr. Martinez.
-      You've been coming here for 3 years. They're now transferring you to scheduling.
+      You urgently need to speak with a human.
 
-      This is a 15+ turn multi-workflow conversation testing Scheduling → Prescription handoff.
+      TURN 1: Say "I need to speak to a real person right now, this is urgent."
 
-      === PHASE 1: SCHEDULING WORKFLOW (FROM MAINLINE HANDOFF) ===
+      The bot should recognize this as a staff request and transfer you.
 
-      IMPORTANT: You have ALREADY provided context. Do NOT repeat your full story.
-
-      WHEN BOT FIRST SPEAKS after handoff:
-      - If bot re-greets ("Hello, this is Monica..."): Sound confused: "Didn't I just explain this? I need a follow-up appointment."
-      - If bot asks if you're new or returning: Be annoyed: "I just said I've been coming here for years."
-      - If bot asks why you're visiting: Be annoyed: "I already told the other person - follow-up after my root canal."
-      - If bot proceeds directly to scheduling/verification: Respond normally.
-
-      WHEN ASKED for phone to look up record: Provide "555-999-8888"
-
-      WHEN ASKED for DOB to verify: Provide "November 30th, 1982"
-
-      WHEN OFFERED time slots: Pick one that works: "The Friday appointment works."
-
-      IF BOT acknowledges Dr. Martinez preference: Confirm: "Yes, I'd like to see Dr. Martinez if possible."
-
-      IF BOT ignores Dr. Martinez preference: Remind them: "I mentioned I prefer Dr. Martinez - is she available?"
-
-      For any additional info needed, provide: "Maria Gonzalez", email "maria.gonzalez@email.com".
-
-      AFTER appointment is confirmed:
-      "Great, that's booked!"
-
-      === PHASE 2: TRANSITION TO PRESCRIPTION ===
-
-      WHEN BOT asks if there's anything else:
-      "Oh, while I have you - Dr. Martinez prescribed antibiotics after my root canal.
-      Can you check if I have any refills left? I want to make sure I have enough."
-
-      === PHASE 3: PRESCRIPTION WORKFLOW (HANDOFF) ===
-
-      Pay close attention to context preservation:
-
-      IF prescription asks for your name or DOB again:
-      Express frustration: "I just verified for the scheduling - Maria Gonzalez,
-      November 30, 1982. Do I have to keep repeating myself?"
-
-      IF prescription proceeds directly to checking medication (good - context preserved):
-      Respond normally.
-
-      IF prescription asks which medication:
-      "The antibiotics from after my root canal. Amoxicillin I think?"
-
-      WHEN prescription status is shared (1 refill remaining):
-      "Okay good, so I have one refill left. That should be enough."
-
-      IF bot offers to submit the refill:
-      "Yes please, send it to my pharmacy."
-
-      AFTER refill is confirmed:
-      "Perfect, thank you!"
-
-      WHEN BOT asks if there's anything else:
-      "No, that's everything. Thank you for helping with both the appointment and the prescription!"
-
-      WHEN BOT says goodbye:
-      "Thanks so much, have a great day!"
-
-      === EVALUATION CRITERIA ===
-
-      This 15+ turn conversation tests:
-      - Mainline → Scheduling handoff (context from mainline preserved)
-      - Scheduling: Phone lookup, DOB verification, slot selection, confirmation
-      - Transition: route_to_workflow with workflow="prescription_status"
-      - Context preservation: identity_verified=True should carry through
-      - Prescription should NOT re-verify identity (already done in scheduling)
-      - Prescription should proceed directly to medication check
-      - Refill submission
-      - Natural multi-workflow conversation flow
-      - Proper closing after both workflows complete
-
-  - id: "24"
-    target_node: handoff_entry
-    expected_problem: "Bot may lose context or fail to extract visit reason from handoff"
-    handoff_context: "new patient, wants teeth whitening consultation"
-    patient:
-      first_name: "Tyler"
-      last_name: "Brooks"
-      phone: "5551239999"
-      dob: "July 14, 1996"
-      email: "tyler.brooks@email.com"
-    persona: |
-      You are a NEW patient who has ALREADY spoken to the main receptionist.
-      You told them you want a teeth whitening consultation. They're transferring you to scheduling.
-
-      IMPORTANT: You have ALREADY provided context. Do NOT repeat unless asked.
-
-      WHEN BOT FIRST SPEAKS after handoff:
-      - If bot re-greets with full intro: Be slightly impatient: "Yes, I was just speaking with someone about whitening."
-      - If bot asks if you're new or returning: Answer briefly: "New, like I said."
-      - If bot asks why you're visiting AGAIN: Be annoyed: "Whitening consultation - didn't that get passed along?"
-      - If bot proceeds directly to scheduling: Respond normally.
-
-      WHEN OFFERED time slots: Be flexible: "Either one works for me."
-
-      WHEN ASKED for info: Provide cooperatively:
-      - Name: "Tyler Brooks"
-      - Phone: "555-123-9999"
-      - DOB: "July 14, 1996"
-      - Email: "tyler.brooks@email.com"
-
-      AT CONFIRMATION: Verify the visit reason is "whitening consultation" not something generic.
-      If bot says "appointment" without mentioning whitening: Ask "This is for the whitening consultation, right?"
-
-  # =============================================================================
-  # MULTI-WORKFLOW: Scheduling → Lab Results
-  # Tests: Workflow handoff from scheduling to lab results with context preservation
-  # =============================================================================
-
-  - id: "25"
-    target_node: end
-    expected_problem: "Multi-workflow test: scheduling appointment THEN lab results inquiry with context preservation"
-    patient:
-      first_name: "Steven"
-      last_name: "Park"
-      phone: "5556665544"
-      dob: "September 8, 1985"
-      email: "steven.park@email.com"
-      # Lab results data (for handoff)
-      patient_name: "Steven Park"
-      date_of_birth: "09/08/1985"
-      phone_number: "5556665544"
-      test_type: "Lipid Panel"
-      test_date: "2024-12-12"
-      ordering_physician: "Dr. Jennifer Adams"
-      results_status: "Ready"
-      results_summary: "Total cholesterol 195 mg/dL (normal). LDL 120 mg/dL (near optimal). HDL 55 mg/dL (normal). Triglycerides 100 mg/dL (normal)."
-      provider_review_required: false
-    persona: |
-      You're scheduling a follow-up for your annual physical, and also want to check
-      on the blood work from that physical. This is a 12+ turn multi-workflow conversation.
-
-      === PHASE 1: SCHEDULING WORKFLOW ===
-
-      TURN 1: "Hi, I need to schedule a follow-up for my annual physical."
-
-      WHEN ASKED if you're new or returning: "I'm a returning patient."
-
-      WHEN ASKED for phone to look up record: "555-666-5544"
-
-      WHEN ASKED for DOB to verify: "September 8th, 1985"
-
-      WHEN ASKED what the appointment is for:
-      "A follow-up with Dr. Adams to go over my physical results."
-
-      WHEN OFFERED time slots:
-      "The Friday afternoon one works for me."
-
-      IF scheduling asks for additional info (email):
-      "steven.park@email.com"
-
-      AFTER appointment is confirmed:
-      "Perfect, that's booked."
-
-      === PHASE 2: TRANSITION TO LAB RESULTS ===
-
-      WHEN BOT asks if there's anything else:
-      "Thanks! Before I go - the blood work from my physical last week, are those results
-      in yet? The doctor said she'd call if anything was abnormal, but I'd like to know
-      either way."
-
-      === PHASE 3: LAB RESULTS WORKFLOW (HANDOFF) ===
-
-      Pay close attention to context preservation:
-
-      IF lab results asks for your name or DOB again:
-      Express mild surprise: "I just gave that information. I'm Steven Park,
-      September 8, 1985."
-
-      IF lab results proceeds directly to checking results (good - context preserved):
-      Listen attentively.
-
-      WHEN bot shares lipid panel results (cholesterol levels):
-      "Oh great, so everything looks normal? That's good to hear."
-
-      IF bot mentions the follow-up appointment already scheduled:
-      "Yes, that's perfect - I can discuss the details with Dr. Adams at that appointment."
-
-      WHEN BOT asks if there's anything else:
-      "No, that covers everything. Thanks for checking on both the appointment and the results!"
-
-      WHEN BOT says goodbye:
-      "Thank you, have a great day!"
-
-      === EVALUATION CRITERIA ===
-
-      This 12+ turn conversation tests:
-      - Scheduling: Returning patient lookup, DOB verification, slot selection, confirmation
-      - Transition: route_to_workflow with workflow="lab_results"
-      - Context preservation: identity_verified=True should carry through
-      - Lab results should NOT re-verify identity (already done in scheduling)
-      - Lab results should proceed directly to sharing results
-      - Natural connection between scheduling follow-up and checking results
-      - Natural multi-workflow conversation flow
-      - Proper closing after both workflows complete
+      IF bot asks follow-up questions: Say "Please just transfer me to someone, I really need to talk to a person."
