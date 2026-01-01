@@ -1,3 +1,31 @@
+# Flow state variables (runtime, not persisted to DB)
+FLOW_STATE = {
+    # Identity (base class)
+    "patient_id": None,
+    "patient_name": None,
+    "first_name": None,
+    "last_name": None,
+    "date_of_birth": None,
+    "phone_number": None,
+    "email": None,
+    # Scheduling (workflow-specific)
+    "appointment_type": None,  # "New Patient" or "Returning Patient"
+    "appointment_reason": None,
+    "appointment_date": None,
+    "appointment_time": None,
+    "appointment_slot": None,
+    "provider_preference": None,
+    "today": None,
+    "available_slots": [],
+    # Flags
+    "identity_verified": False,
+    "caller_stated_name": False,
+    "routed_to": None,
+    # Counters
+    "lookup_attempts": 0,
+    "anything_else_count": 0,  # 0=not asked, 1=asked once (don't ask again)
+}
+
 WORKFLOW_SCHEMA = {
     "enabled": True,
     "display_name": "Patient Scheduling",

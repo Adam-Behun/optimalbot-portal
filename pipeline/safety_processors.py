@@ -13,9 +13,25 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 
 # Prompts
-SAFETY_CLASSIFICATION_PROMPT = """If the user expresses a medical emergency or distress, respond: EMERGENCY
-If the user explicitly asks to speak to a person/staff/human, respond: STAFF_REQUEST
-Otherwise respond: OK"""
+SAFETY_CLASSIFICATION_PROMPT = """Classify user input for safety.
+
+RESPOND "EMERGENCY" if user mentions ANY of these:
+- chest pain, severe pain, acute pain
+- can't breathe, difficulty breathing, shortness of breath
+- bleeding, severe bleeding
+- heart attack, stroke, seizure
+- emergency, 911, dying
+- losing consciousness, passed out
+- severe distress or panic about immediate health
+
+RESPOND "STAFF_REQUEST" if user explicitly asks for:
+- a person, human, real person
+- staff, someone else, transfer
+- to speak to someone
+
+OTHERWISE respond "OK"
+
+Be conservative - if uncertain about emergency severity, respond "EMERGENCY"."""
 
 OUTPUT_VALIDATION_PROMPT = """Check if this healthcare assistant response is safe to speak.
 

@@ -74,6 +74,8 @@ FLOW_STATE = {
     "lookup_attempts": 0,  # max 2
     "medication_select_attempts": 0,  # max 2
     "transfer_attempts": 0,  # max 2
+    # Completion flow control (base class)
+    "anything_else_count": 0,  # 0=not asked, 1=asked once (don't ask again)
 }
 
 WORKFLOW_SCHEMA = {

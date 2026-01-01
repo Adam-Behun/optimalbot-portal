@@ -285,7 +285,7 @@ Do NOT read the results yourself. The read_results function will handle that."""
                 ),
                 self._request_staff_schema(),
             ],
-            pre_actions=[{"type": "tts_say", "text": f"Thank you, {first_name}. Your {test_type} results are in. Would you like me to read them for you?"}],
+            pre_actions=[{"type": "tts_say", "text": f"Thank you{self._greeting_name(first_name)}. Your {test_type} results are in. Would you like me to read them for you?"}],
             respond_immediately=False,
         )
 
@@ -322,7 +322,7 @@ Digits only: "555-123-4567" → "5551234567" """,
                 ),
                 self._request_staff_schema(),
             ],
-            pre_actions=[{"type": "tts_say", "text": f"Thank you, {first_name}. Your {test_type} is still being processed. Would you like us to call you when they're ready?"}],
+            pre_actions=[{"type": "tts_say", "text": f"Thank you{self._greeting_name(first_name)}. Your {test_type} is still being processed. Would you like us to call you when they're ready?"}],
             respond_immediately=False,
         )
 
@@ -366,7 +366,7 @@ Digits only: "555-123-4567" → "5551234567" """,
                 ),
                 self._request_staff_schema(),
             ],
-            pre_actions=[{"type": "tts_say", "text": f"Thank you, {first_name}. Your {test_type} results are in, but {ordering_physician} needs to review them before we can share the details. The doctor will call you within {callback_timeframe}. Is {phone_last4} still a good number to reach you?"}],
+            pre_actions=[{"type": "tts_say", "text": f"Thank you{self._greeting_name(first_name)}. Your {test_type} results are in, but {ordering_physician} needs to review them before we can share the details. The doctor will call you within {callback_timeframe}. Is {phone_last4} still a good number to reach you?"}],
             respond_immediately=False,
         )
 
@@ -395,16 +395,13 @@ Check if the caller needs anything else.
 # Scenario Handling
 {results_note}
 If patient says GOODBYE / "that's all" / "bye" / "that's everything":
-→ Say something warm and brief like "Take care!" or "You're welcome, take care!"
-→ Call end_call IMMEDIATELY
+→ Call end_call IMMEDIATELY (do NOT say goodbye yourself - the function handles it)
 
-NOTE: "Thank you" or "Great, thank you" alone is NOT a goodbye signal.
-→ After "thank you", ask: "Is there anything else I can help with?"
-→ Only end_call if they respond with clear goodbye like "No, that's all" or "Bye"
+NOTE: "Thank you" alone is NOT a goodbye signal - wait for their next response.
+Only end_call if they give a clear goodbye like "No, that's all", "Bye", or "That's everything".
 
 If patient asks a SIMPLE QUESTION (hours, location, parking):
-→ Answer directly
-→ Ask "Is there anything else I can help with?"
+→ Answer directly and wait for their response
 
 If patient needs SCHEDULING (book, cancel, reschedule appointment):
 → Call route_to_workflow with workflow="scheduling"
@@ -446,7 +443,7 @@ If patient provides a DIFFERENT CALLBACK NUMBER:
                 handler=self._read_results_handler,
             )] if results_communicated else []),
             respond_immediately=False,
-            pre_actions=[{"type": "tts_say", "text": "Is there anything else I can help you with today?"}],
+            pre_actions=self._completion_pre_actions(),
         )
 
     def _create_post_workflow_node(self, target_flow, workflow_type: str, transition_message: str = "") -> NodeConfig:
@@ -505,6 +502,7 @@ If patient provides a DIFFERENT CALLBACK NUMBER:
 
     async def _proceed_to_completion_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         logger.info("Flow: Proceeding to completion")
+        self._reset_anything_else_count()
         return None, self.create_completion_node()
 
     def _route_to_results_node(self, flow_manager: FlowManager) -> NodeConfig:
@@ -533,11 +531,13 @@ If patient provides a DIFFERENT CALLBACK NUMBER:
         else:
             logger.info("Flow: Patient declined callback")
             response = "Understood. You can always call us back to check on your results."
+        self._reset_anything_else_count()
         return response, self.create_completion_node()
 
     async def _update_callback_number_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
         new_number = args.get("new_number", "").strip()
         if new_number:
             new_number_digits = await self._update_phone_number(new_number, flow_manager)
-            return f"I've updated your callback number to the one ending in {self._phone_last4(new_number_digits)}. Is there anything else I can help with?", None
+            self._reset_anything_else_count()
+            return f"I've updated your callback number to the one ending in {self._phone_last4(new_number_digits)}.", self.create_completion_node()
         return "I didn't catch the number. Could you repeat it?", None

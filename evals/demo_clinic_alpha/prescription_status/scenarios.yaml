@@ -232,3 +232,84 @@ scenarios:
       - Transfer you to staff
 
       IF bot asks for verification: Say "I really need help right now, this is getting worse."
+
+  # =============================================================================
+  # SCENARIO 7: Bad Transcription - Phone Number Correction
+  # Tests: Speech recognition error handling, caller correction, re-confirmation
+  # =============================================================================
+  - id: "7"
+    target_node: end
+    expected_problem: "Bot should handle phone correction gracefully when caller says number was misheard"
+    patient:
+      patient_name: "Patricia O'Brien"
+      date_of_birth: "06/14/1983"
+      phone_number: "6175554289"
+      pharmacy_name: "CVS Pharmacy"
+      pharmacy_phone: "(617) 555-4289"
+      pharmacy_address: "100 Boylston Street, Boston, MA 02116"
+      prescriptions:
+        - medication_name: "Metformin"
+          dosage: "500mg twice daily"
+          status: "Sent to Pharmacy"
+          refills_remaining: 5
+    persona: |
+      You're calling about your diabetes medication. You'll speak your phone number
+      in a way that could easily be misheard, then correct the bot.
+
+      TURN 1: Say "Hi, I'm checking on my Metformin prescription."
+
+      WHEN ASKED for phone number: Say "six one seven, five five five, for too ate nine"
+      (Pronounce it strangely - "for too ate" = 428)
+
+      IF bot confirms a WRONG number (anything other than 617-555-4289): Say "No, that's not right. It's six one seven, five five five, four two eight nine."
+
+      IF bot confirms the CORRECT number 617-555-4289: Say "Yes, that's correct."
+
+      WHEN ASKED for date of birth: Say "June fourteenth, nineteen eighty-three"
+
+      AFTER being told prescription status: Say "Great, thanks!"
+
+      WHEN asked if anything else: Say "No, I'm all set. Bye!"
+
+  # =============================================================================
+  # SCENARIO 8: Phone Not Found - Wrong Number, Retry with Correct One
+  # Tests: Patient not found flow, retry with different phone, eventual success
+  # =============================================================================
+  - id: "8"
+    target_node: end
+    expected_problem: "Bot should allow retry with different phone number when first lookup fails"
+    patient:
+      patient_name: "David Kim"
+      date_of_birth: "12/05/1979"
+      phone_number: "2135559999"
+      pharmacy_name: "Walgreens"
+      pharmacy_phone: "(213) 555-9999"
+      pharmacy_address: "500 Hollywood Blvd, Los Angeles, CA 90028"
+      prescriptions:
+        - medication_name: "Omeprazole"
+          dosage: "20mg daily"
+          status: "Ready for Pickup"
+          refills_remaining: 2
+    persona: |
+      You're calling about your acid reflux medication but initially give the WRONG
+      phone number (your old number). When that doesn't work, you provide the correct one.
+
+      TURN 1: Say "Hi, I need to check on my prescription refill."
+
+      WHEN ASKED for phone number: Say "two one three, five five five, one two three four"
+      (This is the WRONG number - your actual number is 213-555-9999)
+
+      WHEN ASKED to confirm: Say "Yes"
+
+      WHEN ASKED for date of birth (if asked before "not found"): Say "December fifth, nineteen seventy-nine"
+
+      WHEN bot says it couldn't find your record or asks to double-check:
+      Say "Oh wait, I think I gave you my old number. Try two one three, five five five, nine nine nine nine."
+
+      IF asked to confirm: Say "Yes, that's it"
+
+      WHEN ASKED for date of birth again: Say "December fifth, nineteen seventy-nine"
+
+      AFTER being told prescription is ready: Say "Perfect, thank you!"
+
+      WHEN asked if anything else: Say "Nope, that's all. Thanks!"

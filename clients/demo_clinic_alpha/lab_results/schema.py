@@ -1,3 +1,30 @@
+# Flow state variables (runtime, not persisted to DB)
+FLOW_STATE = {
+    # Identity (base class)
+    "patient_id": None,
+    "patient_name": None,
+    "first_name": None,
+    "last_name": None,
+    "date_of_birth": None,
+    "phone_number": None,
+    # Lab results (workflow-specific)
+    "test_type": None,
+    "test_date": None,
+    "ordering_physician": None,
+    "results_status": None,
+    "results_summary": None,
+    "provider_review_required": False,
+    "callback_timeframe": "24 to 48 hours",
+    # Flags
+    "identity_verified": False,
+    "results_communicated": False,
+    "callback_confirmed": False,
+    "routed_to": None,
+    # Counters
+    "lookup_attempts": 0,
+    "anything_else_count": 0,  # 0=not asked, 1=asked once (don't ask again)
+}
+
 WORKFLOW_SCHEMA = {
     "enabled": True,
     "display_name": "Lab Results",

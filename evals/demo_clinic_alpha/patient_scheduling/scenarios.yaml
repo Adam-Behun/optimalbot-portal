@@ -198,3 +198,79 @@ scenarios:
       The bot should recognize this as a staff request and transfer you.
 
       IF bot asks follow-up questions: Say "Please just transfer me to someone, I really need to talk to a person."
+
+  # =============================================================================
+  # SCENARIO 7: Bad Transcription - Garbled Phone/Email
+  # Tests: Speech recognition error handling, clarification, recovery
+  # =============================================================================
+  - id: "7"
+    target_node: end
+    expected_problem: "Bot should handle garbled transcription and recover gracefully"
+    patient:
+      patient_name: "Lisa Park"
+      first_name: "Lisa"
+      last_name: "Park"
+      date_of_birth: "09/12/1988"
+      phone_number: "5554281937"
+      email: "lisa.park@email.com"
+    persona: |
+      You're a returning patient but you speak quickly and unclearly, causing transcription errors.
+
+      TURN 1: Say "Hi I wanna schedule a cleaning"
+
+      WHEN ASKED if you're new or returning: Say "returning patient"
+
+      WHEN ASKED for phone number: Say it poorly/quickly: "for too ate one nine tree seven"
+      (This represents "428-1937" but garbled - the bot should ask for clarification)
+
+      IF bot reads back a WRONG number: Say "No that's wrong, let me say it again. Five five five, four two eight, one nine three seven."
+
+      IF bot reads back the CORRECT number (555-428-1937): Say "Yes that's right"
+
+      WHEN ASKED for date of birth: Say "september twelfth eighty eight"
+
+      WHEN offered appointment slots: Say "the first one"
+
+      WHEN ASKED for email: Say "lisa dot park at email dot com"
+
+      WHEN asked to confirm the appointment: Say "yep looks good"
+
+      WHEN asked if there's anything else: Say "nope bye"
+
+  # =============================================================================
+  # SCENARIO 8: Unavailable Slot Request
+  # Tests: Slot validation, graceful rejection, re-offering valid slots
+  # =============================================================================
+  - id: "8"
+    target_node: end
+    expected_problem: "Bot should reject unavailable slot and offer valid alternatives"
+    patient:
+      patient_name: "David Kim"
+      first_name: "David"
+      last_name: "Kim"
+      date_of_birth: "02/28/1992"
+      phone_number: "5557773333"
+      email: "david.kim@email.com"
+    persona: |
+      You're a returning patient who wants a specific time that's NOT available.
+
+      TURN 1: Say "Hi, I need to schedule a checkup"
+
+      WHEN ASKED if you're new or returning: Say "I've been here before"
+
+      WHEN ASKED for phone number: Say "five five five, seven seven seven, three three three three"
+
+      WHEN ASKED to confirm: Say "yes"
+
+      WHEN ASKED for date of birth: Say "February twenty-eighth, nineteen ninety-two"
+
+      WHEN offered appointment slots: Ask for an UNAVAILABLE time:
+      "Do you have anything on Monday at 3pm? That works better for my schedule."
+
+      IF bot says that slot isn't available and offers alternatives: Say "Okay fine, I'll take the Friday 9am one then"
+
+      WHEN ASKED for email: Say "david.kim@email.com"
+
+      WHEN asked to confirm the appointment: Say "yes that's correct"
+
+      WHEN asked if there's anything else: Say "no thanks, goodbye"

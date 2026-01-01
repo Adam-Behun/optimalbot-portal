@@ -15,7 +15,10 @@ from handlers.transcript import save_transcript_to_db
 class DialinBaseFlow(ABC):
     ALLOWS_NEW_PATIENTS = False
     WORKFLOW_FLOWS: Dict[str, tuple] = {}
-    CONFIRM_BEFORE_TRANSFER = False
+
+    # Keywords for smart transfer routing
+    SKILL_KEYWORDS = {"billing", "cancel", "reschedule", "insurance", "medical_advice", "complaint", "urgent", "check_in"}
+    HUMAN_KEYWORDS = {"human", "person", "someone", "real", "staff", "agent"}
 
     def __init__(
         self,
@@ -56,8 +59,10 @@ class DialinBaseFlow(ABC):
             default = None if field == "patient_id" else ""
             state[field] = state.get(field) or self.call_data.get(field, default)
         state.setdefault("identity_verified", False)
+        state.setdefault("caller_stated_name", False)
         state.setdefault("routed_to", "")
         state.setdefault("lookup_attempts", 0)
+        state.setdefault("anything_else_count", 0)
         self._init_domain_state()
 
     def _init_domain_state(self):
@@ -104,11 +109,40 @@ class DialinBaseFlow(ABC):
     def _phone_last4(self, phone: str) -> str:
         return phone[-4:] if len(phone) >= 4 else ""
 
+    def _greeting_name(self, first_name: str) -> str:
+        """Return name for greeting only if caller stated it first."""
+        if self.flow_manager.state.get("caller_stated_name") and first_name:
+            return f", {first_name}"
+        return ""
+
+    # ==================== Completion Counter Helpers ====================
+
+    def _should_ask_anything_else(self) -> bool:
+        """Check if we should ask 'Is there anything else?'"""
+        return self.flow_manager.state.get("anything_else_count", 0) == 0
+
+    def _mark_asked_anything_else(self):
+        """Mark that we've asked 'Is there anything else?'"""
+        self.flow_manager.state["anything_else_count"] = 1
+
+    def _reset_anything_else_count(self):
+        """Reset counter when returning to completion after helping."""
+        self.flow_manager.state["anything_else_count"] = 0
+
+    def _completion_pre_actions(self, prompt: str = "Is there anything else I can help you with today?") -> list | None:
+        """Get pre_actions for completion node, checking counter."""
+        if self._should_ask_anything_else():
+            self._mark_asked_anything_else()
+            return [{"type": "tts_say", "text": prompt}]
+        return None
+
     async def _try_db_update(self, patient_id: str, method: str, *args, error_msg: str = "DB update error"):
         if not patient_id:
+            logger.warning(f"DB update skipped - no patient_id for {method}")
             return
         try:
             db = get_async_patient_db()
+            logger.info(f"DB update: {method}({patient_id}, {args})")
             await getattr(db, method)(patient_id, *args, self.organization_id)
         except Exception as e:
             logger.error(f"{error_msg}: {e}")
@@ -127,9 +161,14 @@ class DialinBaseFlow(ABC):
     def _request_staff_schema(self) -> FlowsFunctionSchema:
         return FlowsFunctionSchema(
             name="request_staff",
-            description="Transfer to staff. Use when caller explicitly asks for human/transfer, or for billing.",
-            properties={"reason": {"type": "string", "description": "Brief reason for transfer"}},
-            required=[],
+            description="Transfer to staff. Use for: billing, cancel, reschedule, insurance, or when patient asks for a human.",
+            properties={
+                "reason": {
+                    "type": "string",
+                    "description": "One of: billing, cancel, reschedule, insurance, medical_advice, complaint, urgent, human (patient wants to speak to a person)"
+                }
+            },
+            required=["reason"],
             handler=self._request_staff_handler,
         )
 
@@ -301,6 +340,7 @@ DOB: natural format (e.g., "March 22, 1978")""",
                 {"type": "tts_say", "text": "Transferring you now, please hold."},
                 ActionConfig(type="function", handler=self._regular_sip_transfer),
             ],
+            post_actions=[{"type": "end_conversation"}],
         )
 
     async def _regular_sip_transfer(self, action: dict, flow_manager: FlowManager):
@@ -359,6 +399,50 @@ If caller says goodbye:
                 self._end_call_schema(),
             ],
             pre_actions=[{"type": "tts_say", "text": "I apologize, the transfer didn't go through."}],
+            respond_immediately=False,
+        )
+
+    def create_human_request_node(self) -> NodeConfig:
+        """Soft-sell when patient asks for human. Offers to help first."""
+        return NodeConfig(
+            name="human_request_response",
+            task_messages=[{
+                "role": "system",
+                "content": """Patient asked for a human. You just offered to help instead.
+Wait for their response:
+
+If patient WANTS THE HUMAN (any of these):
+- "yes transfer me", "I want a real person", "just transfer"
+- "no" (rejecting your offer to help)
+- "I'll wait", "that's okay I'll wait", "I'll hold"
+→ Call transfer_to_human immediately
+
+If patient AGREES to stay ("okay what can you help with", "sure let's try", "fine what do you need"):
+→ Call stay_with_bot to continue helping them
+
+If patient says GOODBYE ("bye", "thank you bye", "that's all"):
+→ Call end_call
+
+Do NOT ask clarifying questions - just handle their response."""
+            }],
+            functions=[
+                FlowsFunctionSchema(
+                    name="transfer_to_human",
+                    description="Patient wants the human transfer (said no, I'll wait, transfer me, etc).",
+                    properties={},
+                    required=[],
+                    handler=self._transfer_to_human_handler,
+                ),
+                FlowsFunctionSchema(
+                    name="stay_with_bot",
+                    description="Patient explicitly agrees to stay with bot and wants help.",
+                    properties={},
+                    required=[],
+                    handler=self._stay_with_bot_handler,
+                ),
+                self._end_call_schema(),
+            ],
+            pre_actions=[{"type": "tts_say", "text": "Let me check... the next available agent is about 12 minutes away. Is there something I can help you with in the meantime?"}],
             respond_immediately=False,
         )
 
@@ -447,11 +531,34 @@ If caller says goodbye:
         return None, self.create_transfer_pending_node()
 
     async def _request_staff_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-        reason = args.get("reason", "caller requested transfer")
+        reason = args.get("reason", "").lower()
         logger.info(f"Flow: Staff transfer requested - reason: {reason}")
-        if self.CONFIRM_BEFORE_TRANSFER and hasattr(self, 'create_staff_confirmation_node'):
-            return None, self.create_staff_confirmation_node()
+
+        # Skill-based requests: immediate transfer (can't help anyway)
+        if any(kw in reason for kw in self.SKILL_KEYWORDS):
+            logger.info(f"Flow: Skill-based transfer for '{reason}'")
+            return self._initiate_sip_transfer(flow_manager)
+
+        # Human request: soft-sell (try to retain)
+        if any(kw in reason for kw in self.HUMAN_KEYWORDS):
+            logger.info("Flow: Human requested - showing soft-sell")
+            return None, self.create_human_request_node()
+
+        # Default: immediate transfer
         return self._initiate_sip_transfer(flow_manager)
+
+    async def _transfer_to_human_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+        """Patient insisted on human after soft-sell."""
+        logger.info("Flow: Patient insisted on human - transferring")
+        return self._initiate_sip_transfer(flow_manager)
+
+    async def _stay_with_bot_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig | None]:
+        """Patient agreed to stay with bot after soft-sell."""
+        logger.info("Flow: Patient agreed to stay with bot")
+        # Return to appropriate node based on flow state
+        if hasattr(self, 'create_visit_reason_node'):
+            return "Great! What brings you in today?", self.create_visit_reason_node()
+        return "Great! How can I help?", None  # Stay in current context
 
     async def _retry_transfer_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         logger.info("Flow: Retrying SIP transfer")
@@ -489,9 +596,11 @@ If caller says goodbye:
                 await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
             except Exception as db_error:
                 logger.error(f"Failed to update session status: {db_error}")
+        # Deterministic end: TTS goodbye, no LLM call
         return None, NodeConfig(
             name="end",
-            task_messages=[{"role": "system", "content": "Thank the patient and say goodbye warmly."}],
+            task_messages=[],  # No LLM call
             functions=[],
+            pre_actions=[{"type": "tts_say", "text": "Take care!"}],
             post_actions=[{"type": "end_conversation"}],
         )

@@ -759,12 +759,13 @@ The prescription inquiry is complete. Check if the caller needs anything else.
 # Scenario Handling
 
 If patient says GOODBYE / "that's all" / "bye" / "that's everything" / "no, thanks":
-→ Say something warm like "You're welcome{', ' + first_name if first_name else ''}. Take care!"
-→ Call end_call IMMEDIATELY
+→ Call end_call IMMEDIATELY (do NOT speak - the system will say goodbye)
 
-NOTE: "Thank you" or "Great, thank you" alone is NOT a goodbye signal.
-→ After "thank you", ask: "Is there anything else I can help with?"
-→ Only end_call if they respond with clear goodbye like "No, that's all" or "Bye"
+IMPORTANT: Do NOT say anything before calling end_call. No "You're welcome", no "Take care".
+Just call end_call and let the system handle the goodbye message.
+
+NOTE: "Thank you" alone is NOT a goodbye signal - wait for their next response.
+Only end_call if they give a clear goodbye like "No, that's all", "Bye", or "That's everything".
 
 If patient asks about ANOTHER MEDICATION, PRESCRIPTION, REFILL:
 → Call check_another_medication IMMEDIATELY
@@ -788,15 +789,12 @@ If patient asks for a HUMAN or has BILLING questions:
 → Say "Let me connect you with someone who can help."
 → Call request_staff
 
-# Example Flow
-You: "Is there anything else I can help you with today?"
-
+# Example Responses
 Caller: "Actually yes, I need to schedule a follow-up appointment with Dr. Williams."
 → Call route_to_workflow with workflow="scheduling", reason="follow-up to discuss medications"
 
 Caller: "No, that's everything. Thank you!"
-→ "You're welcome{', ' + first_name if first_name else ''}. Thank you for calling {self.organization_name}. Take care!"
-→ Call end_call
+→ Call end_call (do NOT speak first)
 
 # Guardrails
 - The caller is already verified - no need to re-verify for scheduling or lab results
@@ -811,7 +809,7 @@ Caller: "No, that's everything. Thank you!"
                 self._request_staff_schema(),
             ],
             respond_immediately=False,
-            pre_actions=[{"type": "tts_say", "text": "Is there anything else I can help you with today?"}],
+            pre_actions=self._completion_pre_actions(),
         )
 
     def _create_post_workflow_node(self, target_flow, workflow_type: str, entry_method, transition_message: str = "") -> NodeConfig:
@@ -882,6 +880,7 @@ Caller: "No, that's everything. Thank you!"
                 {"refill_requested": True, "refill_pharmacy": pharmacy_name},
                 error_msg="Error saving refill request"
             )
+        self._reset_anything_else_count()
         return f"I've submitted the refill request to {pharmacy_name}. They should have it ready within 2 to 4 hours.", self.create_completion_node()
 
     async def _submit_renewal_request_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
@@ -896,6 +895,7 @@ Caller: "No, that's everything. Thank you!"
                 {"renewal_requested": True, "renewal_physician": physician},
                 error_msg="Error saving renewal request"
             )
+        self._reset_anything_else_count()
         return f"I've submitted the refill request to {physician} for review. Once approved, the prescription will be sent to {pharmacy_name}. You should hear back within 1 to 2 business days.", self.create_completion_node()
 
     async def _check_another_medication_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
@@ -904,8 +904,10 @@ Caller: "No, that's everything. Thank you!"
         if len(prescriptions) > 1:
             return "", self.create_medication_select_node()
         else:
+            self._reset_anything_else_count()
             return "I only see one prescription on file for you. Is there something else I can help you with?", self.create_completion_node()
 
     async def _proceed_to_completion_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         logger.info("Flow: Proceeding to completion")
+        self._reset_anything_else_count()
         return None, self.create_completion_node()
