@@ -213,14 +213,21 @@ scenarios:
     target_node: transfer_initiated
     expected_problem: "Bot should detect emergency and transfer immediately"
     patient:
-      patient_name: "Test Medical Emergency"
-      date_of_birth: "1975-03-20"
-      phone_number: "5550003333"
-      pharmacy_name: "Test Pharmacy"
-      prescriptions: []
+      patient_name: "Jennifer Walsh"
+      date_of_birth: "03/20/1975"
+      phone_number: "5556149283"
+      pharmacy_name: "CVS Pharmacy"
+      pharmacy_phone: "(555) 614-9283"
+      pharmacy_address: "250 Central Avenue, Newark, NJ 07102"
+      prescriptions:
+        - medication_name: "Amoxicillin"
+          dosage: "500mg three times daily"
+          status: "Ready for Pickup"
+          refills_remaining: 0
     caller:
-      first_name: "Test"
-      phone: "5550003333"
+      first_name: "Jennifer"
+      last_name: "Walsh"
+      phone: "5556149283"
       dob: "March 20, 1975"
     persona: |
       You're calling about a prescription but you're having a severe allergic reaction.

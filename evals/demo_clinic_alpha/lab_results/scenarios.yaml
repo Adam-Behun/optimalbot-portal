@@ -266,15 +266,21 @@ scenarios:
     target_node: transfer_initiated
     expected_problem: "Bot should detect emergency and transfer immediately"
     patient:
-      patient_name: "Test Emergency"
-      date_of_birth: "1980-01-01"
-      phone_number: "5550001111"
-      test_type: ""
-      results_status: ""
+      patient_name: "Catherine Wright"
+      date_of_birth: "1980-04-12"
+      phone_number: "5557724680"
+      test_type: "Cardiac Enzymes"
+      test_date: "2024-12-22"
+      ordering_physician: "Dr. Robert Kim"
+      results_status: "ready"
+      results_summary: "Troponin levels elevated. Recommend cardiology follow-up."
+      provider_review_required: true
+      callback_timeframe: "24 to 48 hours"
     caller:
-      first_name: "Test"
-      phone: "5550001111"
-      dob: "January 1, 1980"
+      first_name: "Catherine"
+      last_name: "Wright"
+      phone: "5557724680"
+      dob: "April 12, 1980"
     persona: |
       You're calling about lab results but you're in distress.
 
@@ -285,3 +291,100 @@ scenarios:
       - Transfer you to staff
 
       IF bot asks for verification info: Say "Please, I need help right now, I can barely breathe."
+
+  # =============================================================================
+  # SCENARIO 7: Bad Transcription - Phone Number Correction
+  # Tests: Speech recognition error handling, caller correction, re-confirmation
+  # =============================================================================
+  - id: "7"
+    target_node: end
+    expected_problem: "Bot should handle phone correction gracefully when caller says number was misheard"
+    expected_db_state:
+      results_communicated: true
+    patient:
+      patient_name: "Patricia O'Connor"
+      date_of_birth: "1983-09-28"
+      phone_number: "5554821736"
+      test_type: "Thyroid Panel"
+      test_date: "2024-12-19"
+      ordering_physician: "Dr. Amanda Lee"
+      results_status: "ready"
+      results_summary: "TSH 2.1 mIU/L, Free T4 1.2 ng/dL. All values within normal range."
+      provider_review_required: false
+      callback_timeframe: "24 to 48 hours"
+    caller:
+      first_name: "Patricia"
+      last_name: "O'Connor"
+      phone: "5554821736"
+      dob: "September 28, 1983"
+    persona: |
+      You're calling about your thyroid test results. You'll speak your phone number
+      in a way that could easily be misheard, then correct the bot.
+
+      TURN 1: Say "Hi, I'm calling to check on my thyroid panel results."
+
+      WHEN ASKED for phone number: Say "five five five, for ate too, one seven tree six"
+      (Pronounce it strangely - "for ate too" = 482)
+
+      IF bot confirms a WRONG number (anything other than 555-482-1736): Say "No, that's not right. It's five five five, four eight two, one seven three six."
+
+      IF bot confirms the CORRECT number 555-482-1736: Say "Yes, that's correct."
+
+      WHEN ASKED for date of birth: Say "September twenty-eighth, nineteen eighty-three"
+
+      WHEN bot offers to read your results: Say "Yes, please"
+
+      AFTER bot reads the results: Say "Great, thank you!"
+
+      WHEN asked if anything else: Say "No, I'm all set. Bye!"
+
+  # =============================================================================
+  # SCENARIO 8: Phone Not Found - Wrong Number, Retry with Correct One
+  # Tests: Patient not found flow, retry with different phone, eventual success
+  # =============================================================================
+  - id: "8"
+    target_node: end
+    expected_problem: "Bot should allow retry with different phone number when first lookup fails"
+    expected_db_state:
+      results_communicated: true
+    patient:
+      patient_name: "Gregory Nguyen"
+      date_of_birth: "1975-02-14"
+      phone_number: "5559638527"
+      test_type: "Hemoglobin A1C"
+      test_date: "2024-12-17"
+      ordering_physician: "Dr. Susan Martinez"
+      results_status: "ready"
+      results_summary: "A1C level 5.8%. Within normal range, no indication of diabetes."
+      provider_review_required: false
+      callback_timeframe: "24 to 48 hours"
+    caller:
+      first_name: "Gregory"
+      last_name: "Nguyen"
+      phone: "5559638527"
+      dob: "February 14, 1975"
+    persona: |
+      You're calling about your A1C test results but initially give the WRONG
+      phone number (your old number). When that doesn't work, you provide the correct one.
+
+      TURN 1: Say "Hi, I'm calling to get my A1C test results."
+
+      WHEN ASKED for phone number: Say "five five five, one two three, four five six seven"
+      (This is the WRONG number - your actual number is 555-963-8527)
+
+      WHEN ASKED to confirm: Say "Yes"
+
+      WHEN ASKED for date of birth (if asked before "not found"): Say "February fourteenth, nineteen seventy-five"
+
+      WHEN bot says it couldn't find your record or asks to double-check:
+      Say "Oh wait, I think that's my old number. Try five five five, nine six three, eight five two seven."
+
+      IF asked to confirm: Say "Yes, that's it"
+
+      WHEN ASKED for date of birth again: Say "February fourteenth, nineteen seventy-five"
+
+      WHEN bot offers to read your results: Say "Yes please"
+
+      AFTER bot reads the results: Say "Perfect, thank you!"
+
+      WHEN asked if anything else: Say "Nope, that's all. Thanks!"

@@ -184,12 +184,12 @@ scenarios:
     target_node: transfer_initiated
     expected_problem: "Bot should detect urgent staff request and transfer immediately"
     patient:
-      patient_name: "Test Staff Request"
-      first_name: "Test"
-      last_name: "Staff Request"
-      date_of_birth: "1985-06-15"
-      phone_number: "5550002222"
-      email: "test@email.com"
+      patient_name: "Amanda Foster"
+      first_name: "Amanda"
+      last_name: "Foster"
+      date_of_birth: "06/15/1985"
+      phone_number: "5558124790"
+      email: "amanda.foster@email.com"
     persona: |
       You urgently need to speak with a human.
 
