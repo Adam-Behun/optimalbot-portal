@@ -59,18 +59,39 @@ class TestDB:
 
         return patient_id
 
-    async def get_patient_state(self, patient_id: str) -> dict:
+    async def get_patient_state(self, patient_id: str, workflow: str = None) -> dict:
         patient = await self.db.find_patient_by_id(patient_id, ORG_ID_STR)
         if not patient:
             return {}
 
-        return {
-            "identity_verified": patient.get("identity_verified", False),
-            "results_communicated": patient.get("results_communicated", False),
-            "callback_confirmed": patient.get("callback_confirmed", False),
+        # Common fields
+        state = {
             "call_status": patient.get("call_status", ""),
-            "caller_phone_number": patient.get("caller_phone_number", ""),
         }
+
+        if workflow == "eligibility_verification":
+            state.update({
+                "network_status": patient.get("network_status"),
+                "plan_type": patient.get("plan_type"),
+                "cpt_covered": patient.get("cpt_covered"),
+                "copay_amount": patient.get("copay_amount"),
+                "coinsurance_percent": patient.get("coinsurance_percent"),
+                "prior_auth_required": patient.get("prior_auth_required"),
+                "deductible_family": patient.get("deductible_family"),
+                "deductible_family_met": patient.get("deductible_family_met"),
+                "oop_max_family": patient.get("oop_max_family"),
+                "oop_max_family_met": patient.get("oop_max_family_met"),
+                "reference_number": patient.get("reference_number"),
+            })
+        else:  # lab_results or default
+            state.update({
+                "identity_verified": patient.get("identity_verified", False),
+                "results_communicated": patient.get("results_communicated", False),
+                "callback_confirmed": patient.get("callback_confirmed", False),
+                "caller_phone_number": patient.get("caller_phone_number", ""),
+            })
+
+        return state
 
     async def get_full_patient(self, patient_id: str) -> Optional[dict]:
         return await self.db.find_patient_by_id(patient_id, ORG_ID_STR)

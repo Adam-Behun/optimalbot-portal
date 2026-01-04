@@ -20,6 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from evals.db import ORG_ID_STR
+from evals.fixtures import TestDB
 from evals.context import EvalContextManager
 
 import yaml
@@ -54,23 +56,31 @@ def _format_conversation(conversation: list[dict]) -> str:
     ])
 
 
-def grade_goal(conv_text: str, expected_problem: str, calls_text: str) -> dict:
-    """Grade whether the scenario's expected problem occurred."""
-    prompt = f"""Grade this prior auth conversation. Be STRICT.
+def grade_data_accuracy(conv_text: str, final_state: dict, calls_text: str, expected_data: dict) -> dict:
+    """Grade whether bot accurately captured eligibility data from the conversation."""
+    if not expected_data:
+        return {"pass": True, "reason": "PASS: No expected data defined"}
 
-EXPECTED PROBLEM TO CHECK FOR:
-{expected_problem}
+    prompt = f"""Grade this eligibility verification conversation for DATA ACCURACY.
 
 CONVERSATION:
 {conv_text}
 
+FINAL STATE (captured data):
+{json.dumps(final_state, indent=2)}
+
+EXPECTED DATA FROM INSURANCE REP:
+{json.dumps(expected_data, indent=2)}
+
 FUNCTION CALLS:
 {calls_text}
 
-Did the expected problem occur? Look for:
-- Bot confusion, loops, or wrong assumptions
-- Missing information, wrong data captured
-- Poor handling of the insurance rep's behavior
+Check:
+1. Did bot capture the correct values that the insurance rep provided?
+2. Were copay/deductible amounts recorded accurately (including cents)?
+3. Were boolean fields (cpt_covered, prior_auth_required) captured correctly?
+4. Was reference number captured if provided?
+5. Did bot handle corrections (rep changing a value) correctly?
 
 Reply with exactly one line:
 PASS: <5 words why ok>
@@ -79,6 +89,58 @@ FAIL: <5 words what went wrong>"""
 
     result = _call_grader(prompt)
     return {"pass": result.upper().startswith("PASS"), "reason": result}
+
+
+def grade_node_reached(final_node: str, expected_node: str) -> dict:
+    """Grade whether conversation reached expected end node."""
+    equivalent_nodes = {
+        "closing": {"closing", "end", "completion"},
+        "transfer_initiated": {"transfer_initiated", "transfer_pending", "staff_confirmation"},
+    }
+
+    if expected_node in equivalent_nodes:
+        if final_node in equivalent_nodes[expected_node]:
+            return {"pass": True, "reason": f"PASS: Reached {final_node}"}
+
+    if final_node == expected_node:
+        return {"pass": True, "reason": f"PASS: Reached {expected_node}"}
+
+    return {"pass": False, "reason": f"FAIL: Expected {expected_node}, got {final_node}"}
+
+
+def _normalize_value(value):
+    """Normalize values for comparison (Yes/No → bool, case-insensitive strings)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lower = value.lower().strip()
+        if lower in ("yes", "true"):
+            return True
+        if lower in ("no", "false", "none"):
+            return False
+        return lower
+    return value
+
+
+def grade_captured_state(final_state: dict, expected_state: dict) -> dict:
+    """Grade whether captured state matches expectations."""
+    if not expected_state:
+        return {"pass": True, "reason": "PASS: No state assertions"}
+
+    failures = []
+    for key, expected in expected_state.items():
+        actual = final_state.get(key)
+        # Normalize both for comparison
+        norm_actual = _normalize_value(actual)
+        norm_expected = _normalize_value(expected)
+        if norm_actual != norm_expected:
+            failures.append(f"{key}: expected {expected}, got {actual}")
+
+    if failures:
+        return {"pass": False, "reason": f"FAIL: {'; '.join(failures)}"}
+    return {"pass": True, "reason": "PASS: Captured state correct"}
 
 
 def grade_conversation_quality(conv_text: str) -> dict:
@@ -130,7 +192,15 @@ FAIL: <5 words what went wrong>"""
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
-def grade_scenario(conversation: list[dict], expected_problem: str, function_calls: list[dict], final_state: dict = None) -> dict:
+def grade_scenario(
+    conversation: list[dict],
+    function_calls: list[dict],
+    final_state: dict,
+    final_node: str,
+    expected_node: str,
+    expected_db_state: dict = None,
+    expected_data: dict = None,
+) -> dict:
     """
     Run all graders and combine results. ALL must pass for overall pass.
     Returns: {"pass": bool, "reason": str, "details": {...}}
@@ -141,22 +211,36 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         for fc in function_calls
     ]) or "No function calls"
 
-    # Run all graders
-    goal = grade_goal(conv_text, expected_problem, calls_text)
+    final_state = final_state or {}
+
+    # Run all 5 graders
+    data_accuracy = grade_data_accuracy(conv_text, final_state, calls_text, expected_data or {})
     quality = grade_conversation_quality(conv_text)
-    functions = grade_function_calls(calls_text, final_state or {})
+    functions = grade_function_calls(calls_text, final_state)
+    node_reached = grade_node_reached(final_node, expected_node)
+    state_check = grade_captured_state(final_state, expected_db_state or {})
 
     # All must pass
-    all_passed = goal["pass"] and quality["pass"] and functions["pass"]
+    all_passed = all([
+        data_accuracy["pass"],
+        quality["pass"],
+        functions["pass"],
+        node_reached["pass"],
+        state_check["pass"],
+    ])
 
     # Build combined reason
     failures = []
-    if not goal["pass"]:
-        failures.append(f"goal: {goal['reason']}")
+    if not data_accuracy["pass"]:
+        failures.append(f"data_accuracy: {data_accuracy['reason']}")
     if not quality["pass"]:
         failures.append(f"quality: {quality['reason']}")
     if not functions["pass"]:
         failures.append(f"functions: {functions['reason']}")
+    if not node_reached["pass"]:
+        failures.append(f"node: {node_reached['reason']}")
+    if not state_check["pass"]:
+        failures.append(f"state: {state_check['reason']}")
 
     if all_passed:
         reason = "PASS: All checks passed"
@@ -167,9 +251,11 @@ def grade_scenario(conversation: list[dict], expected_problem: str, function_cal
         "pass": all_passed,
         "reason": reason,
         "details": {
-            "goal": goal,
+            "data_accuracy": data_accuracy,
             "quality": quality,
             "functions": functions,
+            "node_reached": node_reached,
+            "captured_state": state_check,
         }
     }
 
@@ -197,7 +283,6 @@ def list_scenarios() -> None:
     print("\nAvailable scenarios:\n")
     for s in config["scenarios"]:
         print(f"  {s['id']:<30} [{s['target_node']}]")
-        print(f"    Expected: {s['expected_problem']}\n")
 
 
 # === MOCKS ===
@@ -220,19 +305,30 @@ class MockTransport:
 class FlowRunner:
     """Runs the eligibility verification flow with patient data from scenario."""
 
-    def __init__(self, llm_config: dict, cold_transfer_config: dict, patient_data: dict):
+    def __init__(
+        self,
+        llm_config: dict,
+        cold_transfer_config: dict,
+        patient_data: dict,
+        session_id: str,
+        organization_id: str,
+        verbose: bool = False,
+    ):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
         self.mock_transport = MockTransport()
         self.llm_config = llm_config
+        self.verbose = verbose
 
         self.flow = EligibilityVerificationFlow(
             patient_data=patient_data,
+            session_id=session_id,
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,
             transport=self.mock_transport,
             pipeline=self.mock_pipeline,
+            organization_id=organization_id,
             cold_transfer_config=cold_transfer_config,
         )
 
@@ -241,6 +337,7 @@ class FlowRunner:
 
         # Start with greeting node for direct human conversation (no IVR)
         self.current_node = self.flow.create_greeting_node_without_ivr()
+        self.current_node_name = self.current_node.get("name", "greeting")
         self.context = EvalContextManager()
         self.context.set_node(self.current_node)
         self.function_calls = []  # Track all function calls
@@ -289,20 +386,28 @@ class FlowRunner:
         print(f"\n  {'─'*60}")
         print(f"  LLM CONTEXT (turn {turn}, node: {node_name})")
         print(f"  {'─'*60}")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "?")
-            content = msg.get("content", "")
-            # Truncate long system messages
-            if role == "system" and len(content) > 200:
-                content = content[:200] + "..."
-            # Show tool calls if present
-            if msg.get("tool_calls"):
-                tc = msg["tool_calls"][0]
-                print(f"  [{i}] {role}: (tool_call: {tc['function']['name']})")
-            elif role == "tool":
-                print(f"  [{i}] {role}: {content[:100]}")
-            else:
-                print(f"  [{i}] {role}: {content[:150]}{'...' if len(content) > 150 else ''}")
+
+        if self.verbose:
+            # Full context output (matches production logs format)
+            for i, msg in enumerate(messages):
+                print(f"  [{i}] {json.dumps(msg, indent=2)}")
+        else:
+            # Truncated output for normal runs
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "?")
+                content = msg.get("content", "")
+                # Truncate long system messages
+                if role == "system" and len(content) > 200:
+                    content = content[:200] + "..."
+                # Show tool calls if present
+                if msg.get("tool_calls"):
+                    tc = msg["tool_calls"][0]
+                    print(f"  [{i}] {role}: (tool_call: {tc['function']['name']})")
+                elif role == "tool":
+                    print(f"  [{i}] {role}: {content[:100]}")
+                else:
+                    print(f"  [{i}] {role}: {content[:150]}{'...' if len(content) > 150 else ''}")
+
         if tools:
             tool_names = [t["function"]["name"] for t in tools]
             print(f"  TOOLS: {tool_names}")
@@ -389,6 +494,7 @@ class FlowRunner:
 
                 if next_node:
                     self.current_node = next_node
+                    self.current_node_name = next_node.get("name", "unknown")
                     self.context.set_node(next_node)
                     # Process pre_actions on the new node (e.g., tts_say)
                     pre_actions = self.current_node.get("pre_actions") or []
@@ -462,13 +568,22 @@ async def run_simulation(
     scenario: dict,
     llm_config: dict,
     cold_transfer_config: dict,
+    seeded_patient: dict,
+    session_id: str,
+    verbose: bool = False,
 ) -> dict:
     """Run a single eligibility verification simulation for a scenario."""
     insurance_rep = scenario["insurance_rep"]
     persona = scenario["persona"]
-    patient_data = scenario["patient_data"]
 
-    runner = FlowRunner(llm_config, cold_transfer_config, patient_data)
+    runner = FlowRunner(
+        llm_config=llm_config,
+        cold_transfer_config=cold_transfer_config,
+        patient_data=seeded_patient,
+        session_id=session_id,
+        organization_id=ORG_ID_STR,
+        verbose=verbose,
+    )
 
     # Bot greeting
     pre_actions = runner.current_node.get("pre_actions") or []
@@ -480,7 +595,6 @@ async def run_simulation(
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
     print(f"TARGET: {scenario['target_node']}")
-    print(f"EXPECTED PROBLEM: {scenario['expected_problem']}")
     print(f"{'='*70}\n")
 
     print(f"MONICA: {greeting}\n")
@@ -513,8 +627,10 @@ async def run_simulation(
             # without advancing the insurance turn
 
     final_state = runner.mock_flow_manager.state
+    final_node = runner.current_node_name
 
     print(f"\n{'='*70}")
+    print(f"FINAL NODE: {final_node}")
     print("FINAL STATE:")
     print(json.dumps(final_state, indent=2))
     print(f"{'='*70}\n")
@@ -522,10 +638,10 @@ async def run_simulation(
     return {
         "scenario_id": scenario["id"],
         "target_node": scenario["target_node"],
-        "expected_problem": scenario["expected_problem"],
         "conversation": conversation,
         "function_calls": runner.function_calls,
         "final_state": final_state,
+        "final_node": final_node,
         "turns": turn,
     }
 
@@ -542,13 +658,16 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
     txt_file = results_dir / f"{timestamp}.txt"
     with open(txt_file, "w") as f:
         f.write(f"SCENARIO: {result['scenario_id']}\n")
-        f.write(f"EXPECTED: {result['expected_problem']}\n")
+        f.write(f"TARGET NODE: {result['target_node']}\n")
+        f.write(f"FINAL NODE: {result.get('final_node', 'unknown')}\n")
         f.write(f"{'='*60}\n\n")
         for msg in result["conversation"]:
             role = "MONICA" if msg["role"] == "assistant" else "INSURANCE"
             f.write(f"{role}: {msg['content']}\n\n")
         f.write(f"{'='*60}\n")
         f.write(f"GRADE: {'PASS' if grade['pass'] else 'FAIL'} - {grade['reason']}\n")
+        if grade.get("details", {}).get("node_reached"):
+            f.write(f"NODE CHECK: {grade['details']['node_reached']['reason']}\n")
 
     # Structure follows Langfuse DatasetRunItem concept
     output = {
@@ -561,7 +680,6 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
         # Input (from scenario)
         "input": {
             "target_node": result["target_node"],
-            "expected_problem": result["expected_problem"],
         },
 
         # Output (from run)
@@ -569,6 +687,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
             "conversation": result["conversation"],
             "function_calls": result["function_calls"],
             "final_state": result["final_state"],
+            "final_node": result.get("final_node"),
             "turns": result["turns"],
         },
 
@@ -612,7 +731,8 @@ def sync_dataset_to_langfuse() -> None:
             },
             expected_output={
                 "target_node": scenario["target_node"],
-                "expected_problem": scenario["expected_problem"],
+                "expected_db_state": scenario.get("expected_db_state", {}),
+                "expected_data": scenario.get("expected_data", {}),
             },
             metadata={
                 "target_node": scenario["target_node"],
@@ -625,7 +745,7 @@ def sync_dataset_to_langfuse() -> None:
     print(f"View at: https://cloud.langfuse.com/datasets")
 
 
-async def run_scenario(scenario_id: str) -> dict:
+async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
     """Run a single scenario and save results."""
     scenario = get_scenario(scenario_id)
 
@@ -637,36 +757,58 @@ async def run_scenario(scenario_id: str) -> dict:
     llm_config = services["services"]["llm"]
     cold_transfer_config = services.get("cold_transfer", {})
 
-    # Run simulation (trace is created by @observe decorator)
-    result = await run_simulation(scenario, llm_config, cold_transfer_config)
+    session_id = f"eval-{scenario_id}-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Grade the result (3 graders: goal, quality, functions)
-    grade = grade_scenario(
-        result["conversation"],
-        result["expected_problem"],
-        result["function_calls"],
-        result["final_state"]
-    )
+    # Seed patient into test database
+    test_db = TestDB()
+    patient_id = await test_db.seed_patient(scenario, "eligibility_verification")
+    seeded_patient = await test_db.get_full_patient(patient_id)
+    print(f"  [DB] Seeded patient: {seeded_patient.get('patient_name', seeded_patient.get('first_name', ''))} (id: {patient_id})")
 
-    # Print grade
-    status = "✓ PASS" if grade["pass"] else "✗ FAIL"
-    print(f"\n{status} | {scenario_id}")
-    print(f"  {grade['reason']}")
+    await test_db.create_session(session_id, workflow="eligibility_verification")
+    print(f"  [SESSION] Created session: {session_id}")
 
-    # Get trace ID from the current context
-    trace_id = langfuse.get_current_trace_id() or langfuse.create_trace_id()
+    try:
+        # Run simulation (trace is created by @observe decorator)
+        result = await run_simulation(
+            scenario, llm_config, cold_transfer_config,
+            seeded_patient, session_id, verbose=verbose
+        )
 
-    # Save locally
-    result_file = save_result(result, trace_id, grade)
-    print(f"Saved: {result_file}")
+        # Grade the result (5 graders: data_accuracy, quality, functions, node_reached, captured_state)
+        grade = grade_scenario(
+            conversation=result["conversation"],
+            function_calls=result["function_calls"],
+            final_state=result["final_state"],
+            final_node=result["final_node"],
+            expected_node=result["target_node"],
+            expected_db_state=scenario.get("expected_db_state"),
+            expected_data=scenario.get("expected_data"),
+        )
 
-    # Flush to Langfuse
-    langfuse.flush()
+        # Print grade
+        status = "✓ PASS" if grade["pass"] else "✗ FAIL"
+        print(f"\n{status} | {scenario_id}")
+        print(f"  {grade['reason']}")
 
-    return {**result, "grade": grade}
+        # Get trace ID from the current context
+        trace_id = langfuse.get_current_trace_id() or langfuse.create_trace_id()
+
+        # Save locally
+        result_file = save_result(result, trace_id, grade)
+        print(f"Saved: {result_file}")
+
+        # Flush to Langfuse
+        langfuse.flush()
+
+        return {**result, "grade": grade}
+    finally:
+        # Cleanup seeded patient from test DB
+        await test_db.cleanup()
+        print(f"  [CLEANUP] Removed test patient and session")
 
 
-async def run_all_scenarios() -> list[dict]:
+async def run_all_scenarios(verbose: bool = False) -> list[dict]:
     """Run all scenarios sequentially."""
     config = load_scenarios()
     results = []
@@ -676,7 +818,7 @@ async def run_all_scenarios() -> list[dict]:
         print(f"# Running: {scenario['id']}")
         print(f"{'#'*70}")
 
-        result = await run_scenario(scenario["id"])
+        result = await run_scenario(scenario["id"], verbose=verbose)
         results.append(result)
 
     # Summary
@@ -696,11 +838,12 @@ async def run_all_scenarios() -> list[dict]:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Prior Auth Flow Evaluation")
+    parser = argparse.ArgumentParser(description="Eligibility Verification Flow Evaluation")
     parser.add_argument("--scenario", "-s", help="Run specific scenario by ID")
     parser.add_argument("--all", "-a", action="store_true", help="Run all scenarios")
     parser.add_argument("--list", "-l", action="store_true", help="List available scenarios")
     parser.add_argument("--sync-dataset", action="store_true", help="Sync scenarios to Langfuse dataset")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print full LLM context for debugging")
 
     args = parser.parse_args()
 
@@ -713,11 +856,11 @@ async def main():
         return
 
     if args.all:
-        await run_all_scenarios()
+        await run_all_scenarios(verbose=args.verbose)
         return
 
     if args.scenario:
-        await run_scenario(args.scenario)
+        await run_scenario(args.scenario, verbose=args.verbose)
         return
 
     # Default: run first scenario
@@ -725,7 +868,7 @@ async def main():
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
-    await run_scenario(first_scenario)
+    await run_scenario(first_scenario, verbose=args.verbose)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,58 @@
+# Flow state variables (runtime, not persisted to DB)
+FLOW_STATE = {
+    # Patient identification (from patient_data)
+    "patient_id": None,
+    "patient_name": None,
+    "date_of_birth": None,
+    "insurance_member_id": None,
+    "insurance_company_name": None,
+    "insurance_phone": None,
+
+    # Caller/Provider information (from patient_data)
+    "caller_name": None,
+    "caller_last_initial": None,
+    "facility_name": None,
+    "tax_id": None,
+    "provider_name": None,
+    "provider_npi": None,
+    "provider_call_back_phone": None,
+
+    # Service information (from patient_data)
+    "cpt_code": None,
+    "place_of_service": None,
+    "date_of_service": None,
+
+    # Plan info (collected during call)
+    "network_status": None,
+    "plan_type": None,
+    "plan_effective_date": None,
+    "plan_term_date": None,
+
+    # CPT coverage (collected during call)
+    "cpt_covered": None,
+    "copay_amount": None,
+    "coinsurance_percent": None,
+    "deductible_applies": None,
+    "prior_auth_required": None,
+    "telehealth_covered": None,
+
+    # Accumulators (collected during call)
+    "deductible_individual": None,
+    "deductible_individual_met": None,
+    "deductible_family": None,
+    "deductible_family_met": None,
+    "oop_max_individual": None,
+    "oop_max_individual_met": None,
+    "oop_max_family": None,
+    "oop_max_family_met": None,
+    "allowed_amount": None,
+
+    # Call outcome (collected during call)
+    "rep_name": None,
+    "reference_number": None,
+    "additional_notes": None,
+}
+
 WORKFLOW_SCHEMA = {
     "enabled": True,
     "display_name": "Eligibility Verification",

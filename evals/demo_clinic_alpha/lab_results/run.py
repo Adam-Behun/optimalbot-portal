@@ -877,7 +877,7 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
         # Run simulation (trace is created by @observe decorator)
         result = await run_simulation(scenario, llm_config, cold_transfer_config, seeded_patient, session_id, verbose=verbose)
 
-        db_state = await test_db.get_patient_state(patient_id)
+        db_state = await test_db.get_patient_state(patient_id, workflow="lab_results")
         print(f"  [DB STATE] {db_state}")
 
         # Grade the result (6 graders: hipaa, quality, functions, node_reached, db_state, safety)

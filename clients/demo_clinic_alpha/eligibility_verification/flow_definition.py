@@ -1,15 +1,11 @@
-from datetime import datetime, timezone
 from typing import Dict, Any
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
-from pipecat_flows.types import ActionConfig
 from loguru import logger
-from backend.models import get_async_patient_db
-from backend.sessions import get_async_session_db
-from backend.utils import normalize_sip_endpoint
-from handlers.transcript import save_transcript_to_db
+
+from clients.demo_clinic_alpha.dialout_base_flow import DialoutBaseFlow
 
 
-class EligibilityVerificationFlow:
+class EligibilityVerificationFlow(DialoutBaseFlow):
     """Eligibility verification flow with triage support."""
 
     # ═══════════════════════════════════════════════════════════════════
@@ -58,19 +54,21 @@ Goal: Reach a human representative who can verify coverage details."""
 
     VOICEMAIL_MESSAGE_TEMPLATE = """Hi, this is {caller_name}, calling from {facility_name} regarding eligibility verification for a patient. Please call us back at your earliest convenience. Thank you."""
 
-    def __init__(self, patient_data: Dict[str, Any], flow_manager: FlowManager = None,
+    def __init__(self, patient_data: Dict[str, Any], session_id: str = None, flow_manager: FlowManager = None,
                  main_llm=None, classifier_llm=None, context_aggregator=None, transport=None, pipeline=None,
                  organization_id: str = None, cold_transfer_config: Dict[str, Any] = None):
-        self.flow_manager = flow_manager
-        self.main_llm = main_llm
-        self.classifier_llm = classifier_llm
-        self.context_aggregator = context_aggregator
-        self.transport = transport
-        self.pipeline = pipeline
-        self.organization_id = organization_id
-        self.cold_transfer_config = cold_transfer_config or {}
-        # Store patient_data for later initialization when flow_manager is set
-        self._patient_data = patient_data
+        super().__init__(
+            patient_data=patient_data,
+            session_id=session_id,
+            flow_manager=flow_manager,
+            main_llm=main_llm,
+            classifier_llm=classifier_llm,
+            context_aggregator=context_aggregator,
+            transport=transport,
+            pipeline=pipeline,
+            organization_id=organization_id,
+            cold_transfer_config=cold_transfer_config,
+        )
 
     def get_triage_config(self) -> dict:
         """Return triage configuration for this flow.
@@ -91,15 +89,9 @@ Goal: Reach a human representative who can verify coverage details."""
             ),
         }
 
-    def _init_flow_state(self):
-        """Initialize flow_manager state with patient data. Called after flow_manager is set."""
-        if not self.flow_manager:
-            return
-
-        # Patient identification (5 fields)
-        self.flow_manager.state["patient_id"] = self._patient_data.get("patient_id")
-        self.flow_manager.state["patient_name"] = self._patient_data.get("patient_name", "")
-        self.flow_manager.state["date_of_birth"] = self._patient_data.get("date_of_birth", "")
+    def _init_domain_state(self):
+        """Initialize eligibility verification specific state fields."""
+        # Insurance identification (3 fields - patient_id, patient_name, date_of_birth handled by base)
         self.flow_manager.state["insurance_member_id"] = self._patient_data.get("insurance_member_id", "")
         self.flow_manager.state["insurance_company_name"] = self._patient_data.get("insurance_company_name", "")
         self.flow_manager.state["insurance_phone"] = self._patient_data.get("insurance_phone", "")
@@ -1082,114 +1074,11 @@ EXAMPLES:
             respond_immediately=True
         )
 
-    def create_staff_confirmation_node(self) -> NodeConfig:
-        return NodeConfig(
-            name="staff_confirmation",
-            role_messages=[{
-                "role": "system",
-                "content": self._get_global_instructions()
-            }],
-            task_messages=[{
-                "role": "system",
-                "content": """You just asked if they'd like to speak with your manager.
-
-- If yes/sure/please/okay → call dial_staff
-- If no/nevermind/continue → call decline_transfer"""
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="dial_staff",
-                    description="Transfer to manager when they confirm.",
-                    properties={},
-                    required=[],
-                    handler=self._dial_staff_handler
-                ),
-                FlowsFunctionSchema(
-                    name="decline_transfer",
-                    description="Continue to call wrap-up if they decline transfer.",
-                    properties={},
-                    required=[],
-                    handler=self._return_to_verification_handler
-                )
-            ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "tts_say",
-                "text": "Would you like to speak with my manager?"
-            }]
-        )
-
-    def create_transfer_initiated_node(self) -> NodeConfig:
-        return NodeConfig(
-            name="transfer_initiated",
-            task_messages=[],
-            functions=[],
-            post_actions=[{
-                "type": "end_conversation"
-            }]
-        )
-
-    def create_transfer_pending_node(self) -> NodeConfig:
-        """Node that plays TTS, then executes SIP transfer after speech completes."""
-        return NodeConfig(
-            name="transfer_pending",
-            task_messages=[],
-            functions=[],
-            pre_actions=[
-                {"type": "tts_say", "text": "Transferring you now, please hold."},
-                ActionConfig(type="function", handler=self._regular_sip_transfer),
-            ],
-        )
-
-    async def _regular_sip_transfer(self, action: dict, flow_manager: FlowManager):
-        staff_number = normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
-        if not staff_number:
-            logger.warning("No staff transfer number configured")
-            return
-        try:
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = True
-            if self.transport:
-                error = await self.transport.sip_call_transfer({"toEndPoint": staff_number})
-                if error:
-                    logger.error(f"SIP transfer failed: {error}")
-                    if self.pipeline:
-                        self.pipeline.transfer_in_progress = False
-                    return
-                logger.info(f"SIP transfer initiated: {staff_number}")
-            session_db = get_async_session_db()
-            await session_db.update_session(self.session_id, {"call_status": "Transferred"}, self.organization_id)
-        except Exception:
-            logger.exception("SIP transfer failed")
-            if self.pipeline:
-                self.pipeline.transfer_in_progress = False
-
-    def create_transfer_failed_node(self) -> NodeConfig:
-        return NodeConfig(
-            name="transfer_failed",
-            role_messages=[{
-                "role": "system",
-                "content": self._get_global_instructions()
-            }],
-            task_messages=[{
-                "role": "system",
-                "content": "The transfer failed. Apologize and wrap up the call."
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="wrap_up_call",
-                    description="Proceed to call wrap-up after failed transfer.",
-                    properties={},
-                    required=[],
-                    handler=self._return_to_verification_handler
-                )
-            ],
-            respond_immediately=False,
-            pre_actions=[{
-                "type": "tts_say",
-                "text": "I apologize, the transfer didn't go through."
-            }]
-        )
+    # Transfer nodes are inherited from DialoutBaseFlow:
+    # - create_staff_confirmation_node
+    # - create_transfer_initiated_node
+    # - create_transfer_pending_node
+    # - create_transfer_failed_node
 
     # Field mappings: arg name -> state key (if different)
     VOLUNTEERED_FIELD_MAPPINGS = {
@@ -1217,417 +1106,125 @@ EXAMPLES:
         "reference_number": "reference_number",
     }
 
-    def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
-        """Store any volunteered info in state. Returns list of captured fields."""
+    async def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
+        """Store any volunteered info in state AND persist to DB. Returns list of captured fields."""
         captured = []
+        patient_id = flow_manager.state.get("patient_id")
 
-        for arg_name, state_key in self.VOLUNTEERED_FIELD_MAPPINGS.items():
-            value = args.get(arg_name, "")
+        for field in self.VOLUNTEERED_FIELD_MAPPINGS.keys():
+            value = args.get(field, "")
             if isinstance(value, str):
                 value = value.strip()
-            # Store if non-empty and not "unknown" or "Unknown"
             if value and value.lower() not in ["unknown", ""]:
-                flow_manager.state[state_key] = value
-                captured.append(state_key)
+                flow_manager.state[field] = value
+                await self._try_db_update(patient_id, "update_field", field, value)
+                captured.append(field)
 
         return captured
 
     async def _proceed_to_plan_info_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
-        captured = self._store_volunteered_info(args, flow_manager)
+        captured = await self._store_volunteered_info(args, flow_manager)
         logger.info(f"Flow: greeting → plan_info (captured: {captured if captured else 'none'})")
         return None, self.create_plan_info_node()
 
-    async def _record_network_status_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record network participation status to state and database."""
-        try:
-            status = args["status"]
-            patient_id = flow_manager.state.get("patient_id")
-            flow_manager.state["network_status"] = status
+    async def _record_network_status_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("network_status", args.get("status", "Unknown"), flow_manager)
 
-            if patient_id:
-                db = get_async_patient_db()
-                await db.update_field(patient_id, "network_status", status, self.organization_id)
+    async def _record_plan_type_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("plan_type", args.get("plan_type", "Unknown"), flow_manager)
 
-            logger.info(f"Flow: Recorded network_status = {status}")
-            return None, None
-        except Exception as e:
-            logger.error(f"Failed to record network status: {e}")
-            return f"Error recording network status: {str(e)}", None
+    async def _record_plan_effective_date_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("plan_effective_date", args.get("date", "Unknown"), flow_manager)
 
-    async def _record_plan_type_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record plan type to state and database."""
-        try:
-            plan_type = args["plan_type"]
-            patient_id = flow_manager.state.get("patient_id")
-            flow_manager.state["plan_type"] = plan_type
-
-            if patient_id:
-                db = get_async_patient_db()
-                await db.update_field(patient_id, "plan_type", plan_type, self.organization_id)
-
-            logger.info(f"Flow: Recorded plan_type = {plan_type}")
-            return None, None
-        except Exception as e:
-            logger.error(f"Failed to record plan type: {e}")
-            return f"Error recording plan type: {str(e)}", None
-
-    async def _record_plan_effective_date_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record plan effective date to state and database."""
-        try:
-            date = args["date"]
-            patient_id = flow_manager.state.get("patient_id")
-            flow_manager.state["plan_effective_date"] = date
-
-            if patient_id:
-                db = get_async_patient_db()
-                await db.update_field(patient_id, "plan_effective_date", date, self.organization_id)
-
-            logger.info(f"Flow: Recorded plan_effective_date = {date}")
-            return None, None
-        except Exception as e:
-            logger.error(f"Failed to record plan effective date: {e}")
-            return f"Error recording effective date: {str(e)}", None
-
-    async def _record_plan_term_date_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record plan termination date to state and database."""
-        try:
-            date = args["date"]
-            patient_id = flow_manager.state.get("patient_id")
-            flow_manager.state["plan_term_date"] = date
-
-            if patient_id:
-                db = get_async_patient_db()
-                await db.update_field(patient_id, "plan_term_date", date, self.organization_id)
-
-            logger.info(f"Flow: Recorded plan_term_date = {date}")
-            return None, None
-        except Exception as e:
-            logger.error(f"Failed to record plan term date: {e}")
-            return f"Error recording term date: {str(e)}", None
+    async def _record_plan_term_date_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("plan_term_date", args.get("date", "Unknown"), flow_manager)
 
     # ═══════════════════════════════════════════════════════════════════
     # CPT COVERAGE HANDLERS
     # ═══════════════════════════════════════════════════════════════════
 
-    async def _record_cpt_covered_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record whether CPT code is covered."""
-        covered = args.get("covered", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["cpt_covered"] = covered
+    async def _record_cpt_covered_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("cpt_covered", args.get("covered", "Unknown"), flow_manager)
 
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "cpt_covered", covered, self.organization_id)
+    async def _record_copay_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("copay_amount", args.get("amount", "Unknown"), flow_manager)
 
-        logger.info(f"Flow: Recorded cpt_covered = {covered}")
-        return None, None
+    async def _record_coinsurance_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("coinsurance_percent", args.get("percent", "Unknown"), flow_manager)
 
-    async def _record_copay_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record copay amount."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["copay_amount"] = amount
+    async def _record_deductible_applies_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("deductible_applies", args.get("applies", "Unknown"), flow_manager)
 
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "copay_amount", amount, self.organization_id)
+    async def _record_prior_auth_required_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("prior_auth_required", args.get("required", "Unknown"), flow_manager)
 
-        logger.info(f"Flow: Recorded copay_amount = {amount}")
-        return None, None
-
-    async def _record_coinsurance_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record coinsurance percentage."""
-        percent = args.get("percent", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["coinsurance_percent"] = percent
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "coinsurance_percent", percent, self.organization_id)
-
-        logger.info(f"Flow: Recorded coinsurance_percent = {percent}")
-        return None, None
-
-    async def _record_deductible_applies_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record whether deductible applies to this service."""
-        applies = args.get("applies", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["deductible_applies"] = applies
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "deductible_applies", applies, self.organization_id)
-
-        logger.info(f"Flow: Recorded deductible_applies = {applies}")
-        return None, None
-
-    async def _record_prior_auth_required_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record whether prior authorization is required."""
-        required = args.get("required", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["prior_auth_required"] = required
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "prior_auth_required", required, self.organization_id)
-
-        logger.info(f"Flow: Recorded prior_auth_required = {required}")
-        return None, None
-
-    async def _record_telehealth_covered_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record whether telehealth is covered."""
-        covered = args.get("covered", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["telehealth_covered"] = covered
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "telehealth_covered", covered, self.organization_id)
-
-        logger.info(f"Flow: Recorded telehealth_covered = {covered}")
-        return None, None
+    async def _record_telehealth_covered_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("telehealth_covered", args.get("covered", "Unknown"), flow_manager)
 
     # ═══════════════════════════════════════════════════════════════════
     # ACCUMULATOR HANDLERS
     # ═══════════════════════════════════════════════════════════════════
 
-    async def _record_deductible_individual_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record individual deductible amount."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["deductible_individual"] = amount
+    async def _record_deductible_individual_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("deductible_individual", args.get("amount", "Unknown"), flow_manager)
 
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "deductible_individual", amount, self.organization_id)
+    async def _record_deductible_individual_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("deductible_individual_met", args.get("amount", "Unknown"), flow_manager)
 
-        logger.info(f"Flow: Recorded deductible_individual = {amount}")
-        return None, None
+    async def _record_deductible_family_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("deductible_family", args.get("amount", "Unknown"), flow_manager)
 
-    async def _record_deductible_individual_met_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record how much of individual deductible has been met."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["deductible_individual_met"] = amount
+    async def _record_deductible_family_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("deductible_family_met", args.get("amount", "Unknown"), flow_manager)
 
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "deductible_individual_met", amount, self.organization_id)
+    async def _record_oop_max_individual_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("oop_max_individual", args.get("amount", "Unknown"), flow_manager)
 
-        logger.info(f"Flow: Recorded deductible_individual_met = {amount}")
-        return None, None
+    async def _record_oop_max_individual_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("oop_max_individual_met", args.get("amount", "Unknown"), flow_manager)
 
-    async def _record_deductible_family_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record family deductible amount."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["deductible_family"] = amount
+    async def _record_oop_max_family_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("oop_max_family", args.get("amount", "Unknown"), flow_manager)
 
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "deductible_family", amount, self.organization_id)
+    async def _record_oop_max_family_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("oop_max_family_met", args.get("amount", "Unknown"), flow_manager)
 
-        logger.info(f"Flow: Recorded deductible_family = {amount}")
-        return None, None
+    async def _record_allowed_amount_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("allowed_amount", args.get("amount", "Unknown"), flow_manager)
 
-    async def _record_deductible_family_met_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record how much of family deductible has been met."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["deductible_family_met"] = amount
+    async def _record_reference_number_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("reference_number", args.get("reference_number", ""), flow_manager)
 
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "deductible_family_met", amount, self.organization_id)
+    async def _record_rep_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("rep_name", args.get("name", ""), flow_manager)
 
-        logger.info(f"Flow: Recorded deductible_family_met = {amount}")
-        return None, None
+    CORRECTABLE_FIELDS = {
+        "copay_amount", "coinsurance_percent", "deductible_applies",
+        "prior_auth_required", "telehealth_covered", "network_status",
+        "plan_type", "deductible_individual", "deductible_individual_met",
+        "deductible_family", "deductible_family_met", "oop_max_individual",
+        "oop_max_individual_met", "oop_max_family", "oop_max_family_met"
+    }
 
-    async def _record_oop_max_individual_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record individual out-of-pocket maximum."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["oop_max_individual"] = amount
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "oop_max_individual", amount, self.organization_id)
-
-        logger.info(f"Flow: Recorded oop_max_individual = {amount}")
-        return None, None
-
-    async def _record_oop_max_individual_met_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record how much of individual OOP max has been met."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["oop_max_individual_met"] = amount
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "oop_max_individual_met", amount, self.organization_id)
-
-        logger.info(f"Flow: Recorded oop_max_individual_met = {amount}")
-        return None, None
-
-    async def _record_oop_max_family_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record family out-of-pocket maximum."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["oop_max_family"] = amount
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "oop_max_family", amount, self.organization_id)
-
-        logger.info(f"Flow: Recorded oop_max_family = {amount}")
-        return None, None
-
-    async def _record_oop_max_family_met_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record how much of family OOP max has been met."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["oop_max_family_met"] = amount
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "oop_max_family_met", amount, self.organization_id)
-
-        logger.info(f"Flow: Recorded oop_max_family_met = {amount}")
-        return None, None
-
-    async def _record_allowed_amount_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record allowed amount if rep mentions it."""
-        amount = args.get("amount", "Unknown")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["allowed_amount"] = amount
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "allowed_amount", amount, self.organization_id)
-
-        logger.info(f"Flow: Recorded allowed_amount = {amount}")
-        return None, None
-
-    async def _record_reference_number_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record call reference number."""
-        reference_number = args.get("reference_number", "")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["reference_number"] = reference_number
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "reference_number", reference_number, self.organization_id)
-
-        logger.info(f"Flow: Recorded reference_number = {reference_number}")
-        return None, None
-
-    async def _record_rep_name_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record representative's name."""
-        name = args.get("name", "")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["rep_name"] = name
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "rep_name", name, self.organization_id)
-
-        logger.info(f"Flow: Recorded rep_name = {name}")
-        return None, None
-
-    async def _record_correction_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
+    async def _record_correction_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
         """Record correction to any previously captured field."""
         field_name = args.get("field_name", "")
-        corrected_value = args.get("corrected_value", "")
-        patient_id = flow_manager.state.get("patient_id")
-
-        # Validate field name against allowed fields
-        allowed_fields = {
-            "copay_amount", "coinsurance_percent", "deductible_applies",
-            "prior_auth_required", "telehealth_covered", "network_status",
-            "plan_type", "deductible_individual", "deductible_individual_met",
-            "deductible_family", "deductible_family_met", "oop_max_individual",
-            "oop_max_individual_met", "oop_max_family", "oop_max_family_met"
-        }
-
-        if field_name not in allowed_fields:
+        if field_name not in self.CORRECTABLE_FIELDS:
             logger.warning(f"Flow: Attempted to correct invalid field: {field_name}")
             return None, None
+        logger.info(f"Flow: CORRECTION - {field_name}")
+        return await self._record_field(field_name, args.get("corrected_value", ""), flow_manager)
 
-        flow_manager.state[field_name] = corrected_value
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, field_name, corrected_value, self.organization_id)
-
-        logger.info(f"Flow: CORRECTION recorded - {field_name} = {corrected_value}")
-        return None, None
-
-    async def _record_additional_notes_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[str, None]:
-        """Record additional notes or special instructions from the rep."""
-        notes = args.get("notes", "")
-        patient_id = flow_manager.state.get("patient_id")
-        flow_manager.state["additional_notes"] = notes
-
-        if patient_id:
-            db = get_async_patient_db()
-            await db.update_field(patient_id, "additional_notes", notes, self.organization_id)
-
-        logger.info(f"Flow: Recorded additional_notes = {notes}")
-        return None, None
+    async def _record_additional_notes_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        return await self._record_field("additional_notes", args.get("notes", ""), flow_manager)
 
     async def _proceed_to_closing_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         """Transition from accumulators to closing node."""
-        captured = self._store_volunteered_info(args, flow_manager)
+        captured = await self._store_volunteered_info(args, flow_manager)
         logger.info(f"Flow: accumulators → closing (captured: {captured if captured else 'none'})")
         return None, self.create_closing_node()
 
@@ -1635,7 +1232,7 @@ EXAMPLES:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         """Transition from cpt_coverage to accumulators node."""
-        captured = self._store_volunteered_info(args, flow_manager)
+        captured = await self._store_volunteered_info(args, flow_manager)
         logger.info(f"Flow: cpt_coverage → accumulators (captured: {captured if captured else 'none'})")
         return None, self.create_accumulators_node()
 
@@ -1643,72 +1240,12 @@ EXAMPLES:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         """Transition from plan_info to cpt_coverage node."""
-        captured = self._store_volunteered_info(args, flow_manager)
+        captured = await self._store_volunteered_info(args, flow_manager)
         logger.info(f"Flow: plan_info → cpt_coverage (captured: {captured if captured else 'none'})")
         return None, self.create_cpt_coverage_node()
 
-    async def _request_staff_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, "NodeConfig"]:
-        logger.info("Flow: verification → staff_confirmation")
-        return None, self.create_staff_confirmation_node()
-
-    async def _dial_staff_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, "NodeConfig"]:
-        staff_number = normalize_sip_endpoint(self.cold_transfer_config.get("staff_number"))
-        if not staff_number:
-            logger.warning("Cold transfer requested but no staff_number configured")
-            return None, self.create_transfer_failed_node()
-        logger.info(f"Cold transfer initiated to: {staff_number}")
-        return None, self.create_transfer_pending_node()
-
-    async def _return_to_verification_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, "NodeConfig"]:
-        logger.info("Flow: returning to closing (transfer declined/failed)")
-        return None, self.create_closing_node()
-
-    async def _end_call_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, None]:
-        from pipecat.frames.frames import EndTaskFrame
-        from pipecat.processors.frame_processor import FrameDirection
-
-        logger.info("Call ended by flow")
-        patient_id = flow_manager.state.get("patient_id")
-        session_db = get_async_session_db()
-
-        try:
-            if self.pipeline:
-                await save_transcript_to_db(self.pipeline)
-
-            # Save session metadata
-            session_updates = {
-                "status": "completed",
-                "completed_at": datetime.now(timezone.utc),
-                "patient_id": patient_id,
-            }
-            await session_db.update_session(self.session_id, session_updates, self.organization_id)
-
-            # Save workflow-specific data to patient (dial-out always has patient_id)
-            if patient_id:
-                patient_db = get_async_patient_db()
-                await patient_db.update_patient(patient_id, {
-                    "call_status": "Completed",
-                    "last_call_session_id": self.session_id,
-                }, self.organization_id)
-
-            if self.context_aggregator:
-                await self.context_aggregator.assistant().push_frame(
-                    EndTaskFrame(), FrameDirection.UPSTREAM
-                )
-
-        except Exception as e:
-            logger.error(f"Error in end_call_handler: {e}")
-            try:
-                await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
-            except Exception:
-                pass
-
-        return None, None
+    # Transfer handlers are inherited from DialoutBaseFlow:
+    # - _request_staff_handler
+    # - _dial_staff_handler
+    # - _return_to_closing_handler
+    # - _end_call_handler
