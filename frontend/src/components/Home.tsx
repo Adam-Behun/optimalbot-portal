@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { CalendarIcon, Shield, Phone, Calendar as CalendarIcon2, HelpCircle, Microscope, Pill } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { CalendarIcon, Shield, Phone, Calendar as CalendarIcon2, HelpCircle, Microscope, Pill, PhoneCall, CheckCircle, XCircle, Voicemail, Clock, DollarSign, TrendingUp } from 'lucide-react';
 import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
+import { getMetricsSummary, MetricsSummary } from '@/api';
 
 const workflowIcons: Record<string, React.ReactNode> = {
   'eligibility_verification': <Shield className="h-5 w-5" />,
@@ -27,9 +29,28 @@ export function Home() {
   const [showBooking, setShowBooking] = useState(false);
   const [date, setDate] = useState<Date | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [metricsPeriod, setMetricsPeriod] = useState<'day' | 'week' | 'month'>('day');
 
   // Get workflows from organization
   const org = getOrganization();
+
+  // Fetch metrics
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        setMetricsLoading(true);
+        const data = await getMetricsSummary(metricsPeriod);
+        setMetrics(data);
+      } catch (err) {
+        console.error('Failed to fetch metrics:', err);
+      } finally {
+        setMetricsLoading(false);
+      }
+    };
+    fetchMetrics();
+  }, [metricsPeriod]);
   const orgWorkflows = org?.workflows || {};
 
   // Convert org workflows to display format
@@ -85,6 +106,19 @@ export function Home() {
     }
   };
 
+  const formatDuration = (seconds: number) => {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${minutes}m ${secs}s`;
+  };
+
+  const periodLabels: Record<string, string> = {
+    day: 'Today',
+    week: 'This Week',
+    month: 'This Month',
+  };
+
   return (
     <div className="w-full space-y-6">
         {/* Header */}
@@ -100,6 +134,132 @@ export function Home() {
             Request a Workflow
           </Button>
         </div>
+
+        {/* Dashboard Metrics */}
+        {!showBooking && (
+          <div className="space-y-4">
+            {/* Period Selector */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Show:</span>
+              {(['day', 'week', 'month'] as const).map((period) => (
+                <Badge
+                  key={period}
+                  variant={metricsPeriod === period ? 'default' : 'outline'}
+                  className="cursor-pointer"
+                  onClick={() => setMetricsPeriod(period)}
+                >
+                  {periodLabels[period]}
+                </Badge>
+              ))}
+            </div>
+
+            {/* Metrics Cards */}
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {/* Total Calls */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Calls</CardTitle>
+                  <PhoneCall className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  {metricsLoading ? (
+                    <div className="h-8 w-16 animate-pulse bg-muted rounded" />
+                  ) : (
+                    <div className="text-2xl font-bold">{metrics?.total_calls ?? 0}</div>
+                  )}
+                  <p className="text-xs text-muted-foreground">{periodLabels[metricsPeriod]}</p>
+                </CardContent>
+              </Card>
+
+              {/* Success Rate */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  {metricsLoading ? (
+                    <div className="h-8 w-16 animate-pulse bg-muted rounded" />
+                  ) : (
+                    <div className="text-2xl font-bold">
+                      {metrics?.success_rate !== undefined ? `${Math.round(metrics.success_rate)}%` : '—'}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {metrics ? `${metrics.completed} completed` : ''}
+                  </p>
+                </CardContent>
+              </Card>
+
+              {/* Avg Duration */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Avg Duration</CardTitle>
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  {metricsLoading ? (
+                    <div className="h-8 w-16 animate-pulse bg-muted rounded" />
+                  ) : (
+                    <div className="text-2xl font-bold">
+                      {metrics?.avg_duration_seconds ? formatDuration(metrics.avg_duration_seconds) : '—'}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">Per call</p>
+                </CardContent>
+              </Card>
+
+              {/* Cost */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Cost</CardTitle>
+                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  {metricsLoading ? (
+                    <div className="h-8 w-16 animate-pulse bg-muted rounded" />
+                  ) : (
+                    <div className="text-2xl font-bold">
+                      ${metrics?.total_cost_usd?.toFixed(2) ?? '0.00'}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">{periodLabels[metricsPeriod]}</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Call Status Breakdown */}
+            {metrics && (metrics.completed > 0 || metrics.failed > 0 || metrics.voicemail > 0) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">Call Status Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-6 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      <span className="text-sm">Completed: {metrics.completed}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <XCircle className="h-4 w-4 text-red-500" />
+                      <span className="text-sm">Failed: {metrics.failed}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Voicemail className="h-4 w-4 text-amber-500" />
+                      <span className="text-sm">Voicemail: {metrics.voicemail}</span>
+                    </div>
+                    {metrics.in_progress > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Phone className="h-4 w-4 text-blue-500 animate-pulse" />
+                        <span className="text-sm">In Progress: {metrics.in_progress}</span>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
 
         {/* Booking Calendar Modal/Section */}
         {showBooking && (

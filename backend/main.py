@@ -10,7 +10,7 @@ from backend.lifespan import lifespan
 from backend.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
 from backend.exceptions import register_exception_handlers
 from backend.dependencies import get_user_id_from_request
-from backend.api import health, auth, patients, dialout, dialin, sms, sessions
+from backend.api import health, auth, patients, dialout, dialin, sms, sessions, metrics, webhooks
 setup_logging()
 
 # Use defaults for import-time (allows syntax checking), validate at startup via lifespan
@@ -47,6 +47,8 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(patients.router, prefix="/patients", tags=["Patients"])
 app.include_router(sessions.router, prefix="/sessions", tags=["Sessions"])
+app.include_router(metrics.router, prefix="/metrics", tags=["Metrics"])
+app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 app.include_router(dialout.router, tags=["Dial-Out"])
 app.include_router(dialin.router, tags=["Dial-In"])
 app.include_router(sms.router, tags=["SMS"])
