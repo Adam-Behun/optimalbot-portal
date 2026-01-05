@@ -122,7 +122,7 @@ Goal: Reach a human representative who can verify coverage details."""
 You are on a phone call with an insurance representative. Your responses will be converted to speech:
 - Speak naturally and professionally, like a healthcare worker on a routine verification call
 - Keep responses concise - answer questions directly without over-explaining
-- Use natural acknowledgments: "Got it", "Thank you", "I'll wait", "Sure thing"
+- Avoid repetitive acknowledgments - don't say "thank you" or "got it" after every response. Just proceed to your next question.
 - When spelling out IDs, say each character clearly
 - NEVER use bullet points, numbered lists, or markdown formatting
 
@@ -224,8 +224,8 @@ Example: If rep says "They're in network, POS plan, code is covered, $75 copay, 
                         "plan_term_date": {"type": "string", "description": "'None' or MM/DD/YYYY if mentioned"},
                         # CPT coverage
                         "cpt_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If rep said covered/not covered"},
-                        "copay_amount": {"type": "string", "description": "'$50', 'None' if mentioned"},
-                        "coinsurance_percent": {"type": "string", "description": "'20%', 'None' if mentioned"},
+                        "copay_amount": {"type": "string", "description": "Plain number with 2 decimals: '50.00', 'None' if mentioned"},
+                        "coinsurance_percent": {"type": "string", "description": "Plain number: '20', 'None' if mentioned"},
                         "deductible_applies": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
                         "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If PA/prior auth mentioned"},
                         "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
@@ -399,12 +399,12 @@ EXAMPLES:
                 ),
                 FlowsFunctionSchema(
                     name="proceed_to_cpt_coverage",
-                    description="Move to CPT coverage. Include ANY info the rep already volunteered.",
+                    description="Move to CPT coverage. Include ANY info the rep already volunteered. NORMALIZE TO PLAIN NUMBERS: copay '75.00' not '$75' or 'seventy-five', coinsurance '20' not '20%'.",
                     properties={
                         # CPT coverage
                         "cpt_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If rep said covered/not covered"},
-                        "copay_amount": {"type": "string", "description": "'$50', 'None' if mentioned"},
-                        "coinsurance_percent": {"type": "string", "description": "'20%', 'None' if mentioned"},
+                        "copay_amount": {"type": "string", "description": "Plain number with 2 decimals: '50.00', 'None' if mentioned"},
+                        "coinsurance_percent": {"type": "string", "description": "Plain number: '20', 'None' if mentioned"},
                         "deductible_applies": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
                         "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If PA/prior auth mentioned"},
                         "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
@@ -503,8 +503,8 @@ NEVER re-ask for information the rep just provided in their response. This step 
 - Date of service: "{date_of_service or "Not yet determined. Is it okay to use today's date?"}"
 - Place of service: "{place_of_service}"
 
-# Data Normalization
-- Amounts: "$50", "None" | Percentages: "20%", "None"
+# Data Normalization (PLAIN NUMBERS ONLY - no $ or % symbols)
+- Currency: "50.00", "None" | Percentages: "20", "None"
 - Yes/No: "required"/"applies" → "Yes", "not required"/"doesn't apply" → "No"
 - PA/prior auth → "Yes" """
             }],
@@ -535,17 +535,18 @@ EXAMPLES:
                     description="""Record copay amount.
 
 WHEN TO USE: After rep provides copay information.
-FORMAT: Dollar amount (e.g., "$50"), "None", or "Unknown"
+FORMAT: Plain number with 2 decimals (e.g., "50.00"), "None", or "Unknown". NO $ symbol.
 
 EXAMPLES:
-- "fifty dollars per service" → "$50"
-- "twenty five dollar copay" → "$25"
+- "fifty dollars per service" → "50.00"
+- "twenty five dollar copay" → "25.00"
+- "seventy-five copay" → "75.00"
 - "no copay" → "None"
 - "copay does not apply" → "None" """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Copay amount (e.g., '$50', 'None', 'Unknown')"
+                            "description": "Copay amount as plain number (e.g., '50.00', 'None', 'Unknown')"
                         }
                     },
                     required=["amount"],
@@ -556,17 +557,17 @@ EXAMPLES:
                     description="""Record coinsurance percentage.
 
 WHEN TO USE: After rep provides coinsurance information.
-FORMAT: Percentage (e.g., "20%"), "None", or "Unknown"
+FORMAT: Plain number (e.g., "20"), "None", or "Unknown". NO % symbol.
 
 EXAMPLES:
-- "twenty percent coinsurance" → "20%"
-- "zero percent" → "0%"
+- "twenty percent coinsurance" → "20"
+- "zero percent" → "0"
 - "no coinsurance" → "None"
-- "you pay 80 percent, insurance pays 20" → "80%" (patient responsibility) """,
+- "you pay 80 percent, insurance pays 20" → "80" (patient responsibility) """,
                     properties={
                         "percent": {
                             "type": "string",
-                            "description": "Coinsurance percentage (e.g., '20%', 'None', 'Unknown')"
+                            "description": "Coinsurance percentage as plain number (e.g., '20', 'None', 'Unknown')"
                         }
                     },
                     required=["percent"],
@@ -707,11 +708,18 @@ Listen carefully to whether the rep says "individual" or "family":
 
 NEVER record individual amounts to family fields or vice versa. This step is important.
 
-If rep ONLY provides individual OR family amounts, ask: "Do you have the [family/individual] amounts as well?"
+If rep ONLY provides individual OR family amounts, ask ONCE: "Do you have the [family/individual] amounts as well?"
+
+# CRITICAL: When Rep Says Info Not Available
+If rep says "I only have individual" or "I don't have family amounts" or similar:
+- STOP asking about the unavailable accumulator type
+- Do NOT repeatedly ask for info the rep said they don't have
+- Record what you have and proceed to reference number
+- One "no" is enough - move on immediately
 
 Example:
-- Rep says "The individual non-par deductible is $2,500" → record_deductible_individual("$2,500"), then ask about family
-- Rep says "Family deductible is $1,000" → record_deductible_family("$1,000")
+- Rep says "The individual deductible is $750" → record it, ask about family ONCE
+- Rep says "I only have individual" → STOP asking about family, proceed to reference number
 
 # Instructions
 - Only ask about MISSING fields - never re-ask what's already captured
@@ -742,9 +750,9 @@ If the rep says they need to CORRECT something from earlier:
 - DO NOT call record_correction multiple times - one call is sufficient
 - Continue with the conversation after recording the correction
 
-# Data Normalization
-- Amounts: "five hundred" → "$500", "six thousand" → "$6,000"
-- Cents: "eleven seventy point seven four" → "$1,170.74"
+# Data Normalization (PLAIN NUMBERS ONLY - no $ symbols)
+- Amounts: "five hundred" → "500.00", "six thousand" → "6000.00"
+- Cents: "eleven seventy point seven four" → "1170.74"
 - "fully met" → deductible_family_met = deductible_family amount"""
             }],
             functions=[
@@ -754,16 +762,16 @@ If the rep says they need to CORRECT something from earlier:
 
 WHEN TO USE: Rep explicitly says "individual", "member", "single", or "subscriber" deductible.
 DO NOT USE: When rep says "family" or "household" - use record_deductible_family instead.
-FORMAT: Dollar amount (e.g., "$500") or "N/A"
+FORMAT: Plain number with 2 decimals (e.g., "500.00") or "N/A". NO $ symbol.
 
 EXAMPLES:
-- "individual deductible is two hundred fifty" → "$250" ✓
-- "the member deductible is five hundred" → "$500" ✓
+- "individual deductible is two hundred fifty" → "250.00" ✓
+- "the member deductible is five hundred" → "500.00" ✓
 - "family deductible is one thousand" → DO NOT USE THIS FUNCTION """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Individual deductible amount (e.g., '$500', 'N/A')"
+                            "description": "Individual deductible amount as plain number (e.g., '500.00', 'N/A')"
                         }
                     },
                     required=["amount"],
@@ -774,16 +782,16 @@ EXAMPLES:
                     description="""Record how much of individual deductible has been met.
 
 WHEN TO USE: After rep provides amount met.
-FORMAT: Dollar amount (e.g., "$200")
+FORMAT: Plain number with 2 decimals (e.g., "200.00"). NO $ symbol.
 
 EXAMPLES:
-- "two hundred of the deductible met" → "$200"
+- "two hundred of the deductible met" → "200.00"
 - "fully met" → Use the deductible amount
-- "nothing met yet" → "$0" """,
+- "nothing met yet" → "0.00" """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Amount of individual deductible met (e.g., '$200')"
+                            "description": "Amount of individual deductible met as plain number (e.g., '200.00')"
                         }
                     },
                     required=["amount"],
@@ -795,16 +803,16 @@ EXAMPLES:
 
 WHEN TO USE: Rep explicitly says "family" or "household" deductible.
 DO NOT USE: When rep says "individual", "member", or "single" - use record_deductible_individual instead.
-FORMAT: Dollar amount (e.g., "$500") or "N/A"
+FORMAT: Plain number with 2 decimals (e.g., "500.00") or "N/A". NO $ symbol.
 
 EXAMPLES:
-- "family deductible is five hundred" → "$500" ✓
-- "household deductible is one thousand" → "$1,000" ✓
+- "family deductible is five hundred" → "500.00" ✓
+- "household deductible is one thousand" → "1000.00" ✓
 - "individual deductible is two fifty" → DO NOT USE THIS FUNCTION """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Family deductible amount (e.g., '$500', 'N/A')"
+                            "description": "Family deductible amount as plain number (e.g., '500.00', 'N/A')"
                         }
                     },
                     required=["amount"],
@@ -815,16 +823,16 @@ EXAMPLES:
                     description="""Record how much of family deductible has been met.
 
 WHEN TO USE: After rep provides amount met.
-FORMAT: Dollar amount (e.g., "$500")
+FORMAT: Plain number with 2 decimals (e.g., "500.00"). NO $ symbol.
 
 EXAMPLES:
 - "fully met" or "satisfied" → Use the deductible amount
-- "five hundred met" → "$500"
-- "nothing applied yet" → "$0" """,
+- "five hundred met" → "500.00"
+- "nothing applied yet" → "0.00" """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Amount of family deductible met (e.g., '$500')"
+                            "description": "Amount of family deductible met as plain number (e.g., '500.00')"
                         }
                     },
                     required=["amount"],
@@ -836,15 +844,15 @@ EXAMPLES:
 
 WHEN TO USE: Rep explicitly says "individual", "member", or "single" OOP max.
 DO NOT USE: When rep says "family" or "household" - use record_oop_max_family instead.
-FORMAT: Dollar amount (e.g., "$3,000") or "N/A"
+FORMAT: Plain number with 2 decimals (e.g., "3000.00") or "N/A". NO $ symbol.
 
 EXAMPLES:
-- "individual out of pocket max is three thousand" → "$3,000" ✓
+- "individual out of pocket max is three thousand" → "3000.00" ✓
 - "family OOP max is six thousand" → DO NOT USE THIS FUNCTION """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Individual OOP maximum (e.g., '$3,000', 'N/A')"
+                            "description": "Individual OOP maximum as plain number (e.g., '3000.00', 'N/A')"
                         }
                     },
                     required=["amount"],
@@ -855,11 +863,11 @@ EXAMPLES:
                     description="""Record how much of individual OOP max has been met.
 
 WHEN TO USE: After rep provides amount met.
-FORMAT: Dollar amount (e.g., "$1,500") """,
+FORMAT: Plain number with 2 decimals (e.g., "1500.00"). NO $ symbol.""",
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Amount of individual OOP max met (e.g., '$1,500')"
+                            "description": "Amount of individual OOP max met as plain number (e.g., '1500.00')"
                         }
                     },
                     required=["amount"],
@@ -871,16 +879,16 @@ FORMAT: Dollar amount (e.g., "$1,500") """,
 
 WHEN TO USE: Rep explicitly says "family" or "household" OOP max.
 DO NOT USE: When rep says "individual", "member", or "single" - use record_oop_max_individual instead.
-FORMAT: Dollar amount (e.g., "$6,000") or "N/A"
+FORMAT: Plain number with 2 decimals (e.g., "6000.00") or "N/A". NO $ symbol.
 
 EXAMPLES:
-- "family out of pocket max is six thousand" → "$6,000" ✓
-- "household OOP max is eight thousand" → "$8,000" ✓
+- "family out of pocket max is six thousand" → "6000.00" ✓
+- "household OOP max is eight thousand" → "8000.00" ✓
 - "individual OOP is three thousand" → DO NOT USE THIS FUNCTION """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Family OOP maximum (e.g., '$6,000', 'N/A')"
+                            "description": "Family OOP maximum as plain number (e.g., '6000.00', 'N/A')"
                         }
                     },
                     required=["amount"],
@@ -891,15 +899,15 @@ EXAMPLES:
                     description="""Record how much of family OOP max has been met.
 
 WHEN TO USE: After rep provides amount met.
-FORMAT: Dollar amount (e.g., "$1,170.74")
+FORMAT: Plain number with 2 decimals (e.g., "1170.74"). NO $ symbol.
 
 EXAMPLES:
-- "one thousand one hundred seventy dollars and seventy four cents" → "$1,170.74"
+- "one thousand one hundred seventy dollars and seventy four cents" → "1170.74"
 - "about twelve hundred" → Ask for exact amount, then record """,
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Amount of family OOP max met (e.g., '$1,170.74')"
+                            "description": "Amount of family OOP max met as plain number (e.g., '1170.74')"
                         }
                     },
                     required=["amount"],
@@ -910,11 +918,11 @@ EXAMPLES:
                     description="""Record allowed amount if rep mentions it.
 
 WHEN TO USE: If rep provides an allowed/approved amount for the service.
-FORMAT: Dollar amount (e.g., "$150") or "Unknown" """,
+FORMAT: Plain number with 2 decimals (e.g., "150.00") or "Unknown". NO $ symbol.""",
                     properties={
                         "amount": {
                             "type": "string",
-                            "description": "Allowed amount (e.g., '$150', 'Unknown')"
+                            "description": "Allowed amount as plain number (e.g., '150.00', 'Unknown')"
                         }
                     },
                     required=["amount"],
@@ -987,7 +995,7 @@ IMPORTANT: Only call this function ONCE per correction. Do not repeat.""",
                         },
                         "corrected_value": {
                             "type": "string",
-                            "description": "The CORRECTED value (e.g., '$50', '20%')"
+                            "description": "The CORRECTED value as plain number (e.g., '50.00' for currency, '20' for percent)"
                         }
                     },
                     required=["field_name", "corrected_value"],

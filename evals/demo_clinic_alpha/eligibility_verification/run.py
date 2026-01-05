@@ -297,8 +297,13 @@ class MockPipeline:
 
 
 class MockTransport:
+    def __init__(self):
+        self.transfers: list[dict] = []
+
     async def sip_call_transfer(self, config):
+        self.transfers.append(config)
         print(f"\n  [TRANSFER] → {config.get('toEndPoint')}\n")
+        return None  # None = success
 
 
 # === FLOW RUNNER ===
@@ -313,6 +318,7 @@ class FlowRunner:
         session_id: str,
         organization_id: str,
         verbose: bool = False,
+        entry_node: str = "greeting_without_ivr",
     ):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
@@ -335,13 +341,17 @@ class FlowRunner:
         # Initialize flow state with patient data
         self.flow._init_flow_state()
 
-        # Start with greeting node for direct human conversation (no IVR)
-        self.current_node = self.flow.create_greeting_node_without_ivr()
+        # Start with specified entry node
+        if entry_node == "greeting_after_ivr":
+            self.current_node = self.flow.create_greeting_node_after_ivr_completed()
+        else:
+            self.current_node = self.flow.create_greeting_node_without_ivr()
         self.current_node_name = self.current_node.get("name", "greeting")
         self.context = EvalContextManager()
         self.context.set_node(self.current_node)
         self.function_calls = []  # Track all function calls
         self.done = False
+        self.end_call_invoked = False  # Track if end_call was called
 
     def get_tools(self) -> list[dict]:
         functions = self.current_node.get("functions") or []
@@ -420,7 +430,8 @@ class FlowRunner:
 
         all_content = []
         last_func_call = None  # Track last (func_name, args_json) to prevent loops
-        did_respond_immediately = False  # Only allow one respond_immediately continuation per turn
+        respond_immediately_count = 0  # Allow up to 3 respond_immediately continuations per turn
+        MAX_RESPOND_IMMEDIATELY = 3
 
         while not self.done:
             messages = self.context.get_messages()
@@ -490,20 +501,32 @@ class FlowRunner:
                 # Check if this function ends the conversation (even without a next_node)
                 if func_name in ("end_call", "end_conversation", "hangup"):
                     self.done = True
+                    self.end_call_invoked = True
                     break
 
                 if next_node:
                     self.current_node = next_node
                     self.current_node_name = next_node.get("name", "unknown")
                     self.context.set_node(next_node)
-                    # Process pre_actions on the new node (e.g., tts_say)
+                    # Process pre_actions on the new node (e.g., tts_say, function)
                     pre_actions = self.current_node.get("pre_actions") or []
                     for action in pre_actions:
-                        if action.get("type") == "tts_say":
-                            pre_action_text = action.get("text", "")
-                            if pre_action_text:
-                                all_content.append(pre_action_text)
-                                self.context.add_assistant_message(pre_action_text)
+                        action_type = action.get("type") if isinstance(action, dict) else getattr(action, "type", None)
+
+                        if action_type == "tts_say":
+                            text = action.get("text", "") if isinstance(action, dict) else getattr(action, "text", "")
+                            if text:
+                                all_content.append(text)
+                                self.context.add_assistant_message(text)
+
+                        elif action_type == "function":
+                            handler = action.get("handler") if isinstance(action, dict) else getattr(action, "handler", None)
+                            if handler:
+                                try:
+                                    await handler(action, self.mock_flow_manager)
+                                    print(f"    [PRE_ACTION] Executed: {handler.__name__}")
+                                except Exception as e:
+                                    print(f"    [PRE_ACTION] Error: {e}")
 
                     # Check if this node ends the conversation
                     result_node_name = next_node.get("name")
@@ -515,8 +538,8 @@ class FlowRunner:
                     if ends_conversation:
                         self.done = True
                         break
-                    if self.current_node.get("respond_immediately") and not did_respond_immediately:
-                        did_respond_immediately = True
+                    if self.current_node.get("respond_immediately") and respond_immediately_count < MAX_RESPOND_IMMEDIATELY:
+                        respond_immediately_count += 1
                         continue
 
             if msg.content:
@@ -575,6 +598,7 @@ async def run_simulation(
     """Run a single eligibility verification simulation for a scenario."""
     insurance_rep = scenario["insurance_rep"]
     persona = scenario["persona"]
+    entry_node = scenario.get("entry_node", "greeting_without_ivr")
 
     runner = FlowRunner(
         llm_config=llm_config,
@@ -583,23 +607,29 @@ async def run_simulation(
         session_id=session_id,
         organization_id=ORG_ID_STR,
         verbose=verbose,
+        entry_node=entry_node,
     )
 
-    # Bot greeting
+    # Bot greeting - only for greeting_without_ivr (IVR path waits for rep)
     pre_actions = runner.current_node.get("pre_actions") or []
-    greeting = pre_actions[0].get("text", "") if pre_actions else ""
-
-    # Add greeting to context
-    runner.context.add_assistant_message(greeting)
+    greeting = ""
+    if pre_actions and pre_actions[0].get("type") == "tts_say":
+        greeting = pre_actions[0].get("text", "")
 
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
     print(f"TARGET: {scenario['target_node']}")
+    print(f"ENTRY NODE: {entry_node}")
     print(f"{'='*70}\n")
 
-    print(f"MONICA: {greeting}\n")
-
-    conversation = [{"role": "assistant", "content": greeting, "turn": 0}]
+    # Handle greeting based on entry node
+    if greeting:
+        runner.context.add_assistant_message(greeting)
+        print(f"MONICA: {greeting}\n")
+        conversation = [{"role": "assistant", "content": greeting, "turn": 0}]
+    else:
+        # IVR path: bot waits for rep to speak first
+        conversation = []
 
     # Conversation loop
     turn = 0
@@ -617,7 +647,10 @@ async def run_simulation(
 
         # Monica responds - keep processing until she speaks or finishes
         # This prevents the goodbye loop when bot is calling functions without speaking
-        while not runner.done:
+        inner_iterations = 0
+        MAX_INNER = 5
+        while not runner.done and inner_iterations < MAX_INNER:
+            inner_iterations += 1
             bot_response = await runner.process_message(insurance_msg, turn)
             if bot_response:
                 print(f"MONICA: {bot_response}\n")
@@ -625,6 +658,8 @@ async def run_simulation(
                 break
             # Bot called functions but didn't speak - let her keep processing
             # without advancing the insurance turn
+        if inner_iterations >= MAX_INNER and not runner.done:
+            print(f"    [WARN] Inner loop max iterations reached without bot speaking")
 
     final_state = runner.mock_flow_manager.state
     final_node = runner.current_node_name
@@ -785,6 +820,20 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
             expected_db_state=scenario.get("expected_db_state"),
             expected_data=scenario.get("expected_data"),
         )
+
+        # Verify DB state after call
+        db_captured = await test_db.get_captured_fields(patient_id)
+        result["db_captured_fields"] = db_captured
+
+        # Compare DB state against expected_db_state if defined
+        if scenario.get("expected_db_state"):
+            db_grade = grade_captured_state(db_captured, scenario["expected_db_state"])
+            if not db_grade["pass"]:
+                grade["pass"] = False
+                grade["reason"] += f"; DB: {db_grade['reason']}"
+                grade["details"]["db_state"] = db_grade
+            else:
+                grade["details"]["db_state"] = db_grade
 
         # Print grade
         status = "✓ PASS" if grade["pass"] else "✗ FAIL"

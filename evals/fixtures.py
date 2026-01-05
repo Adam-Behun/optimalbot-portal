@@ -96,6 +96,29 @@ class TestDB:
     async def get_full_patient(self, patient_id: str) -> Optional[dict]:
         return await self.db.find_patient_by_id(patient_id, ORG_ID_STR)
 
+    async def get_session(self, session_id: str) -> Optional[dict]:
+        """Get session record by ID."""
+        coll = get_mongo_client()[MONGO_DB_NAME].sessions
+        return await coll.find_one({"session_id": session_id})
+
+    async def get_captured_fields(self, patient_id: str) -> dict:
+        """Get all eligibility fields written to DB."""
+        patient = await self.db.find_patient_by_id(patient_id, ORG_ID_STR)
+        if not patient:
+            return {}
+
+        fields = [
+            "network_status", "plan_type", "plan_effective_date", "plan_term_date",
+            "cpt_covered", "copay_amount", "coinsurance_percent", "deductible_applies",
+            "prior_auth_required", "telehealth_covered",
+            "deductible_individual", "deductible_individual_met",
+            "deductible_family", "deductible_family_met",
+            "oop_max_individual", "oop_max_individual_met",
+            "oop_max_family", "oop_max_family_met",
+            "reference_number", "call_status",
+        ]
+        return {f: patient.get(f) for f in fields if patient.get(f) is not None}
+
     async def create_session(self, session_id: str, workflow: str) -> bool:
         success = await self.session_db.create_session({
             "session_id": session_id,

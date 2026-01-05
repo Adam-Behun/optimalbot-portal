@@ -26,13 +26,13 @@ scenarios:
     expected_data:
       network_status: "In-network"
       plan_type: "POS"
-      copay_amount: "$50"
+      copay_amount: "50.00"
       coinsurance_percent: null
       prior_auth_required: false
-      deductible_family: "$500"
-      deductible_family_met: "$500"
-      oop_max_family: "$6,000"
-      oop_max_family_met: "$1,170.74"
+      deductible_family: "500.00"
+      deductible_family_met: "500.00"
+      oop_max_family: "6000.00"
+      oop_max_family_met: "1170.74"
       reference_number: "UHC-2025-789456"
     patient:
       patient_name: "John Smith"
@@ -91,20 +91,20 @@ scenarios:
       plan_type: "PPO"
       cpt_covered: true
       prior_auth_required: true
-      copay_amount: "$75"
-      coinsurance_percent: "20%"
+      copay_amount: "75.00"
+      coinsurance_percent: "20"
       reference_number: "ATN-PA-445566"
     expected_data:
       network_status: "In-network"
       plan_type: "PPO"
       cpt_covered: true
       prior_auth_required: true
-      copay_amount: "$75"
-      coinsurance_percent: "20%"
-      deductible_family: "$1,000"
-      deductible_family_met: "$650"
-      oop_max_family: "$8,000"
-      oop_max_family_met: "$2,340"
+      copay_amount: "75.00"
+      coinsurance_percent: "20"
+      deductible_family: "1000.00"
+      deductible_family_met: "650.00"
+      oop_max_family: "8000.00"
+      oop_max_family_met: "2340.00"
       reference_number: "ATN-PA-445566"
     patient:
       patient_name: "Maria Garcia"
@@ -208,7 +208,7 @@ scenarios:
       plan_type: "HMO"
       cpt_covered: true
       prior_auth_required: true
-      coinsurance_percent: "40%"
+      coinsurance_percent: "40"
       reference_number: "BCBS-OON-2025-1234"
     expected_data:
       network_status: "Out-of-Network"
@@ -216,11 +216,11 @@ scenarios:
       cpt_covered: true
       prior_auth_required: true
       copay_amount: null
-      coinsurance_percent: "40%"
-      deductible_individual: "$2,500"
-      deductible_individual_met: "$0"
-      oop_max_individual: "$10,000"
-      oop_max_individual_met: "$0"
+      coinsurance_percent: "40"
+      deductible_individual: "2500.00"
+      deductible_individual_met: "0.00"
+      oop_max_individual: "10000.00"
+      oop_max_individual_met: "0.00"
       reference_number: "BCBS-OON-2025-1234"
     patient:
       patient_name: "Robert Williams"
@@ -329,7 +329,7 @@ scenarios:
   # =============================================================================
 
   - id: "4"
-    target_node: all
+    target_node: closing
     expected_problem: "Bot may fail to answer rep's clarifying questions or get confused by back-and-forth"
     patient_data:
       patient_id: "eval-004"
@@ -663,7 +663,7 @@ scenarios:
   # =============================================================================
 
   - id: "7"
-    target_node: accumulators
+    target_node: closing
     expected_problem: "Bot may not correctly record dollar amounts with cents or may round incorrectly"
     patient_data:
       patient_id: "eval-007"
@@ -749,7 +749,7 @@ scenarios:
 
       14. IMPORTANT: After you say goodbye, if they say goodbye, just say "Goodbye" once and stop.
 
-      KEY ADVERSARIAL ELEMENT: Precise dollar amounts with cents. Bot must record exactly "$483.27" and "$2,147.63" - not rounded values. Also uses INDIVIDUAL accumulators, not family.
+      KEY ADVERSARIAL ELEMENT: Precise dollar amounts with cents. Bot must record exactly "483.27" and "2147.63" - not rounded values. Also uses INDIVIDUAL accumulators, not family.
 
   # =============================================================================
   # SCENARIO 8: Rep asks for information bot doesn't have
@@ -936,7 +936,7 @@ scenarios:
 
       14. When they ask for reference number: "Reference is CIG-CORR-2025-3456."
 
-      KEY TEST: Final copay_amount should be "$50" (the CORRECTED value), not "$25" (the initial mistake).
+      KEY TEST: Final copay_amount should be "50.00" (the CORRECTED value), not "25.00" (the initial mistake).
 
   # =============================================================================
   # SCENARIO 10: High-deductible health plan (HDHP) with HSA
@@ -1023,7 +1023,7 @@ scenarios:
   # =============================================================================
 
   - id: "11"
-    target_node: all
+    target_node: closing
     expected_problem: "Bot may not handle realistic multi-turn conversation with holds, clarifications, and follow-up questions"
     patient_data:
       patient_id: "eval-011"
@@ -1127,3 +1127,138 @@ scenarios:
       - Say dollar amounts naturally: "fifty dollar copay", "six thousand dollars"
       - For cents, say fully: "one thousand one hundred seventy dollars and seventy four cents"
       - Ask "For family?" when they ask about OOP to clarify individual vs family
+
+  # =============================================================================
+  # SCENARIO 12: IVR Entry Path - Post-IVR greeting
+  # Tests: Bot behavior after IVR navigation (should answer questions, not introduce)
+  # =============================================================================
+
+  - id: "12"
+    target_node: closing
+    entry_node: "greeting_after_ivr"
+    expected_db_state:
+      network_status: "In-Network"
+      plan_type: "PPO"
+      cpt_covered: true
+      reference_number: "ATN-IVR-2025-001"
+    expected_data:
+      network_status: "In-Network"
+      plan_type: "PPO"
+      cpt_covered: true
+      copay_amount: "40.00"
+      coinsurance_percent: "20"
+      deductible_family: "1000.00"
+      deductible_family_met: "500.00"
+      oop_max_family: "5000.00"
+      oop_max_family_met: "1200.00"
+      reference_number: "ATN-IVR-2025-001"
+    patient:
+      patient_name: "Jane Doe"
+      date_of_birth: "05/22/1990"
+      insurance_member_id: "AET123456789"
+      insurance_company_name: "Aetna"
+      insurance_phone: "+18001234567"
+      caller_name: "Monica"
+      caller_last_initial: "B"
+      facility_name: "Metro Health Clinic"
+      tax_id: "12-3456789"
+      provider_name: "Dr. Smith"
+      provider_npi: "1234567890"
+      provider_call_back_phone: "+15551234567"
+      cpt_code: "99213"
+      place_of_service: "Office"
+      date_of_service: ""
+    insurance_rep:
+      first_name: "Sarah"
+      last_name: "Jones"
+      company: "Aetna"
+    persona: |
+      You are Sarah, an Aetna rep. The caller just navigated through your IVR menu and reached you.
+
+      CRITICAL BEHAVIOR:
+      - The bot has already navigated through the IVR to reach you
+      - The bot should NOT re-introduce themselves with a full greeting
+      - The bot should ANSWER your verification questions, not lead the conversation
+      - YOU lead by asking for verification info first
+
+      MEMBER INFO YOU'LL VERIFY:
+      - Member: Jane Doe
+      - DOB: 05/22/1990
+      - Member ID: AET123456789
+
+      CONVERSATION FLOW:
+
+      1. GREETING (YOU lead): "Provider services, this is Sarah. Who am I speaking with?"
+         - Bot should give their name and facility
+
+      2. Verify tax ID: "And your tax ID?"
+
+      3. Verify member: "Member's name and date of birth?"
+
+      4. After member info: "Let me pull that up... How can I help you today?"
+
+      5. When they ask about network: "Yes, Metro Health Clinic is in network."
+
+      6. When they ask about plan type: "PPO."
+
+      7. When they ask about effective date: "January first, twenty twenty five."
+
+      8. When they ask about term date: "No termination date."
+
+      9. When they ask about CPT coverage: "What's the date of service?"
+         After they answer: "Let me check ninety-nine two thirteen... Covered. Forty dollar copay, twenty percent coinsurance, deductible applies, no prior auth, telehealth is covered."
+
+      10. When they ask about deductible: "Family deductible is one thousand, five hundred has been met."
+
+      11. When they ask about OOP: "Family out of pocket max is five thousand, twelve hundred applied."
+
+      12. When they ask for reference: "Reference is ATN-IVR-2025-001."
+
+      13. When done: "Anything else? Alright, have a good day."
+
+      KEY TEST: Bot should NOT say "Hi, this is [name] calling from [facility] about eligibility verification" - that's the greeting_without_ivr behavior. After IVR, bot should just answer questions.
+
+  # =============================================================================
+  # SCENARIO 13: Transfer Flow Test
+  # Tests: Bot's ability to handle transfer request when rep is uncomfortable with AI
+  # =============================================================================
+
+  - id: "13"
+    target_node: transfer_pending
+    expected_db_state: {}
+    patient:
+      patient_name: "Test Transfer"
+      date_of_birth: "01/01/1980"
+      insurance_member_id: "TRF123456"
+      insurance_company_name: "Cigna"
+      insurance_phone: "+18001234567"
+      caller_name: "Bot"
+      caller_last_initial: "T"
+      facility_name: "Test Clinic"
+      tax_id: "99-9999999"
+      provider_name: "Dr. Test"
+      provider_npi: "9999999999"
+      provider_call_back_phone: "+15559999999"
+      cpt_code: "99213"
+      place_of_service: "Office"
+      date_of_service: ""
+    insurance_rep:
+      first_name: "Mike"
+      last_name: "Wilson"
+      company: "Cigna"
+    persona: |
+      You are Mike, a Cigna rep who is uncomfortable with AI callers.
+
+      CONVERSATION FLOW:
+
+      1. GREETING: "Cigna provider line, this is Mike."
+
+      2. After bot introduces themselves: "Wait, hold on. Is this an AI? Are you a robot?"
+
+      3. If they confirm they're an AI or virtual assistant: "I'm not comfortable talking to an AI. I need to speak with a real person. Can you transfer me to your manager or a human?"
+
+      4. If they offer to transfer: "Yes, please transfer me to your manager."
+
+      5. If they try to continue without transferring: Keep insisting: "No, I really need a human. Please transfer me."
+
+      KEY TEST: Bot should recognize the transfer request and call the request_staff function, leading to staff_confirmation and eventually transfer_pending node.
