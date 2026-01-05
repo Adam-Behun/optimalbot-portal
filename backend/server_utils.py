@@ -6,6 +6,7 @@ import aiohttp
 from fastapi import HTTPException
 from loguru import logger
 from backend.schemas import BotBodyData
+from backend.constants import CallStatus
 
 # Only import pipecat for local development (not needed in production)
 _pipecat_available = False
@@ -79,6 +80,55 @@ def build_dialout_room_properties(expiry_seconds: int = 300) -> dict:
     }
 
 
+async def _record_bot_start_failure(
+    body_data: BotBodyData,
+    failure_type: str,
+    error: str,
+):
+    """Record bot start failure to metrics, update patient status, and send alert."""
+    try:
+        # Record to metrics
+        from backend.metrics import get_metrics_collector
+        metrics = get_metrics_collector()
+        await metrics.record_call_failure(
+            session_id=body_data.session_id,
+            error=error,
+            stage="bot_start"
+        )
+
+        # Update patient status if patient_id is available
+        if body_data.patient_id:
+            from backend.models import get_async_patient_db
+            patient_db = get_async_patient_db()
+            await patient_db.update_call_status(
+                body_data.patient_id,
+                CallStatus.FAILED.value,
+                body_data.organization_id
+            )
+            logger.info(f"Patient {body_data.patient_id} status updated to FAILED")
+
+        # Update session status
+        from backend.sessions import get_async_session_db
+        session_db = get_async_session_db()
+        await session_db.update_session(
+            body_data.session_id,
+            {"status": "failed", "error": error, "error_type": failure_type},
+            body_data.organization_id
+        )
+
+        # Send alert
+        from backend.alerts import get_email_alerter
+        alerter = get_email_alerter()
+        await alerter.alert_bot_start_failure(
+            session_id=body_data.session_id,
+            error=error,
+            patient_id=body_data.patient_id
+        )
+
+    except Exception as e:
+        logger.error(f"Error recording bot start failure: {e}")
+
+
 async def start_bot_production(body_data: BotBodyData, session: aiohttp.ClientSession):
     pipecat_api_key = os.getenv("PIPECAT_API_KEY")
     agent_name = os.getenv("PIPECAT_AGENT_NAME", "healthcare-voice-ai")
@@ -118,11 +168,19 @@ async def start_bot_production(body_data: BotBodyData, session: aiohttp.ClientSe
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
+                    await _record_bot_start_failure(body_data, "api_error", f"Pipecat Cloud error: {error_text}")
                     raise HTTPException(status_code=500, detail=f"Pipecat Cloud error: {error_text}")
                 logger.info("Bot started successfully via Pipecat Cloud")
     except asyncio.TimeoutError:
         logger.error(f"Pipecat Cloud timed out after {BOT_START_TIMEOUT}s")
+        await _record_bot_start_failure(body_data, "timeout", f"Pipecat Cloud timed out after {BOT_START_TIMEOUT}s")
         raise HTTPException(status_code=504, detail="Bot startup timed out")
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (already handled)
+    except Exception as e:
+        logger.error(f"Unexpected error starting bot: {e}")
+        await _record_bot_start_failure(body_data, "unknown", str(e))
+        raise HTTPException(status_code=500, detail=f"Bot startup failed: {str(e)}")
 
 
 async def start_bot_local(body_data: BotBodyData, session: aiohttp.ClientSession):
@@ -146,11 +204,20 @@ async def start_bot_local(body_data: BotBodyData, session: aiohttp.ClientSession
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
+                    await _record_bot_start_failure(body_data, "api_error", f"Local bot error: {error_text}")
                     raise HTTPException(status_code=500, detail=f"Local bot error: {error_text}")
                 logger.info("Bot started successfully via local server")
     except asyncio.TimeoutError:
         logger.error(f"Local bot timed out after {BOT_START_TIMEOUT}s")
+        await _record_bot_start_failure(body_data, "timeout", f"Local bot timed out after {BOT_START_TIMEOUT}s")
         raise HTTPException(status_code=504, detail="Local bot startup timed out")
     except aiohttp.ClientConnectorError:
         logger.error(f"Cannot connect to local bot at {local_bot_url}")
+        await _record_bot_start_failure(body_data, "connection_error", f"Local bot server not running at {local_bot_url}")
         raise HTTPException(status_code=503, detail=f"Local bot server not running at {local_bot_url}")
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (already handled)
+    except Exception as e:
+        logger.error(f"Unexpected error starting local bot: {e}")
+        await _record_bot_start_failure(body_data, "unknown", str(e))
+        raise HTTPException(status_code=500, detail=f"Local bot startup failed: {str(e)}")
