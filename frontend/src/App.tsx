@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { LoginRedirect, ForgotPasswordRedirect, ResetPasswordRedirect } from './components/LoginRedirect';
 import { AuthCallback } from './components/AuthCallback';
+import { Status } from './components/Status';
+import { Settings } from './components/Settings';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CustomReports } from './components/CustomReports';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
@@ -87,6 +89,7 @@ const App = () => {
               <Route path="/forgot-password" element={<ForgotPasswordRedirect />} />
               <Route path="/reset-password" element={<ResetPasswordRedirect />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/status" element={<Status />} />
 
               {/* Protected routes - require authentication */}
               <Route path="/home" element={
@@ -100,6 +103,13 @@ const App = () => {
                 <ProtectedRoute>
                   <SidebarLayout>
                     <CustomReports />
+                  </SidebarLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/settings" element={
+                <ProtectedRoute>
+                  <SidebarLayout>
+                    <Settings />
                   </SidebarLayout>
                 </ProtectedRoute>
               } />

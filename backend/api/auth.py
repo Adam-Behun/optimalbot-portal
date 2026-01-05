@@ -1,16 +1,28 @@
+import base64
+import io
 import os
 import secrets
-from datetime import timedelta, datetime
-from fastapi import APIRouter, HTTPException, Request, Depends
-from pydantic import BaseModel
-from jose import JWTError, jwt
-from slowapi import Limiter
-from loguru import logger
+from datetime import datetime, timedelta
 
-from backend.dependencies import get_user_db, get_audit_logger_dep, get_client_info, get_user_id_from_request, get_organization_db
+import qrcode
+from fastapi import APIRouter, Depends, HTTPException, Request
+from jose import JWTError, jwt
+from loguru import logger
+from pydantic import BaseModel
+from slowapi import Limiter
+
+from backend.audit import AuditLogger
+from backend.dependencies import (
+    get_audit_logger_dep,
+    get_client_info,
+    get_current_user,
+    get_organization_db,
+    get_user_db,
+    get_user_id_from_request,
+)
 from backend.models import AsyncUserRecord
 from backend.models.organization import AsyncOrganizationRecord
-from backend.audit import AuditLogger
+
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
 
@@ -71,6 +83,42 @@ class ExchangeTokenRequest(BaseModel):
     organization_slug: str
 
 
+# MFA Models
+class MFASetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    qr_code: str  # Base64-encoded PNG
+
+
+class MFAVerifyRequest(BaseModel):
+    code: str
+
+
+class MFAVerifyResponse(BaseModel):
+    success: bool
+    backup_codes: list[str]
+
+
+class MFAStatusResponse(BaseModel):
+    enabled: bool
+    backup_codes_remaining: int
+
+
+class MFALoginRequest(BaseModel):
+    mfa_token: str
+    code: str
+
+
+class MFARequiredResponse(BaseModel):
+    mfa_required: bool
+    mfa_token: str
+    expires_in: int
+
+
+class MFADisableRequest(BaseModel):
+    password: str
+
+
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
     if expires_delta:
@@ -82,7 +130,34 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-@router.post("/login", response_model=AuthResponse)
+def create_mfa_token(user_id: str, email: str, organization_id: str) -> str:
+    """Create short-lived token for MFA verification step."""
+    expire = datetime.utcnow() + timedelta(minutes=5)
+    return jwt.encode(
+        {
+            "sub": user_id,
+            "email": email,
+            "organization_id": organization_id,
+            "type": "mfa_challenge",
+            "exp": expire
+        },
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+
+def verify_mfa_token(token: str) -> dict | None:
+    """Verify MFA challenge token. Returns payload or None."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "mfa_challenge":
+            return None
+        return payload
+    except JWTError:
+        return None
+
+
+@router.post("/login")
 @limiter.limit("5/minute")
 async def login(
     request: Request,
@@ -91,6 +166,7 @@ async def login(
     org_db: AsyncOrganizationRecord = Depends(get_organization_db),
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
+    """Login endpoint. Returns MFARequiredResponse if MFA enabled, else AuthResponse."""
     try:
         ip_address, user_agent = get_client_info(request)
 
@@ -184,6 +260,29 @@ async def login(
 
         organization_slug = org.get("slug", "")
 
+        # Check if MFA is enabled
+        if user.get("mfa_enabled"):
+            mfa_token = create_mfa_token(user_id, login_data.email, organization_id)
+
+            await audit_logger.log_event(
+                event_type="login",
+                user_id=user_id,
+                email=login_data.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=True,
+                details={"mfa_required": True, "role": user.get("role", "user")},
+                organization_id=organization_id
+            )
+
+            logger.info(f"MFA challenge issued for: {login_data.email}")
+            return MFARequiredResponse(
+                mfa_required=True,
+                mfa_token=mfa_token,
+                expires_in=300
+            )
+
+        # No MFA - complete login
         await audit_logger.log_event(
             event_type="login",
             user_id=user_id,
@@ -223,7 +322,7 @@ async def login(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Error during login")
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -459,7 +558,7 @@ async def login_central(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Error during central login")
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -547,6 +646,341 @@ async def exchange_token(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Error during token exchange")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# -----------------------------------------------------------------------------
+# MFA Endpoints
+# -----------------------------------------------------------------------------
+
+@router.post("/login/mfa", response_model=AuthResponse)
+@limiter.limit("10/minute")
+async def login_mfa(
+    request: Request,
+    mfa_data: MFALoginRequest,
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    org_db: AsyncOrganizationRecord = Depends(get_organization_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Complete login with MFA code after receiving mfa_token from /login."""
+    try:
+        ip_address, user_agent = get_client_info(request)
+
+        # Verify MFA token
+        payload = verify_mfa_token(mfa_data.mfa_token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+
+        user_id = payload.get("sub")
+        email = payload.get("email")
+        organization_id = payload.get("organization_id")
+
+        # Verify MFA code
+        is_valid = await user_db.verify_mfa_code(user_id, mfa_data.code)
+        if not is_valid:
+            await audit_logger.log_event(
+                event_type="mfa_verify",
+                user_id=user_id,
+                email=email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "Invalid MFA code"},
+                organization_id=organization_id
+            )
+            raise HTTPException(status_code=401, detail="Invalid MFA code")
+
+        # Get user and org for token
+        user = await user_db.find_user_by_email(email)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        org = await org_db.get_by_id(organization_id)
+        if not org:
+            raise HTTPException(status_code=403, detail="Organization not found")
+
+        organization_slug = org.get("slug", "")
+
+        await audit_logger.log_event(
+            event_type="mfa_verify",
+            user_id=user_id,
+            email=email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={},
+            organization_id=organization_id
+        )
+
+        access_token = create_access_token(
+            data={
+                "sub": user_id,
+                "email": email,
+                "role": user.get("role", "user"),
+                "organization_id": organization_id,
+                "organization_slug": organization_slug
+            }
+        )
+
+        logger.info(f"MFA login completed: {email}")
+
+        return AuthResponse(
+            access_token=access_token,
+            token_type="bearer",
+            user_id=user_id,
+            email=email,
+            organization=OrganizationResponse(
+                id=organization_id,
+                name=org.get("name", ""),
+                slug=organization_slug,
+                branding=org.get("branding", {}),
+                workflows=org.get("workflows", {})
+            )
+        )
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error during MFA login")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/mfa/setup", response_model=MFASetupResponse)
+async def mfa_setup(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Start MFA setup - generates secret and QR code. Requires authentication."""
+    try:
+        user_id = current_user["sub"]
+        email = current_user["email"]
+        organization_id = current_user.get("organization_id")
+        ip_address, user_agent = get_client_info(request)
+
+        # Check if MFA already enabled
+        mfa_status = await user_db.get_mfa_status(user_id)
+        if mfa_status.get("enabled"):
+            raise HTTPException(status_code=400, detail="MFA is already enabled")
+
+        # Generate secret
+        success, secret, provisioning_uri = await user_db.setup_mfa(user_id)
+        if not success or not secret or not provisioning_uri:
+            raise HTTPException(status_code=500, detail="Failed to generate MFA secret")
+
+        # Generate QR code as base64 PNG
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(provisioning_uri)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+        await audit_logger.log_event(
+            event_type="mfa_setup_init",
+            user_id=user_id,
+            email=email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={},
+            organization_id=organization_id
+        )
+
+        logger.info(f"MFA setup initiated for user {user_id}")
+
+        return MFASetupResponse(
+            secret=secret,
+            provisioning_uri=provisioning_uri,
+            qr_code=f"data:image/png;base64,{qr_base64}"
+        )
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error during MFA setup")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/mfa/verify", response_model=MFAVerifyResponse)
+async def mfa_verify(
+    request: Request,
+    verify_data: MFAVerifyRequest,
+    current_user: dict = Depends(get_current_user),
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Complete MFA setup by verifying TOTP code. Returns backup codes."""
+    try:
+        user_id = current_user["sub"]
+        email = current_user["email"]
+        organization_id = current_user.get("organization_id")
+        ip_address, user_agent = get_client_info(request)
+
+        # Verify and enable MFA
+        success, backup_codes = await user_db.verify_and_enable_mfa(user_id, verify_data.code)
+
+        if not success:
+            await audit_logger.log_event(
+                event_type="mfa_setup_complete",
+                user_id=user_id,
+                email=email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "Invalid verification code"},
+                organization_id=organization_id
+            )
+            raise HTTPException(status_code=400, detail="Invalid verification code")
+
+        await audit_logger.log_event(
+            event_type="mfa_setup_complete",
+            user_id=user_id,
+            email=email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={"backup_codes_generated": len(backup_codes)},
+            organization_id=organization_id
+        )
+
+        logger.info(f"MFA enabled for user {user_id}")
+
+        return MFAVerifyResponse(
+            success=True,
+            backup_codes=backup_codes
+        )
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error during MFA verification")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/mfa/disable")
+async def mfa_disable(
+    request: Request,
+    disable_data: MFADisableRequest,
+    current_user: dict = Depends(get_current_user),
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Disable MFA. Requires password verification."""
+    try:
+        user_id = current_user["sub"]
+        email = current_user["email"]
+        organization_id = current_user.get("organization_id")
+        ip_address, user_agent = get_client_info(request)
+
+        # Verify password
+        is_valid, user = await user_db.verify_password(email, disable_data.password)
+        if not is_valid:
+            await audit_logger.log_event(
+                event_type="mfa_disable",
+                user_id=user_id,
+                email=email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "Invalid password"},
+                organization_id=organization_id
+            )
+            raise HTTPException(status_code=401, detail="Invalid password")
+
+        # Disable MFA
+        success = await user_db.disable_mfa(user_id)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to disable MFA")
+
+        await audit_logger.log_event(
+            event_type="mfa_disable",
+            user_id=user_id,
+            email=email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={},
+            organization_id=organization_id
+        )
+
+        logger.info(f"MFA disabled for user {user_id}")
+
+        return {"success": True, "message": "MFA has been disabled"}
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error during MFA disable")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/mfa/status", response_model=MFAStatusResponse)
+async def mfa_status(
+    current_user: dict = Depends(get_current_user),
+    user_db: AsyncUserRecord = Depends(get_user_db)
+):
+    """Get MFA status for current user."""
+    try:
+        user_id = current_user["sub"]
+        status = await user_db.get_mfa_status(user_id)
+
+        return MFAStatusResponse(
+            enabled=status.get("enabled", False),
+            backup_codes_remaining=status.get("backup_codes_remaining", 0)
+        )
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error getting MFA status")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/mfa/backup-codes")
+async def regenerate_backup_codes(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    user_db: AsyncUserRecord = Depends(get_user_db),
+    audit_logger: AuditLogger = Depends(get_audit_logger_dep)
+):
+    """Regenerate MFA backup codes. Requires MFA to be enabled."""
+    try:
+        user_id = current_user["sub"]
+        email = current_user["email"]
+        organization_id = current_user.get("organization_id")
+        ip_address, user_agent = get_client_info(request)
+
+        success, backup_codes = await user_db.regenerate_backup_codes(user_id)
+
+        if not success:
+            raise HTTPException(status_code=400, detail="MFA is not enabled")
+
+        await audit_logger.log_event(
+            event_type="mfa_backup_regenerate",
+            user_id=user_id,
+            email=email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            details={"backup_codes_generated": len(backup_codes)},
+            organization_id=organization_id
+        )
+
+        logger.info(f"Backup codes regenerated for user {user_id}")
+
+        return {
+            "success": True,
+            "backup_codes": backup_codes
+        }
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error regenerating backup codes")
         raise HTTPException(status_code=500, detail="Internal server error")

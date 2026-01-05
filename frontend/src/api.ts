@@ -138,6 +138,86 @@ export const logout = async (): Promise<void> => {
   await api.post('/auth/logout');
 };
 
+// Metrics Types
+export interface MetricsSummary {
+  period: string;
+  total_calls: number;
+  completed: number;
+  failed: number;
+  voicemail: number;
+  in_progress: number;
+  success_rate: number;
+  avg_duration_seconds: number;
+  total_cost_usd: number;
+  period_start: string;
+  period_end: string;
+}
+
+// GET /metrics/summary - Fetch metrics summary
+export const getMetricsSummary = async (period: 'day' | 'week' | 'month' = 'day'): Promise<MetricsSummary> => {
+  const response = await api.get<MetricsSummary>('/metrics/summary', { params: { period } });
+  return response.data;
+};
+
+// GET /metrics/breakdown/status - Get calls breakdown by status
+export const getMetricsStatusBreakdown = async (period: 'day' | 'week' | 'month' = 'day') => {
+  const response = await api.get('/metrics/breakdown/status', { params: { period } });
+  return response.data;
+};
+
+// GET /metrics/daily - Get daily metrics for chart
+export const getMetricsDaily = async (days: number = 7) => {
+  const response = await api.get('/metrics/daily', { params: { days } });
+  return response.data;
+};
+
+// MFA Types
+export interface MFASetupResponse {
+  secret: string;
+  provisioning_uri: string;
+  qr_code: string;
+}
+
+export interface MFAVerifyResponse {
+  success: boolean;
+  backup_codes: string[];
+}
+
+export interface MFAStatusResponse {
+  enabled: boolean;
+  backup_codes_remaining: number;
+}
+
+// GET /auth/mfa/status - Get MFA status
+export const getMFAStatus = async (): Promise<MFAStatusResponse> => {
+  const response = await api.get<MFAStatusResponse>('/auth/mfa/status');
+  return response.data;
+};
+
+// POST /auth/mfa/setup - Start MFA setup
+export const setupMFA = async (): Promise<MFASetupResponse> => {
+  const response = await api.post<MFASetupResponse>('/auth/mfa/setup');
+  return response.data;
+};
+
+// POST /auth/mfa/verify - Verify code and enable MFA
+export const verifyMFA = async (code: string): Promise<MFAVerifyResponse> => {
+  const response = await api.post<MFAVerifyResponse>('/auth/mfa/verify', { code });
+  return response.data;
+};
+
+// POST /auth/mfa/disable - Disable MFA
+export const disableMFA = async (password: string): Promise<{ success: boolean }> => {
+  const response = await api.post('/auth/mfa/disable', { password });
+  return response.data;
+};
+
+// POST /auth/mfa/backup-codes - Regenerate backup codes
+export const regenerateBackupCodes = async (): Promise<{ success: boolean; backup_codes: string[] }> => {
+  const response = await api.post('/auth/mfa/backup-codes');
+  return response.data;
+};
+
 // POST /auth/exchange-token - Exchange handoff token for JWT (marketing site callback)
 export const exchangeToken = async (
   token: string,

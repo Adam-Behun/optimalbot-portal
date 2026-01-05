@@ -1,15 +1,27 @@
-from datetime import datetime, timezone
-from typing import Optional, List, TYPE_CHECKING
+import secrets
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, List, Optional
+
+import bcrypt
+import pyotp
 from bson import ObjectId
 from loguru import logger
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorClient
 
-from backend.database import get_mongo_client, MONGO_DB_NAME
+from backend.database import MONGO_DB_NAME, get_mongo_client
 
 
 class AsyncUserRecord:
+    """User data access for authentication and management.
+
+    MFA Fields (added to user document when MFA is set up):
+    - mfa_enabled: bool - Whether MFA is active
+    - mfa_secret: str - TOTP secret (encrypted at rest by MongoDB)
+    - mfa_backup_codes: List[str] - Hashed backup codes
+    - mfa_pending_secret: str - Temporary secret during setup
+    """
     MAX_FAILED_ATTEMPTS = 5
     PASSWORD_HISTORY_SIZE = 10
     PASSWORD_EXPIRY_DAYS = 90
@@ -41,7 +53,6 @@ class AsyncUserRecord:
 
     async def check_password_history(self, user_id: str, new_password: str) -> bool:
         try:
-            import bcrypt
             user = await self.users.find_one({"_id": ObjectId(user_id)})
             if not user:
                 return True
@@ -63,9 +74,6 @@ class AsyncUserRecord:
         role: str = "user"
     ) -> Optional[str]:
         try:
-            import bcrypt
-            from datetime import timedelta
-
             await self._ensure_indexes()
 
             is_valid, error_msg = self.check_password_complexity(password)
@@ -126,8 +134,6 @@ class AsyncUserRecord:
 
     async def verify_password(self, email: str, password: str) -> tuple[bool, Optional[dict]]:
         try:
-            import bcrypt
-
             user = await self.find_user_by_email(email)
             if not user:
                 return False, None
@@ -166,9 +172,6 @@ class AsyncUserRecord:
 
     async def update_password(self, user_id: str, new_password: str) -> tuple[bool, str]:
         try:
-            import bcrypt
-            from datetime import timedelta
-
             is_valid, error_msg = self.check_password_complexity(new_password)
             if not is_valid:
                 return False, error_msg
@@ -208,9 +211,6 @@ class AsyncUserRecord:
 
     async def generate_reset_token(self, email: str) -> tuple[bool, Optional[str]]:
         try:
-            import secrets
-            from datetime import timedelta
-
             user = await self.find_user_by_email(email)
             if not user:
                 return False, None
@@ -390,6 +390,199 @@ class AsyncUserRecord:
         except Exception as e:
             logger.error(f"Error clearing handoff token for {user_id}: {e}")
             return False
+
+    # -------------------------------------------------------------------------
+    # MFA Methods
+    # -------------------------------------------------------------------------
+
+    async def setup_mfa(self, user_id: str) -> tuple[bool, Optional[str], Optional[str]]:
+        """Generate MFA secret for setup. Returns (success, secret, provisioning_uri)."""
+        try:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if not user:
+                return False, None, None
+
+            # Generate new TOTP secret
+            secret = pyotp.random_base32()
+
+            # Store as pending (not active until verified)
+            await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "mfa_pending_secret": secret,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+
+            # Generate provisioning URI for QR code
+            totp = pyotp.TOTP(secret)
+            provisioning_uri = totp.provisioning_uri(
+                name=user.get("email", ""),
+                issuer_name="OptimalBot"
+            )
+
+            logger.info(f"MFA setup initiated for user {user_id}")
+            return True, secret, provisioning_uri
+
+        except Exception as e:
+            logger.error(f"Error setting up MFA for {user_id}: {e}")
+            return False, None, None
+
+    async def verify_and_enable_mfa(self, user_id: str, code: str) -> tuple[bool, List[str]]:
+        """Verify TOTP code and enable MFA. Returns (success, backup_codes)."""
+        try:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if not user:
+                return False, []
+
+            pending_secret = user.get("mfa_pending_secret")
+            if not pending_secret:
+                logger.warning(f"No pending MFA secret for user {user_id}")
+                return False, []
+
+            # Verify the code
+            totp = pyotp.TOTP(pending_secret)
+            if not totp.verify(code, valid_window=1):
+                logger.warning(f"Invalid MFA code during setup for user {user_id}")
+                return False, []
+
+            # Generate backup codes (8 codes, 8 chars each)
+            backup_codes = [secrets.token_hex(4).upper() for _ in range(8)]
+            hashed_codes = [
+                bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()
+                for code in backup_codes
+            ]
+
+            # Enable MFA
+            await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {
+                    "$set": {
+                        "mfa_enabled": True,
+                        "mfa_secret": pending_secret,
+                        "mfa_backup_codes": hashed_codes,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    },
+                    "$unset": {"mfa_pending_secret": ""}
+                }
+            )
+
+            logger.info(f"MFA enabled for user {user_id}")
+            return True, backup_codes
+
+        except Exception as e:
+            logger.error(f"Error enabling MFA for {user_id}: {e}")
+            return False, []
+
+    async def verify_mfa_code(self, user_id: str, code: str) -> bool:
+        """Verify TOTP code or backup code for login."""
+        try:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if not user or not user.get("mfa_enabled"):
+                return False
+
+            secret = user.get("mfa_secret")
+            if not secret:
+                return False
+
+            # Try TOTP first
+            totp = pyotp.TOTP(secret)
+            if totp.verify(code, valid_window=1):
+                return True
+
+            # Try backup codes
+            backup_codes = user.get("mfa_backup_codes", [])
+            for i, hashed_code in enumerate(backup_codes):
+                # Normalize input (uppercase, no spaces/dashes)
+                normalized_code = code.upper().replace("-", "").replace(" ", "")
+                if bcrypt.checkpw(normalized_code.encode(), hashed_code.encode()):
+                    # Remove used backup code
+                    backup_codes.pop(i)
+                    await self.users.update_one(
+                        {"_id": ObjectId(user_id)},
+                        {"$set": {
+                            "mfa_backup_codes": backup_codes,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }}
+                    )
+                    logger.info(f"Backup code used for user {user_id} ({len(backup_codes)} remaining)")
+                    return True
+
+            logger.warning(f"Invalid MFA code for user {user_id}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying MFA code for {user_id}: {e}")
+            return False
+
+    async def disable_mfa(self, user_id: str) -> bool:
+        """Disable MFA for a user."""
+        try:
+            result = await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {
+                    "$set": {
+                        "mfa_enabled": False,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    },
+                    "$unset": {
+                        "mfa_secret": "",
+                        "mfa_backup_codes": "",
+                        "mfa_pending_secret": ""
+                    }
+                }
+            )
+            if result.modified_count > 0:
+                logger.info(f"MFA disabled for user {user_id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error disabling MFA for {user_id}: {e}")
+            return False
+
+    async def get_mfa_status(self, user_id: str) -> dict:
+        """Get MFA status for a user."""
+        try:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if not user:
+                return {"enabled": False, "backup_codes_remaining": 0}
+
+            return {
+                "enabled": user.get("mfa_enabled", False),
+                "backup_codes_remaining": len(user.get("mfa_backup_codes", []))
+            }
+        except Exception as e:
+            logger.error(f"Error getting MFA status for {user_id}: {e}")
+            return {"enabled": False, "backup_codes_remaining": 0}
+
+    async def regenerate_backup_codes(self, user_id: str) -> tuple[bool, List[str]]:
+        """Regenerate backup codes for a user with MFA enabled."""
+        try:
+            user = await self.users.find_one({"_id": ObjectId(user_id)})
+            if not user or not user.get("mfa_enabled"):
+                return False, []
+
+            # Generate new backup codes
+            backup_codes = [secrets.token_hex(4).upper() for _ in range(8)]
+            hashed_codes = [
+                bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()
+                for code in backup_codes
+            ]
+
+            await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "mfa_backup_codes": hashed_codes,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+
+            logger.info(f"Backup codes regenerated for user {user_id}")
+            return True, backup_codes
+
+        except Exception as e:
+            logger.error(f"Error regenerating backup codes for {user_id}: {e}")
+            return False, []
 
 
 _user_db_instance: Optional[AsyncUserRecord] = None
