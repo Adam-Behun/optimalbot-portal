@@ -1,20 +1,22 @@
 import asyncio
 import os
-from typing import Dict, Any
+from typing import Any, Dict
+
 from loguru import logger
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask, PipelineParams
+from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat_flows import FlowManager
-from pipeline.pipeline_factory import PipelineFactory
+
 from core.flow_loader import discover_warmup_functions
 from handlers import (
-    setup_transport_handlers,
-    setup_transcript_handler,
-    setup_safety_handlers,
     setup_output_validator_handlers,
+    setup_safety_handlers,
+    setup_transcript_handler,
+    setup_transport_handlers,
 )
 from handlers.triage import setup_triage_handlers
-from observers import LangfuseLatencyObserver
+from observers import LangfuseLatencyObserver, UsageObserver
+from pipeline.pipeline_factory import PipelineFactory
 
 try:
     from pipecat_whisker import WhiskerObserver
@@ -101,7 +103,8 @@ class CallSession:
     def _create_observers(self) -> list:
         """Create pipeline observers for metrics and debugging."""
         self.latency_observer = LangfuseLatencyObserver(session_id=self.session_id)
-        observers = [self.latency_observer]
+        self.usage_observer = UsageObserver(session_id=self.session_id)
+        observers = [self.latency_observer, self.usage_observer]
 
         whisker_enabled = os.getenv("ENABLE_WHISKER", "false").lower() in ["true", "1", "yes"]
         if self.debug_mode and WHISKER_AVAILABLE and whisker_enabled:
