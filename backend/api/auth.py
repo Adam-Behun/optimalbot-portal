@@ -194,7 +194,7 @@ async def login(
             if failed_attempts >= 5:
                 raise HTTPException(
                     status_code=403,
-                    detail="Account locked due to too many failed login attempts. Please contact support."
+                    detail="Account locked due to too many failed attempts. Contact support."
                 )
 
             raise HTTPException(
@@ -503,16 +503,16 @@ async def login_central(
             if failed_attempts >= 5:
                 raise HTTPException(
                     status_code=403,
-                    detail="Account locked due to too many failed login attempts. Please contact support."
+                    detail="Account locked due to too many failed attempts. Contact support."
                 )
 
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
         if user.get("status") == "locked":
-            raise HTTPException(status_code=403, detail="Account is locked. Please contact support.")
+            raise HTTPException(status_code=403, detail="Account is locked. Contact support.")
 
         if user.get("status") == "inactive":
-            raise HTTPException(status_code=403, detail="Account is inactive. Please contact support.")
+            raise HTTPException(status_code=403, detail="Account is inactive. Contact support.")
 
         org_id = str(user.get("organization_id", ""))
         org = await org_db.get_by_id(org_id)
@@ -601,7 +601,7 @@ async def exchange_token(
                 ip_address=ip_address,
                 user_agent=user_agent,
                 success=False,
-                details={"reason": "Not authorized for organization", "org_slug": data.organization_slug}
+                details={"reason": "Not authorized for org", "org_slug": data.organization_slug}
             )
             raise HTTPException(status_code=403, detail="Not authorized for this organization")
 

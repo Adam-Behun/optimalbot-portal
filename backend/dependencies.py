@@ -1,14 +1,20 @@
 import os
-from typing import Tuple
+from typing import List, Tuple, Union
+
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from loguru import logger
 
-from backend.models import AsyncPatientRecord, AsyncUserRecord, get_async_patient_db, get_async_user_db
+from backend.audit import AuditLogger, get_audit_logger
+from backend.models import (
+    AsyncPatientRecord,
+    AsyncUserRecord,
+    get_async_patient_db,
+    get_async_user_db,
+)
 from backend.models.organization import AsyncOrganizationRecord, get_async_organization_db
 from backend.sessions import AsyncSessionRecord, get_async_session_db
-from backend.audit import AuditLogger, get_audit_logger
 
 security = HTTPBearer()
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
@@ -107,6 +113,40 @@ async def get_current_user(
         )
 
 
+def require_role(roles: Union[str, List[str]]):
+    """
+    Dependency factory that requires user to have one of the specified roles.
+
+    Usage:
+        @router.get("/admin-only")
+        async def admin_endpoint(
+            current_user: dict = Depends(require_role("admin"))
+        ):
+            ...
+
+        @router.get("/multi-role")
+        async def multi_role_endpoint(
+            current_user: dict = Depends(require_role(["admin", "user"]))
+        ):
+            ...
+    """
+    if isinstance(roles, str):
+        roles = [roles]
+
+    async def role_checker(
+        current_user: dict = Depends(get_current_user)
+    ) -> dict:
+        user_role = current_user.get("role")
+        if user_role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Required role: {', '.join(roles)}"
+            )
+        return current_user
+
+    return role_checker
+
+
 def get_current_user_organization_id(current_user: dict = Depends(get_current_user)) -> str:
     organization_id = current_user.get("organization_id")
     if not organization_id:
@@ -149,7 +189,7 @@ def get_user_id_from_request(request: Request) -> str:
             token = auth_header.split(" ")[1]
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
             return f"user:{payload.get('sub')}"
-    except:
+    except Exception:
         pass
 
     ip_address = get_client_info(request)[0]

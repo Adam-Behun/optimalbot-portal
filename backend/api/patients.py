@@ -14,7 +14,7 @@ from backend.dependencies import (
 from backend.models import AsyncPatientRecord
 from backend.audit import AuditLogger
 from backend.schemas import PatientCreate, PatientResponse, BulkPatientRequest, BulkUploadResponse
-from backend.utils import convert_objectid, mask_id, mask_email
+from backend.utils import convert_objectid, mask_id
 
 router = APIRouter()
 limiter = Limiter(key_func=get_user_id_from_request)
@@ -30,7 +30,7 @@ async def list_patients(
     audit_logger: AuditLogger = Depends(get_audit_logger_dep)
 ):
     try:
-        logger.info(f"User {mask_email(current_user['email'])} fetching patients for org {mask_id(org_id)}, workflow={workflow}")
+        logger.info(f"Fetching patients for org, workflow={workflow}")
 
         all_patients = await patient_db.find_patients_by_organization(org_id, workflow=workflow)
 
@@ -93,7 +93,7 @@ async def get_patient_by_id(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error fetching patient")
+        logger.exception("Error fetching patient: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -127,7 +127,7 @@ async def add_patient(
         resource_id=patient_id
     )
 
-    logger.info(f"User {mask_email(current_user['email'])} added patient {mask_id(patient_id)} to org {mask_id(org_id)} workflow={patient_data.workflow}")
+    logger.info(f"Added patient {mask_id(patient_id)} workflow={patient_data.workflow}")
 
     return PatientResponse(
         status="success",

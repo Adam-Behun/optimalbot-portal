@@ -1,9 +1,8 @@
 """Metrics API endpoints for call analytics."""
 
 from fastapi import APIRouter, Depends, Query
-from typing import Optional
 
-from backend.dependencies import get_current_user, get_current_user_organization_id
+from backend.dependencies import get_current_user, get_current_user_organization_id, require_role
 from backend.metrics import get_metrics_collector
 
 router = APIRouter()
@@ -40,13 +39,10 @@ async def get_status_breakdown(
 @router.get("/breakdown/errors")
 async def get_error_breakdown(
     period: str = Query("day", regex="^(day|week|month)$"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_role("admin")),
     org_id: str = Depends(get_current_user_organization_id),
 ):
     """Get call failure breakdown by error stage (admin only)."""
-    if current_user.get("role") != "admin":
-        return {"breakdown": [], "period": period, "message": "Admin access required for error details"}
-
     metrics = get_metrics_collector()
     breakdown = await metrics.get_error_breakdown(org_id, period)
     return {"breakdown": breakdown, "period": period}

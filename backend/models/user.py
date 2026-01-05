@@ -119,7 +119,8 @@ class AsyncUserRecord:
 
     async def get_users_by_organization(self, organization_id: str) -> List[dict]:
         try:
-            cursor = self.users.find({"organization_id": ObjectId(organization_id)}).sort("created_at", -1)
+            query = {"organization_id": ObjectId(organization_id)}
+            cursor = self.users.find(query).sort("created_at", -1)
             return await cursor.to_list(length=None)
         except Exception as e:
             logger.error(f"Error finding users for org {organization_id}: {e}")
@@ -151,12 +152,16 @@ class AsyncUserRecord:
             if is_valid:
                 await self.users.update_one(
                     {"_id": user["_id"]},
-                    {"$set": {"failed_login_attempts": 0, "last_login_at": datetime.now(timezone.utc).isoformat()}}
+                    {"$set": {
+                        "failed_login_attempts": 0,
+                        "last_login_at": datetime.now(timezone.utc).isoformat()
+                    }}
                 )
                 return True, user
             else:
                 new_count = user.get("failed_login_attempts", 0) + 1
-                update_data = {"failed_login_attempts": new_count, "updated_at": datetime.now(timezone.utc).isoformat()}
+                now = datetime.now(timezone.utc).isoformat()
+                update_data = {"failed_login_attempts": new_count, "updated_at": now}
 
                 if new_count >= self.MAX_FAILED_ATTEMPTS:
                     update_data["status"] = "locked"
@@ -258,7 +263,9 @@ class AsyncUserRecord:
             logger.error(f"Error verifying reset token for {email}: {e}")
             return False, None
 
-    async def reset_password_with_token(self, email: str, token: str, new_password: str) -> tuple[bool, str]:
+    async def reset_password_with_token(
+        self, email: str, token: str, new_password: str
+    ) -> tuple[bool, str]:
         try:
             is_valid, user_id = await self.verify_reset_token(email, token)
             if not is_valid or not user_id:
@@ -505,7 +512,7 @@ class AsyncUserRecord:
                             "updated_at": datetime.now(timezone.utc).isoformat()
                         }}
                     )
-                    logger.info(f"Backup code used for user {user_id} ({len(backup_codes)} remaining)")
+                    logger.info(f"Backup code used ({len(backup_codes)} remaining)")
                     return True
 
             logger.warning(f"Invalid MFA code for user {user_id}")

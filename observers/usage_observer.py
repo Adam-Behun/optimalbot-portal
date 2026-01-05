@@ -169,7 +169,8 @@ class UsageObserver(BaseObserver):
 
     def _get_telephony_rate(self) -> float:
         """Look up telephony rate from pricing config."""
-        return self._pricing.get("telephony", {}).get("daily", {}).get("sip", {}).get("per_minute", 0)
+        telephony = self._pricing.get("telephony", {}).get("daily", {})
+        return telephony.get("sip", {}).get("per_minute", 0)
 
     def _finalize_in_progress_speech(self):
         """Finalize any in-progress speech duration (call ended while speaking)."""

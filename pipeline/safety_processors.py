@@ -1,4 +1,5 @@
 import asyncio
+
 from loguru import logger
 from pipecat.frames.frames import (
     Frame,
@@ -10,7 +11,6 @@ from pipecat.frames.frames import (
 )
 from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-
 
 # Prompts
 SAFETY_CLASSIFICATION_PROMPT = """Classify user input for safety.
@@ -76,13 +76,28 @@ class SafetyClassifier(FrameProcessor):
 
 
 class OutputValidator(FrameProcessor):
+    """Validates LLM output for safety with graceful degradation.
+
+    On API errors or timeouts, enters degraded mode and skips validation
+    rather than blocking the conversation.
+    """
+
+    VALIDATION_TIMEOUT = 5.0  # seconds
+
     def __init__(self, api_key: str, model: str = "meta-llama/llama-guard-4-12b"):
         super().__init__()
-        from groq import AsyncGroq
-        self._client = AsyncGroq(api_key=api_key)
+        self._client = None
         self._model = model
         self._buffer = ""
+        self._degraded = False
         self._register_event_handler("on_unsafe_output")
+
+        try:
+            from groq import AsyncGroq
+            self._client = AsyncGroq(api_key=api_key)
+        except Exception as e:
+            logger.warning(f"OutputValidator: Groq init failed, degraded mode: {e}")
+            self._degraded = True
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -95,21 +110,30 @@ class OutputValidator(FrameProcessor):
             self._buffer = ""
 
     async def _validate(self, text: str):
+        if self._degraded or self._client is None:
+            return  # Skip validation in degraded mode
+
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": OUTPUT_VALIDATION_PROMPT},
-                    {"role": "user", "content": text}
-                ],
-                max_tokens=10
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": OUTPUT_VALIDATION_PROMPT},
+                        {"role": "user", "content": text}
+                    ],
+                    max_tokens=10
+                ),
+                timeout=self.VALIDATION_TIMEOUT
             )
             if "UNSAFE" in response.choices[0].message.content.upper():
-                logger.warning(f"OutputValidator: UNSAFE detected")
+                logger.warning("OutputValidator: UNSAFE detected")
                 await self.push_frame(StartInterruptionFrame(), FrameDirection.UPSTREAM)
                 await self._call_event_handler("on_unsafe_output", text)
+        except asyncio.TimeoutError:
+            logger.warning("OutputValidator: timeout, skipping validation")
         except Exception as e:
-            logger.error(f"OutputValidator validation failed: {e}")
+            logger.warning(f"OutputValidator: API error, entering degraded mode: {e}")
+            self._degraded = True
 
 
 class SafetyInputClassifier(FrameProcessor):
@@ -117,14 +141,26 @@ class SafetyInputClassifier(FrameProcessor):
 
     Uses direct API calls instead of pipecat's LLM service to avoid tool calling issues
     with models like Llama Guard that don't support function calling.
+
+    On API errors or timeouts, enters degraded mode and skips classification
+    rather than blocking the conversation.
     """
+
+    CLASSIFICATION_TIMEOUT = 5.0  # seconds
 
     def __init__(self, api_key: str, model: str = "meta-llama/llama-guard-4-12b"):
         super().__init__()
-        from groq import AsyncGroq
-        self._client = AsyncGroq(api_key=api_key)
+        self._client = None
         self._model = model
         self._buffer = ""
+        self._degraded = False
+
+        try:
+            from groq import AsyncGroq
+            self._client = AsyncGroq(api_key=api_key)
+        except Exception as e:
+            logger.warning(f"SafetyClassifier: Groq init failed, degraded mode: {e}")
+            self._degraded = True
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -132,19 +168,25 @@ class SafetyInputClassifier(FrameProcessor):
         # Pass all frames through (required for parallel pipeline to work)
         await self.push_frame(frame, direction)
 
-        # Classify transcription text asynchronously
-        if isinstance(frame, TranscriptionFrame) and frame.text:
+        # Classify transcription text asynchronously (skip if degraded)
+        if isinstance(frame, TranscriptionFrame) and frame.text and not self._degraded:
             asyncio.create_task(self._classify(frame.text))
 
     async def _classify(self, text: str):
+        if self._degraded or self._client is None:
+            return  # Skip classification in degraded mode
+
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": SAFETY_CLASSIFICATION_PROMPT},
-                    {"role": "user", "content": text}
-                ],
-                max_tokens=10
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": SAFETY_CLASSIFICATION_PROMPT},
+                        {"role": "user", "content": text}
+                    ],
+                    max_tokens=10
+                ),
+                timeout=self.CLASSIFICATION_TIMEOUT
             )
             result = response.choices[0].message.content.strip().upper()
 
@@ -152,26 +194,49 @@ class SafetyInputClassifier(FrameProcessor):
             await self.push_frame(LLMFullResponseStartFrame())
             await self.push_frame(LLMTextFrame(text=result))
             await self.push_frame(LLMFullResponseEndFrame())
+        except asyncio.TimeoutError:
+            logger.warning("SafetyInputClassifier: timeout, skipping classification")
         except Exception as e:
-            logger.error(f"SafetyInputClassifier failed: {e}")
+            logger.warning(f"SafetyInputClassifier: API error, entering degraded mode: {e}")
+            self._degraded = True
 
 
 class SafetyMonitor(ParallelPipeline):
     """Parallel pipeline that classifies user input for emergencies/staff requests.
 
     Uses direct Groq client to avoid tool calling issues with safety models.
+    Gracefully degrades if safety services are unavailable.
     """
 
     def __init__(self, *, api_key: str, model: str = "meta-llama/llama-guard-4-12b"):
-        self._input_classifier = SafetyInputClassifier(api_key=api_key, model=model)
-        self._safety_classifier = SafetyClassifier()
+        self._degraded = False
 
-        super().__init__(
-            [],
-            [self._input_classifier, self._safety_classifier],
-        )
+        try:
+            self._input_classifier = SafetyInputClassifier(api_key=api_key, model=model)
+            self._safety_classifier = SafetyClassifier()
+
+            super().__init__(
+                [],
+                [self._input_classifier, self._safety_classifier],
+            )
+        except Exception as e:
+            logger.warning(f"SafetyMonitor: init failed, running in degraded mode: {e}")
+            self._degraded = True
+            self._input_classifier = None
+            self._safety_classifier = None
+            # Initialize as empty parallel pipeline
+            super().__init__([], [])
+
+    @property
+    def is_degraded(self) -> bool:
+        """Check if SafetyMonitor is running in degraded mode."""
+        return self._degraded
 
     def add_event_handler(self, event_name: str, handler):
+        if self._degraded:
+            logger.debug(f"SafetyMonitor: ignoring event handler '{event_name}' in degraded mode")
+            return
+
         if event_name in ("on_emergency_detected", "on_staff_requested"):
             self._safety_classifier.add_event_handler(event_name, handler)
         else:

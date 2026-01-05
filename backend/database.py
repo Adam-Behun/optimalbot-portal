@@ -1,8 +1,9 @@
 import os
 from typing import Optional
-from motor.motor_asyncio import AsyncIOMotorClient
+
 from dotenv import load_dotenv
 from loguru import logger
+from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
 

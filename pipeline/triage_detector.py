@@ -1,7 +1,6 @@
 """Triage Detector - 3-way call classification using parallel pipeline."""
 
 import asyncio
-from typing import Optional
 
 from loguru import logger
 

@@ -45,23 +45,23 @@ YOUR NAVIGATION GOAL:
 {goal}
 
 NAVIGATION RULES:
-1. When you see menu options (e.g., "Press 1 for..."), respond with: <dtmf>NUMBER</dtmf>
-2. For sequences (dates, account numbers), enter each digit separately: <dtmf>1</dtmf><dtmf>2</dtmf><dtmf>3</dtmf>
-3. When the system asks for verbal responses, respond with natural language text
+1. For menu options ("Press 1 for..."), respond: <dtmf>NUMBER</dtmf>
+2. For sequences, enter digits separately: <dtmf>1</dtmf><dtmf>2</dtmf>
+3. For verbal responses, respond with natural language text
 4. If NO options are relevant, respond with <ivr>wait</ivr>
 5. If transcription is incomplete, respond with <ivr>wait</ivr>
 
-COMPLETION - Respond with <ivr>completed</ivr> when the transcribed audio contains:
-- Transfer phrases: "Please hold while I transfer you", "Connecting you to", "Transferring your call"
-- Department confirmations: "You've reached [target department]", "This is the benefits department"
-- Agent announcements: "An agent will be with you shortly", "Please hold for the next available representative"
+COMPLETION - Respond with <ivr>completed</ivr> when you hear:
+- "Please hold while I transfer you", "Connecting you to"
+- "You've reached [target department]", "This is benefits"
+- "An agent will be with you shortly"
 
-STUCK - Respond with <ivr>stuck</ivr> when the transcribed audio indicates:
-- Loop detection: Same menu options repeated 3+ times
-- No relevant options: Menu choices unrelated to eligibility, benefits, or prior authorization
-- Error patterns: "Invalid selection", "Please try again", "I didn't understand"
+STUCK - Respond with <ivr>stuck</ivr> when:
+- Same menu repeated 3+ times
+- Menu unrelated to eligibility/benefits/prior auth
+- "Invalid selection", "Please try again"
 
-Respond with <dtmf>NUMBER</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>, or verbal text."""
+Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>, or text."""
 
     def __init__(self, *, ivr_vad_params: Optional[VADParams] = None):
         super().__init__()

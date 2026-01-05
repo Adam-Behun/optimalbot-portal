@@ -21,7 +21,9 @@ class AsyncPatientRecord:
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
-    async def find_patient_by_id(self, patient_id: str, organization_id: str = None) -> Optional[dict]:
+    async def find_patient_by_id(
+        self, patient_id: str, organization_id: str = None
+    ) -> Optional[dict]:
         try:
             query = {"_id": ObjectId(patient_id)}
             if organization_id:
@@ -31,7 +33,9 @@ class AsyncPatientRecord:
             logger.error(f"Error finding patient {patient_id}: {e}")
             return None
 
-    async def find_patients_by_organization(self, organization_id: str, workflow: str = None) -> List[dict]:
+    async def find_patients_by_organization(
+        self, organization_id: str, workflow: str = None
+    ) -> List[dict]:
         try:
             query = {"organization_id": ObjectId(organization_id)}
             if workflow:
@@ -61,7 +65,8 @@ class AsyncPatientRecord:
             await self._ensure_indexes()
             now = datetime.now(timezone.utc).isoformat()
 
-            if "organization_id" in patient_data and isinstance(patient_data["organization_id"], str):
+            org_id = patient_data.get("organization_id")
+            if org_id and isinstance(org_id, str):
                 patient_data["organization_id"] = ObjectId(patient_data["organization_id"])
 
             patient_data.update({
@@ -76,7 +81,9 @@ class AsyncPatientRecord:
             logger.error(f"Error adding patient: {e}")
             return None
 
-    async def update_patient(self, patient_id: str, update_fields: dict, organization_id: str = None) -> bool:
+    async def update_patient(
+        self, patient_id: str, update_fields: dict, organization_id: str = None
+    ) -> bool:
         try:
             update_fields["updated_at"] = datetime.now(timezone.utc).isoformat()
             query = {"_id": ObjectId(patient_id)}
@@ -88,13 +95,19 @@ class AsyncPatientRecord:
             logger.error(f"Error updating patient {patient_id}: {e}")
             return False
 
-    async def update_field(self, patient_id: str, field_key: str, value: Any, organization_id: str = None) -> bool:
+    async def update_field(
+        self, patient_id: str, field_key: str, value: Any, organization_id: str = None
+    ) -> bool:
         return await self.update_patient(patient_id, {field_key: value}, organization_id)
 
-    async def update_fields(self, patient_id: str, fields: dict, organization_id: str = None) -> bool:
+    async def update_fields(
+        self, patient_id: str, fields: dict, organization_id: str = None
+    ) -> bool:
         return await self.update_patient(patient_id, fields, organization_id)
 
-    async def update_call_status(self, patient_id: str, status: str, organization_id: str = None) -> bool:
+    async def update_call_status(
+        self, patient_id: str, status: str, organization_id: str = None
+    ) -> bool:
         return await self.update_patient(patient_id, {"call_status": status}, organization_id)
 
     async def save_call_transcript(
@@ -154,7 +167,7 @@ class AsyncPatientRecord:
             return None
 
     async def find_patient_by_phone_for_text(self, phone_number: str) -> Optional[dict]:
-        """Find a patient by phone who has text conversation enabled. Returns most recently updated match."""
+        """Find a patient by phone with text enabled. Returns most recent match."""
         try:
             digits_only = ''.join(c for c in phone_number if c.isdigit())
             if not digits_only:

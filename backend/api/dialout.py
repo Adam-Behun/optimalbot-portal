@@ -53,7 +53,9 @@ async def start_call(
     org = org_context["organization"]
     org_id = org_context["organization_id"]
 
-    logger.info(f"Initiating call - patient={mask_id(call_request.patient_id)}, user={mask_email(current_user['email'])}, org={mask_id(org_id)}")
+    patient_masked = mask_id(call_request.patient_id)
+    user_masked = mask_email(current_user['email'])
+    logger.info(f"Initiating call - patient={patient_masked}, user={user_masked}")
 
     try:
         workflows = org.get("workflows", {})
@@ -68,7 +70,9 @@ async def start_call(
                 detail=f"Workflow '{call_request.client_name}' is not enabled for this organization"
             )
 
-        patient = await patient_db.find_patient_by_id(call_request.patient_id, organization_id=org_id)
+        patient = await patient_db.find_patient_by_id(
+            call_request.patient_id, organization_id=org_id
+        )
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -254,7 +258,9 @@ async def end_call(
 
     logger.info(f"User {mask_email(current_user['email'])} ending session {mask_id(session_id)}")
 
-    await session_db.update_session(session_id, {"status": SessionStatus.TERMINATED.value}, organization_id=org_id)
+    await session_db.update_session(
+        session_id, {"status": SessionStatus.TERMINATED.value}, organization_id=org_id
+    )
 
     return {
         "status": "ended",

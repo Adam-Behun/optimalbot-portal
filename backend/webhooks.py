@@ -231,7 +231,7 @@ class WebhookDispatcher:
                         logger.debug(f"Webhook delivered: {event_type} to {webhook['url']}")
                     else:
                         await self._increment_failure(webhook_id)
-                        logger.warning(f"Webhook failed: {event_type} to {webhook['url']} - HTTP {resp.status}")
+                        logger.warning(f"Webhook failed: {event_type} - HTTP {resp.status}")
 
         except asyncio.TimeoutError:
             await self._log_delivery(webhook_id, event_type, False, None, "timeout")
@@ -296,7 +296,7 @@ class WebhookDispatcher:
                     {"_id": webhook_id},
                     {"$set": {"enabled": False}}
                 )
-                logger.warning(f"Webhook {webhook_id} disabled due to {self.MAX_FAILURE_COUNT} consecutive failures")
+                logger.warning(f"Webhook {webhook_id} disabled after too many failures")
         except Exception as e:
             logger.error(f"Failed to increment webhook failure: {e}")
 

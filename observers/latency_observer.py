@@ -16,7 +16,6 @@ from statistics import mean
 from typing import List, Optional
 
 from loguru import logger
-
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -91,8 +90,13 @@ class LangfuseLatencyObserver(BaseObserver):
         self._pending_llm_ttfb: float = 0
         self._pending_tts_ttfb: float = 0
 
-        # OpenTelemetry tracer
-        self._tracer = trace.get_tracer("healthcare-voice-ai.latency") if OTEL_AVAILABLE else None
+        # OpenTelemetry tracer - graceful initialization
+        self._tracer = None
+        if OTEL_AVAILABLE:
+            try:
+                self._tracer = trace.get_tracer("healthcare-voice-ai.latency")
+            except Exception as e:
+                logger.warning(f"Latency tracer init failed, local logging only: {e}")
 
     async def on_push_frame(self, data: FramePushed):
         """Process frames to track V2V latency."""
@@ -209,12 +213,15 @@ class LangfuseLatencyObserver(BaseObserver):
         if not self._tracer:
             return
 
-        with self._tracer.start_as_current_span("latency.turn") as span:
-            span.set_attribute("latency.v2v_ms", turn.format_ms(turn.v2v_latency))
-            span.set_attribute("latency.turn_number", turn.turn_number)
-            span.set_attribute("latency.llm_ttfb_ms", turn.format_ms(turn.llm_ttfb))
-            span.set_attribute("latency.tts_ttfb_ms", turn.format_ms(turn.tts_ttfb))
-            span.set_attribute("langfuse.session.id", self._session_id)
+        try:
+            with self._tracer.start_as_current_span("latency.turn") as span:
+                span.set_attribute("latency.v2v_ms", turn.format_ms(turn.v2v_latency))
+                span.set_attribute("latency.turn_number", turn.turn_number)
+                span.set_attribute("latency.llm_ttfb_ms", turn.format_ms(turn.llm_ttfb))
+                span.set_attribute("latency.tts_ttfb_ms", turn.format_ms(turn.tts_ttfb))
+                span.set_attribute("langfuse.session.id", self._session_id)
+        except Exception as e:
+            logger.debug(f"LangfuseLatencyObserver: failed to send turn metrics: {e}")
 
     def _record_summary(self):
         """Log session summary statistics."""
@@ -253,16 +260,21 @@ class LangfuseLatencyObserver(BaseObserver):
 
         # Send to Langfuse
         if self._tracer:
-            with self._tracer.start_as_current_span("latency.summary") as span:
-                span.set_attribute("latency.v2v_avg_ms", int(avg_v2v * 1000))
-                span.set_attribute("latency.v2v_min_ms", int(min_v2v * 1000))
-                span.set_attribute("latency.v2v_max_ms", int(max_v2v * 1000))
-                span.set_attribute("latency.turn_count", len(v2v_times))
-                if llm_ttfb_times:
-                    span.set_attribute("latency.llm_ttfb_avg_ms", int(mean(llm_ttfb_times) * 1000))
-                if tts_ttfb_times:
-                    span.set_attribute("latency.tts_ttfb_avg_ms", int(mean(tts_ttfb_times) * 1000))
-                span.set_attribute("langfuse.session.id", self._session_id)
+            try:
+                with self._tracer.start_as_current_span("latency.summary") as span:
+                    span.set_attribute("latency.v2v_avg_ms", int(avg_v2v * 1000))
+                    span.set_attribute("latency.v2v_min_ms", int(min_v2v * 1000))
+                    span.set_attribute("latency.v2v_max_ms", int(max_v2v * 1000))
+                    span.set_attribute("latency.turn_count", len(v2v_times))
+                    if llm_ttfb_times:
+                        llm_avg = int(mean(llm_ttfb_times) * 1000)
+                        span.set_attribute("latency.llm_ttfb_avg_ms", llm_avg)
+                    if tts_ttfb_times:
+                        tts_avg = int(mean(tts_ttfb_times) * 1000)
+                        span.set_attribute("latency.tts_ttfb_avg_ms", tts_avg)
+                    span.set_attribute("langfuse.session.id", self._session_id)
+            except Exception as e:
+                logger.debug(f"LangfuseLatencyObserver: failed to send summary metrics: {e}")
 
     def get_metrics(self) -> dict:
         """Get metrics as dictionary."""

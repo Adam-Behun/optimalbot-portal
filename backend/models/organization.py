@@ -50,7 +50,9 @@ class AsyncOrganizationRecord:
     async def update(self, org_id: str, update_fields: dict) -> bool:
         try:
             update_fields["updated_at"] = datetime.now(timezone.utc).isoformat()
-            result = await self.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": update_fields})
+            result = await self.organizations.update_one(
+                {"_id": ObjectId(org_id)}, {"$set": update_fields}
+            )
             return result.modified_count > 0
         except Exception as e:
             logger.error(f"Error updating organization {org_id}: {e}")

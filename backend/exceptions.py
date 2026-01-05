@@ -1,5 +1,4 @@
 import uuid
-import traceback
 from datetime import datetime
 from fastapi import Request, HTTPException, FastAPI
 from fastapi.responses import JSONResponse

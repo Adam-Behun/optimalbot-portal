@@ -17,7 +17,6 @@ class AsyncSessionRecord:
 
     async def _ensure_indexes(self):
         try:
-            from bson import ObjectId
             await self.sessions.create_index([("organization_id", 1), ("created_at", -1)])
             # Unique index on call_id for dial-in dedup (sparse to allow null for dial-out)
             await self.sessions.create_index("call_id", unique=True, sparse=True)
@@ -29,7 +28,8 @@ class AsyncSessionRecord:
             from bson import ObjectId
             await self._ensure_indexes()
 
-            if "organization_id" in session_data and isinstance(session_data["organization_id"], str):
+            org_id = session_data.get("organization_id")
+            if org_id and isinstance(org_id, str):
                 session_data["organization_id"] = ObjectId(session_data["organization_id"])
 
             session_data.update({
@@ -61,7 +61,9 @@ class AsyncSessionRecord:
             logger.error(f"Error finding session by call_id {call_id}: {e}")
             return None
 
-    async def update_session(self, session_id: str, updates: dict, organization_id: str = None) -> bool:
+    async def update_session(
+        self, session_id: str, updates: dict, organization_id: str = None
+    ) -> bool:
         try:
             from bson import ObjectId
             updates["updated_at"] = datetime.now(timezone.utc)

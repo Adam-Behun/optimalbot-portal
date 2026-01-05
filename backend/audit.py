@@ -67,7 +67,9 @@ class AuditLogger:
             logger.error(f"Error counting failed login attempts for {email}: {e}")
             return 0
 
-    async def get_recent_events(self, event_type: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_recent_events(
+        self, event_type: Optional[str] = None, limit: int = 100
+    ) -> List[Dict[str, Any]]:
         try:
             query = {"event_type": event_type} if event_type else {}
             cursor = self.audit_logs.find(query).sort("timestamp", -1).limit(limit)
@@ -105,7 +107,7 @@ class AuditLogger:
                 "details": details or {}
             }
             await self.audit_logs.insert_one(log_entry)
-            logger.debug(f"PHI access log: {action} {resource_type}/{resource_id} by user {user_id}")
+            logger.debug(f"PHI access log: {action} {resource_type}/{resource_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to write PHI access log: {e}")
@@ -148,7 +150,8 @@ class AuditLogger:
             await self.audit_logs.create_index([("resource_type", 1), ("resource_id", 1)])
             await self.audit_logs.create_index("organization_id")
             # TTL index - logs expire after 6 years (HIPAA minimum retention)
-            await self.audit_logs.create_index("timestamp", expireAfterSeconds=6 * 365 * 24 * 60 * 60)
+            six_years_seconds = 6 * 365 * 24 * 60 * 60
+            await self.audit_logs.create_index("timestamp", expireAfterSeconds=six_years_seconds)
             logger.info("Audit log indexes created successfully")
             return True
         except Exception as e:

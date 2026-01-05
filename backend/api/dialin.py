@@ -47,7 +47,9 @@ async def call_data_from_request(request: Request) -> DailyCallData:
 
 
 @router.post("/dialin-webhook/{client_name}/{workflow_name}")
-async def handle_dialin_webhook(client_name: str, workflow_name: str, request: Request) -> JSONResponse:
+async def handle_dialin_webhook(
+    client_name: str, workflow_name: str, request: Request
+) -> JSONResponse:
     logger.info(f"Dial-in webhook - client={client_name}, workflow={workflow_name}")
 
     call_data = await call_data_from_request(request)
@@ -79,7 +81,8 @@ async def handle_dialin_webhook(client_name: str, workflow_name: str, request: R
         raise HTTPException(status_code=404, detail=f"Organization '{client_name}' not found")
 
     organization_id = str(organization["_id"])
-    logger.info(f"Org found - id={mask_id(organization_id)}, caller={mask_phone(call_data.from_phone)}")
+    caller = mask_phone(call_data.from_phone)
+    logger.info(f"Org found - id={mask_id(organization_id)}, caller={caller}")
 
     session_id = str(uuid.uuid4())
     http_session = request.app.state.http_session

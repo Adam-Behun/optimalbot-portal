@@ -101,21 +101,43 @@ class CallSession:
         self.transcript_processor = components.transcript_processor
 
     def _create_observers(self) -> list:
-        """Create pipeline observers for metrics and debugging."""
-        self.latency_observer = LangfuseLatencyObserver(session_id=self.session_id)
-        self.usage_observer = UsageObserver(session_id=self.session_id)
-        observers = [self.latency_observer, self.usage_observer]
+        """Create pipeline observers for metrics and debugging.
 
+        Gracefully handles observer creation failures - continues without
+        failed observers rather than crashing the call.
+        """
+        observers = []
+
+        # Latency observer - graceful degradation
+        self.latency_observer = None
+        try:
+            self.latency_observer = LangfuseLatencyObserver(session_id=self.session_id)
+            observers.append(self.latency_observer)
+        except Exception as e:
+            logger.warning(f"LatencyObserver creation failed, continuing without: {e}")
+
+        # Usage observer - graceful degradation
+        self.usage_observer = None
+        try:
+            self.usage_observer = UsageObserver(session_id=self.session_id)
+            observers.append(self.usage_observer)
+        except Exception as e:
+            logger.warning(f"UsageObserver creation failed, continuing without usage tracking: {e}")
+
+        # Whisker observer - already optional via env var
         whisker_enabled = os.getenv("ENABLE_WHISKER", "false").lower() in ["true", "1", "yes"]
         if self.debug_mode and WHISKER_AVAILABLE and whisker_enabled:
-            self.whisker_observer = WhiskerObserver(
-                self.pipeline,
-                host="localhost",
-                port=9090,
-                file_name=f"whisker_{self.session_id}.bin"
-            )
-            observers.append(self.whisker_observer)
-            logger.info("ᓚᘏᗢ Whisker debugger enabled - connect to ws://localhost:9090")
+            try:
+                self.whisker_observer = WhiskerObserver(
+                    self.pipeline,
+                    host="localhost",
+                    port=9090,
+                    file_name=f"whisker_{self.session_id}.bin"
+                )
+                observers.append(self.whisker_observer)
+                logger.info("Whisker debugger enabled - connect to ws://localhost:9090")
+            except Exception as e:
+                logger.warning(f"WhiskerObserver creation failed: {e}")
 
         return observers
 
@@ -169,10 +191,14 @@ class CallSession:
             )
 
         if self.components.safety_monitor:
-            setup_safety_handlers(self, self.components.safety_monitor, self.components.safety_config)
+            setup_safety_handlers(
+                self, self.components.safety_monitor, self.components.safety_config
+            )
 
         if self.components.output_validator:
-            setup_output_validator_handlers(self, self.components.output_validator, self.components.safety_config)
+            setup_output_validator_handlers(
+                self, self.components.output_validator, self.components.safety_config
+            )
 
     async def _execute_pipeline(self) -> None:
         """Run the pipeline and handle completion."""
@@ -186,7 +212,7 @@ class CallSession:
 
     async def run(self, room_url: str, room_token: str, room_name: str):
         """Main entry point - builds and runs the conversation pipeline."""
-        logger.info(f"Starting {self.call_type} call - Client: {self.client_name}, Phone: {self.phone_number}")
+        logger.info(f"Starting {self.call_type} call - Client: {self.client_name}")
 
         # Build pipeline
         session_data = self._build_session_data()
@@ -198,7 +224,7 @@ class CallSession:
 
         # Initialize components and start warmup
         self._init_from_components(components)
-        warmup_task = asyncio.create_task(self._warmup_all_flows())
+        self._warmup_task = asyncio.create_task(self._warmup_all_flows())
         logger.info("Pipeline components assembled")
 
         # Create task with observers
