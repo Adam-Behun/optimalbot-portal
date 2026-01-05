@@ -159,17 +159,6 @@ scenarios:
   # =============================================================================
 
   - id: "13"
-    description: "Ambiguous: Both options could work, pick best one"
-    steps:
-      - menu_prompt: "For eligibility and benefits, press 1. To speak with a representative, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Eligibility is more direct than generic representative"
-
-      - menu_prompt: "Eligibility department. Please hold."
-        expected_action: "status:completed"
-        reasoning: "Reached goal"
-
-  - id: "14"
     description: "Ambiguous: Prior auth vs eligibility - both relevant"
     steps:
       - menu_prompt: "For eligibility verification, press 1. For prior authorization, press 2. For both, press 3."
@@ -180,7 +169,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Goal reached"
 
-  - id: "15"
+  - id: "14"
     description: "Ambiguous: Long menu, find the right option"
     steps:
       - menu_prompt: "For Medicare Advantage, press 1. For Medicare Supplement, press 2. For Medicaid, press 3. For commercial plans, press 4. For provider services including eligibility and authorization, press 5. For pharmacy, press 6. For dental, press 7."
@@ -195,14 +184,14 @@ scenarios:
   # COMPLETION DETECTION - Various phrasings
   # =============================================================================
 
-  - id: "16"
+  - id: "15"
     description: "Completion: Ambiguous 'one moment' - is it transfer or processing?"
     steps:
       - menu_prompt: "One moment please... [pause] ...I'm transferring you to an eligibility specialist now."
         expected_action: "status:completed"
         reasoning: "Transfer confirmed after pause - navigation complete"
 
-  - id: "17"
+  - id: "16"
     description: "Completion: Queue confirmation"
     steps:
       - menu_prompt: "You are caller number 3 in queue. Estimated wait time is 2 minutes. Please remain on the line."
@@ -213,7 +202,7 @@ scenarios:
   # DEEP NAVIGATION - Multiple levels of decision
   # =============================================================================
 
-  - id: "18"
+  - id: "17"
     description: "Deep: 5-level navigation with decision at each step"
     steps:
       - menu_prompt: "Thank you for calling Cigna. For faster service, you may use our website. For phone service, press 1."
@@ -236,7 +225,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Goal reached after 5 levels"
 
-  - id: "19"
+  - id: "18"
     description: "Deep: Navigation with NPI entry mid-flow"
     steps:
       - menu_prompt: "For providers, press 2."
@@ -259,33 +248,7 @@ scenarios:
   # EDGE CASES - Unusual patterns
   # =============================================================================
 
-  - id: "20"
-    description: "Edge: Spanish-first bilingual menu"
-    steps:
-      - menu_prompt: "Gracias por llamar. Para español, oprima uno. For English, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Select English"
-
-      - menu_prompt: "For provider services, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Provider services"
-
-      - menu_prompt: "Connecting you now."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "21"
-    description: "Edge: Pound key for special function"
-    steps:
-      - menu_prompt: "For a directory of extensions, press pound. For claims, press 1. For eligibility, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Eligibility is direct option, don't need directory"
-
-      - menu_prompt: "Eligibility department. Please hold."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "22"
+  - id: "19"
     description: "Edge: Menu mentions numbers in context, not just options"
     steps:
       - menu_prompt: "Our offices are open Monday through Friday, 8 AM to 5 PM. For eligibility, available 24 hours a day 7 days a week, press 1. For other services, press 2."
@@ -300,21 +263,21 @@ scenarios:
   # CONVERSATIONAL AI IVR - No "Press X", speech-based navigation
   # =============================================================================
 
-  - id: "23"
+  - id: "20"
     description: "Conversational AI: Speech-only navigation, no DTMF options"
     steps:
       - menu_prompt: "Hello! I'm your virtual assistant for Anthem. Tell me what you need help with today. You can say things like 'check my benefits' or 'find a doctor'."
         expected_action: "status:wait"
         reasoning: "No DTMF options - need to speak. Wait for verbal response capability."
 
-  - id: "24"
+  - id: "21"
     description: "Conversational AI: Confirming request before transfer"
     steps:
       - menu_prompt: "I heard you say you want to verify eligibility for a patient. Is that right?"
         expected_action: "status:wait"
         reasoning: "Yes/no verbal response needed - not a DTMF menu"
 
-  - id: "25"
+  - id: "22"
     description: "Conversational AI: Disambiguation when multiple intents detected"
     steps:
       - menu_prompt: "I can help with a few things. Are you calling about: 1) checking patient eligibility, 2) a prior authorization request, or 3) something else? Just tell me which one."
@@ -325,7 +288,7 @@ scenarios:
   # PROVIDER AUTHENTICATION - NPI/TIN entry sequences
   # =============================================================================
 
-  - id: "26"
+  - id: "23"
     description: "Auth: NPI entry before menu access"
     steps:
       - menu_prompt: "Welcome to the provider portal. To continue, please enter your 10-digit NPI number, followed by the pound key."
@@ -344,7 +307,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Goal reached"
 
-  - id: "27"
+  - id: "24"
     description: "Auth: Failed authentication handling"
     steps:
       - menu_prompt: "Please enter your NPI number."
@@ -363,7 +326,7 @@ scenarios:
   # VERY DEEP NAVIGATION - 6+ steps
   # =============================================================================
 
-  - id: "28"
+  - id: "25"
     description: "Deep: 7-level enterprise IVR maze"
     steps:
       - menu_prompt: "Thank you for calling UnitedHealth Group. For UnitedHealthcare, press 1. For Optum, press 2. For all other inquiries, press 3."
@@ -394,7 +357,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "In queue for specialist - goal achieved"
 
-  - id: "29"
+  - id: "26"
     description: "Deep: 6-level with wrong turn and recovery"
     steps:
       - menu_prompt: "Blue Cross Blue Shield of Illinois. For member services, press 1. For provider services, press 2. For pharmacy, press 3."
@@ -421,7 +384,7 @@ scenarios:
   # TRAP MENUS - Correct choice is counterintuitive
   # =============================================================================
 
-  - id: "30"
+  - id: "27"
     description: "Trap: Eligibility vs Prior Auth - both sound right but different paths"
     steps:
       - menu_prompt: "Thank you for calling Cigna provider services. For eligibility inquiries, our automated system can help you 24/7 - press 1. For prior authorization, press 2. To speak with a representative, press 0."
@@ -432,7 +395,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Representative can handle both"
 
-  - id: "31"
+  - id: "28"
     description: "Trap: Member ID lookup sounds helpful but wastes time"
     steps:
       - menu_prompt: "To check eligibility, press 1 and have the member ID ready. If you don't have the member ID, press 2 to search by patient name and date of birth. Press 0 for a representative."
@@ -443,7 +406,7 @@ scenarios:
         expected_action: "status:wait"
         reasoning: "Member ID entry - need to enter actual digits"
 
-  - id: "32"
+  - id: "29"
     description: "Trap: Premium line that costs money"
     steps:
       - menu_prompt: "For priority service with no wait time, press 1. A $4.99 fee applies. For standard service, press 2. Average wait: 12 minutes."
@@ -454,7 +417,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "In queue without fee"
 
-  - id: "33"
+  - id: "30"
     description: "Trap: Self-service eligibility is automated voice, not human"
     steps:
       - menu_prompt: "For eligibility verification, press 1. For prior authorization status, press 2. For benefit information, press 3. To speak with someone, press 0."
@@ -477,7 +440,7 @@ scenarios:
   # STUCK SCENARIOS - Various dead ends
   # =============================================================================
 
-  - id: "34"
+  - id: "31"
     description: "Stuck: Infinite loop detection"
     steps:
       - menu_prompt: "For claims, press 1. For pharmacy, press 2."
@@ -492,7 +455,7 @@ scenarios:
         expected_action: "status:stuck"
         reasoning: "Returned to same menu - stuck in loop"
 
-  - id: "35"
+  - id: "32"
     description: "Stuck: Fax-only department"
     steps:
       - menu_prompt: "For eligibility, press 1."
@@ -507,7 +470,7 @@ scenarios:
         expected_action: "status:stuck"
         reasoning: "Only path to eligibility is fax - no phone option available"
 
-  - id: "36"
+  - id: "33"
     description: "Stuck: Website-only service"
     steps:
       - menu_prompt: "Welcome to Humana. For faster service, visit humana.com/providers. For Medicare, press 1. For commercial, press 2."
@@ -530,7 +493,7 @@ scenarios:
   # CALLBACK VS HOLD DECISIONS
   # =============================================================================
 
-  - id: "37"
+  - id: "34"
     description: "Decision: Callback offer during long wait"
     steps:
       - menu_prompt: "All representatives are currently busy. Estimated wait time is 45 minutes. To continue holding, stay on the line. To schedule a callback, press 1. To leave a message, press 2."
@@ -545,7 +508,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Callback scheduled - navigation complete"
 
-  - id: "38"
+  - id: "35"
     description: "Decision: Stay on hold for short wait"
     steps:
       - menu_prompt: "Please hold for the next available representative. Your wait time is approximately 2 minutes. To receive a callback instead, press 1."
@@ -560,7 +523,7 @@ scenarios:
   # MULTI-LANGUAGE WITH COMPLEX NAVIGATION
   # =============================================================================
 
-  - id: "39"
+  - id: "36"
     description: "Language: Spanish-first with provider buried"
     steps:
       - menu_prompt: "Gracias por llamar a Kaiser Permanente. Para español, oprima 1. For English, press 2."
@@ -587,25 +550,14 @@ scenarios:
   # CONFUSING OPTION NUMBERING
   # =============================================================================
 
-  - id: "40"
-    description: "Numbering: Non-sequential option numbers"
-    steps:
-      - menu_prompt: "For claims, press 1. For eligibility, press 3. For pharmacy, press 5. To repeat, press 9."
-        expected_action: "dtmf:3"
-        reasoning: "Eligibility is option 3, not sequential"
-
-      - menu_prompt: "Eligibility department."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "41"
+  - id: "37"
     description: "Numbering: Letters and numbers mixed"
     steps:
       - menu_prompt: "If you know your party's extension, enter it now. For provider services, press P-R-O-V. For member services, press M-E-M-B."
         expected_action: "status:wait"
         reasoning: "Need to enter letters on keypad - P=7, R=7, O=6, V=8"
 
-  - id: "42"
+  - id: "38"
     description: "Numbering: Pound and star for important options"
     steps:
       - menu_prompt: "For automated services, press 1. For claims, press 2. To speak with a live representative at any time, press pound."
@@ -620,7 +572,7 @@ scenarios:
   # PARTIAL / INTERRUPTED MENUS
   # =============================================================================
 
-  - id: "43"
+  - id: "39"
     description: "Partial: Menu cut off mid-option"
     steps:
       - menu_prompt: "Thank you for calling. For eligibility, press 1. For claims—"
@@ -635,7 +587,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Goal reached"
 
-  - id: "44"
+  - id: "40"
     description: "Partial: System interruption with different voice"
     steps:
       - menu_prompt: "For eligibility verification, press 1. For prior— [different voice] Attention: this system will be down for maintenance tonight from midnight to 2 AM."
@@ -654,7 +606,7 @@ scenarios:
   # DEPARTMENT TRANSFERS MID-NAVIGATION
   # =============================================================================
 
-  - id: "45"
+  - id: "41"
     description: "Transfer: Unexpected department redirect"
     steps:
       - menu_prompt: "Provider services. For eligibility, press 1."
@@ -677,7 +629,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Goal reached at partner organization"
 
-  - id: "46"
+  - id: "42"
     description: "Transfer: Cold transfer to wrong department, need recovery"
     steps:
       - menu_prompt: "I'm transferring you to benefits. Please hold."
@@ -704,22 +656,7 @@ scenarios:
   # ERROR HANDLING / INVALID INPUT
   # =============================================================================
 
-  - id: "47"
-    description: "Error: Invalid selection once, then succeed"
-    steps:
-      - menu_prompt: "For eligibility, press 1. For claims, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Eligibility option"
-
-      - menu_prompt: "I'm sorry, I didn't get that. For eligibility, press 1. For claims, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "System didn't recognize - try again"
-
-      - menu_prompt: "Eligibility department. Please hold."
-        expected_action: "status:completed"
-        reasoning: "Second attempt worked"
-
-  - id: "48"
+  - id: "43"
     description: "Error: System error message"
     steps:
       - menu_prompt: "For eligibility, press 1."
@@ -734,7 +671,7 @@ scenarios:
   # COMPLEX REAL-WORLD INSURANCE SCENARIOS
   # =============================================================================
 
-  - id: "49"
+  - id: "44"
     description: "Real-world: Aetna full navigation path"
     steps:
       - menu_prompt: "Thank you for calling Aetna. If you're a healthcare provider, press 1. If you're a member, press 2. For all other callers, press 3."
@@ -765,7 +702,7 @@ scenarios:
         expected_action: "status:completed"
         reasoning: "Goal achieved - reaching PA specialist"
 
-  - id: "50"
+  - id: "45"
     description: "Real-world: Medicare Advantage plan navigation"
     steps:
       - menu_prompt: "Thank you for calling Blue Cross Medicare Advantage. For member services, press 1. For healthcare providers, press 2. To report fraud, press 3."

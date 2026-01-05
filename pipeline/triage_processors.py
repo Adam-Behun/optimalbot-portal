@@ -3,6 +3,31 @@ from typing import List, Optional
 
 from loguru import logger
 
+
+# =============================================================================
+# CONSTANTS - Used by evals to ensure sync with production
+# =============================================================================
+
+class TriageClassification:
+    """Classification output values from classifier LLM."""
+    CONVERSATION = "CONVERSATION"
+    IVR = "IVR"
+    VOICEMAIL = "VOICEMAIL"
+
+
+class TriageEvent:
+    """Events fired by triage processors."""
+    CONVERSATION_DETECTED = "on_conversation_detected"
+    IVR_DETECTED = "on_ivr_detected"
+    VOICEMAIL_DETECTED = "on_voicemail_detected"
+
+
+CLASSIFICATION_TO_EVENT = {
+    TriageClassification.CONVERSATION: TriageEvent.CONVERSATION_DETECTED,
+    TriageClassification.IVR: TriageEvent.IVR_DETECTED,
+    TriageClassification.VOICEMAIL: TriageEvent.VOICEMAIL_DETECTED,
+}
+
 from pipecat.frames.frames import (
     EndFrame,
     Frame,
@@ -155,9 +180,9 @@ class TriageProcessor(FrameProcessor):
         self._voicemail_response_delay = voicemail_response_delay
         self._context = context
 
-        self._register_event_handler("on_conversation_detected")
-        self._register_event_handler("on_ivr_detected")
-        self._register_event_handler("on_voicemail_detected")
+        self._register_event_handler(TriageEvent.CONVERSATION_DETECTED)
+        self._register_event_handler(TriageEvent.IVR_DETECTED)
+        self._register_event_handler(TriageEvent.VOICEMAIL_DETECTED)
 
         self._processing_response = False
         self._response_buffer = ""
@@ -224,21 +249,21 @@ class TriageProcessor(FrameProcessor):
 
         conversation_history = self._get_conversation_history()
 
-        if "CONVERSATION" in response:
+        if TriageClassification.CONVERSATION in response:
             self._decision_made = True
             logger.info("TriageProcessor: CONVERSATION detected")
             await self._gate_notifier.notify()
             await self._conversation_notifier.notify()
-            await self._call_event_handler("on_conversation_detected", conversation_history)
+            await self._call_event_handler(TriageEvent.CONVERSATION_DETECTED, conversation_history)
 
-        elif "IVR" in response:
+        elif TriageClassification.IVR in response:
             self._decision_made = True
             logger.info("TriageProcessor: IVR detected")
             await self._gate_notifier.notify()
             await self._ivr_notifier.notify()
-            await self._call_event_handler("on_ivr_detected", conversation_history)
+            await self._call_event_handler(TriageEvent.IVR_DETECTED, conversation_history)
 
-        elif "VOICEMAIL" in response:
+        elif TriageClassification.VOICEMAIL in response:
             self._decision_made = True
             self._voicemail_detected = True
             logger.info("TriageProcessor: VOICEMAIL detected")
@@ -260,7 +285,7 @@ class TriageProcessor(FrameProcessor):
                 )
                 await asyncio.sleep(0.1)
             except asyncio.TimeoutError:
-                await self._call_event_handler("on_voicemail_detected")
+                await self._call_event_handler(TriageEvent.VOICEMAIL_DETECTED)
                 break
 
 

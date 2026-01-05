@@ -19,12 +19,27 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.utils.text.pattern_pair_aggregator import PatternPairAggregator
 
 
+# =============================================================================
+# CONSTANTS - Used by evals to ensure sync with production
+# =============================================================================
+
 class IVRStatus:
     """IVR navigation status values."""
     DETECTED = "detected"
     COMPLETED = "completed"
     STUCK = "stuck"
     WAIT = "wait"
+
+
+class IVREvent:
+    """Events fired by IVR navigation processor."""
+    DTMF_PRESSED = "on_dtmf_pressed"
+    STATUS_CHANGED = "on_ivr_status_changed"
+
+
+# Regex patterns for parsing LLM output - evals should import these
+DTMF_PATTERN = r'<dtmf>(\d|\*|#)</dtmf>'
+IVR_STATUS_PATTERN = r'<ivr>(completed|stuck|wait)</ivr>'
 
 
 class IVRNavigationProcessor(FrameProcessor):
@@ -73,8 +88,8 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
         self._aggregator = PatternPairAggregator()
         self._setup_xml_patterns()
 
-        self._register_event_handler("on_ivr_status_changed")
-        self._register_event_handler("on_dtmf_pressed")
+        self._register_event_handler(IVREvent.STATUS_CHANGED)
+        self._register_event_handler(IVREvent.DTMF_PRESSED)
 
     def _setup_xml_patterns(self):
         """Register DTMF and IVR status patterns."""
@@ -150,7 +165,7 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
             text_frame.skip_tts = True
             await self.push_frame(text_frame)
 
-            await self._call_event_handler("on_dtmf_pressed", value)
+            await self._call_event_handler(IVREvent.DTMF_PRESSED, value)
         except ValueError:
             logger.warning(f"Invalid DTMF value: {value}")
 
@@ -161,11 +176,11 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
 
         if status == IVRStatus.COMPLETED:
             self.deactivate()
-            await self._call_event_handler("on_ivr_status_changed", IVRStatus.COMPLETED)
+            await self._call_event_handler(IVREvent.STATUS_CHANGED, IVRStatus.COMPLETED)
 
         elif status == IVRStatus.STUCK:
             self.deactivate()
-            await self._call_event_handler("on_ivr_status_changed", IVRStatus.STUCK)
+            await self._call_event_handler(IVREvent.STATUS_CHANGED, IVRStatus.STUCK)
 
         elif status == IVRStatus.WAIT:
             logger.debug("IVR waiting for more input")

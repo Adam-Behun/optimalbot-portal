@@ -238,7 +238,8 @@ Example: If rep says "They're in network, POS plan, code is covered, $75 copay, 
                     },
                     required=[],
                     handler=self._proceed_to_plan_info_handler
-                )
+                ),
+                self._request_staff_schema(),
             ],
             respond_immediately=True
         )

@@ -26,33 +26,31 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent.parent)
 from dotenv import load_dotenv
 load_dotenv()
 
-import yaml
-from anthropic import Anthropic
 from langfuse import Langfuse, observe
+from pipecat.processors.frame_processor import FrameProcessor
 
 from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
+from pipeline.triage_detector import TriageDetector
+from pipeline.triage_processors import CLASSIFICATION_TO_EVENT, TriageEvent
+from evals.triage import EventCollector, call_grader, load_scenarios, get_scenario
 
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
 
 
-# === CLASSIFIER PROMPT FROM FLOW ===
+# === CONSTANTS ===
+SCENARIOS_PATH = Path(__file__).parent / "scenarios.yaml"
 CLASSIFIER_PROMPT = EligibilityVerificationFlow.TRIAGE_CLASSIFIER_PROMPT
 
 
+# === MOCK LLM FOR TRIAGE DETECTOR ===
+class MockLLMService(FrameProcessor):
+    """Minimal mock LLM - we call _process_classification directly."""
+    pass
+
+
 # === LLM GRADERS ===
-def _call_grader(prompt: str) -> str:
-    """Call the grader LLM with a prompt."""
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=100,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text.strip()
-
-
 def grade_classification(utterance: str, expected: str, actual: str, reasoning: str) -> dict:
     """Grade classification correctness with LLM for nuanced cases."""
 
@@ -85,7 +83,7 @@ PASS: <brief reason>
 or
 FAIL: <brief reason>"""
 
-    result = _call_grader(prompt)
+    result = call_grader(prompt)
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
@@ -113,7 +111,7 @@ PASS: <brief reason>
 or
 FAIL: <brief reason>"""
 
-    result = _call_grader(prompt)
+    result = call_grader(prompt)
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
@@ -148,26 +146,10 @@ def grade_scenario(utterance: str, expected: str, actual: str, reasoning: str, i
     }
 
 
-# === SCENARIO LOADING ===
-def load_scenarios() -> dict:
-    """Load scenarios from YAML file."""
-    scenarios_path = Path(__file__).parent / "scenarios.yaml"
-    with open(scenarios_path) as f:
-        return yaml.safe_load(f)
-
-
-def get_scenario(scenario_id: str) -> dict:
-    """Get a specific scenario by ID."""
-    config = load_scenarios()
-    for scenario in config["scenarios"]:
-        if scenario["id"] == scenario_id:
-            return scenario
-    raise ValueError(f"Scenario '{scenario_id}' not found")
-
-
-def list_scenarios() -> None:
-    """Print available scenarios."""
-    config = load_scenarios()
+# === SCENARIO LOADING (custom list_scenarios for classification-specific format) ===
+def list_scenarios_formatted() -> None:
+    """Print available scenarios with classification-specific format."""
+    config = load_scenarios(SCENARIOS_PATH)
     print("\nAvailable scenarios:\n")
     for s in config["scenarios"]:
         edge = " [EDGE]" if s.get("is_edge_case") else ""
@@ -205,9 +187,19 @@ class ClassifierRunner:
         return response.choices[0].message.content.strip()
 
 
+def get_expected_event(classification: str) -> str | None:
+    """Map classification to expected event name using production constants."""
+    return CLASSIFICATION_TO_EVENT.get(classification.upper())
+
+
 @observe(name="classification_eval")
 async def run_simulation(scenario: dict, classifier_prompt: str, llm_config: dict) -> dict:
-    """Run classification for a single scenario."""
+    """Run classification for a single scenario.
+
+    1. Call Groq LLM to get classification text
+    2. Pass result through production TriageProcessor._process_classification()
+    3. Verify correct event fires via EventCollector
+    """
     utterance = scenario["utterance"]
     expected = scenario["expected_classification"]
 
@@ -218,16 +210,48 @@ async def run_simulation(scenario: dict, classifier_prompt: str, llm_config: dic
 
     print(f"UTTERANCE: {utterance}\n")
 
+    # Step 1: Get LLM classification (same as before)
     runner = ClassifierRunner(classifier_prompt, llm_config)
     actual = await runner.classify(utterance)
 
     print(f"CLASSIFICATION: {actual}\n")
+
+    # Step 2: Verify production TriageProcessor fires correct event
+    collector = EventCollector()
+    mock_llm = MockLLMService()
+
+    triage = TriageDetector(
+        classifier_llm=mock_llm,
+        classifier_prompt=classifier_prompt,
+        voicemail_response_delay=0.1,  # Short delay for tests
+    )
+
+    # Register event handlers using production constants
+    triage.add_event_handler(TriageEvent.CONVERSATION_DETECTED, collector.handler(TriageEvent.CONVERSATION_DETECTED))
+    triage.add_event_handler(TriageEvent.IVR_DETECTED, collector.handler(TriageEvent.IVR_DETECTED))
+    triage.add_event_handler(TriageEvent.VOICEMAIL_DETECTED, collector.handler(TriageEvent.VOICEMAIL_DETECTED))
+
+    # Pass LLM result through production processor
+    await triage._triage_processor._process_classification(actual)
+    await asyncio.sleep(0.15)  # Allow voicemail delay to complete
+
+    # Check which event fired
+    expected_event = get_expected_event(expected)
+    actual_event = collector.events[0][0] if collector.events else None
+    event_matched = actual_event == expected_event
+
+    print(f"EXPECTED EVENT: {expected_event}")
+    print(f"ACTUAL EVENT: {actual_event}")
+    print(f"EVENT MATCHED: {'YES' if event_matched else 'NO'}\n")
 
     return {
         "scenario_id": scenario["id"],
         "utterance": utterance,
         "expected_classification": expected,
         "actual_classification": actual,
+        "expected_event": expected_event,
+        "actual_event": actual_event,
+        "event_matched": event_matched,
         "reasoning": scenario.get("reasoning", ""),
         "is_edge_case": scenario.get("is_edge_case", False),
     }
@@ -277,7 +301,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
 
 def sync_dataset_to_langfuse() -> None:
     """Sync scenarios to Langfuse as a dataset."""
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     dataset_name = config["dataset_name"]
 
     try:
@@ -313,8 +337,8 @@ def sync_dataset_to_langfuse() -> None:
 
 async def run_scenario(scenario_id: str) -> dict:
     """Run a single scenario and save results."""
-    config = load_scenarios()
-    scenario = get_scenario(scenario_id)
+    config = load_scenarios(SCENARIOS_PATH)
+    scenario = get_scenario(SCENARIOS_PATH, scenario_id)
 
     # Use prompt from EligibilityVerificationFlow, allow override in scenarios.yaml
     classifier_prompt = config.get("classifier_prompt", CLASSIFIER_PROMPT)
@@ -345,7 +369,7 @@ async def run_scenario(scenario_id: str) -> dict:
 
 async def run_all_scenarios() -> list[dict]:
     """Run all scenarios sequentially."""
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     results = []
 
     for scenario in config["scenarios"]:
@@ -381,7 +405,7 @@ async def main():
     args = parser.parse_args()
 
     if args.list:
-        list_scenarios()
+        list_scenarios_formatted()
         return
 
     if args.sync_dataset:
@@ -397,7 +421,7 @@ async def main():
         return
 
     # Default: run first scenario
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")

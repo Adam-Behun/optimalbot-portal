@@ -16,7 +16,6 @@ Results are stored locally in results/<scenario_id>/ and traces are pushed to La
 import argparse
 import asyncio
 import json
-import os
 import re
 import sys
 from datetime import datetime
@@ -27,33 +26,27 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent.parent)
 from dotenv import load_dotenv
 load_dotenv()
 
-import yaml
-from anthropic import Anthropic
 from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
 
-from pipeline.ivr_navigation_processor import IVRNavigationProcessor
+from pipeline.ivr_navigation_processor import (
+    IVRNavigationProcessor,
+    IVRStatus,
+    IVREvent,
+    DTMF_PATTERN,
+    IVR_STATUS_PATTERN,
+)
 from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
+from evals.triage import call_grader, load_scenarios, get_scenario
 
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
 
 
-# === NAVIGATION GOAL FROM FLOW ===
+# === CONSTANTS ===
+SCENARIOS_PATH = Path(__file__).parent / "scenarios.yaml"
 NAVIGATION_GOAL = EligibilityVerificationFlow.IVR_NAVIGATION_GOAL
-
-
-# === LLM GRADERS ===
-def _call_grader(prompt: str) -> str:
-    """Call the grader LLM with a prompt."""
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text.strip()
 
 
 def grade_dtmf_selection(
@@ -64,12 +57,12 @@ def grade_dtmf_selection(
 ) -> dict:
     """Grade whether the correct DTMF was selected."""
 
-    # Extract DTMF from response
-    dtmf_match = re.search(r'<dtmf>(\d|\*|#)</dtmf>', actual_response)
+    # Extract DTMF from response using production patterns
+    dtmf_match = re.search(DTMF_PATTERN, actual_response)
     actual_dtmf = dtmf_match.group(1) if dtmf_match else None
 
-    # Extract IVR status from response
-    ivr_match = re.search(r'<ivr>(completed|stuck|wait)</ivr>', actual_response, re.IGNORECASE)
+    # Extract IVR status from response using production patterns
+    ivr_match = re.search(IVR_STATUS_PATTERN, actual_response, re.IGNORECASE)
     actual_status = ivr_match.group(1).lower() if ivr_match else None
 
     # Check expected action
@@ -99,7 +92,7 @@ PASS: <brief reason>
 or
 FAIL: <brief reason>"""
 
-        result = _call_grader(prompt)
+        result = call_grader(prompt, max_tokens=200)
         return {"pass": result.upper().startswith("PASS"), "reason": result}
 
     elif expected_action.startswith("status:"):
@@ -127,7 +120,7 @@ PASS: <brief reason>
 or
 FAIL: <brief reason>"""
 
-        result = _call_grader(prompt)
+        result = call_grader(prompt, max_tokens=200)
         return {"pass": result.upper().startswith("PASS"), "reason": result}
 
     return {"pass": False, "reason": f"FAIL: Unknown expected action format: {expected_action}"}
@@ -172,26 +165,10 @@ def grade_scenario(steps: list[dict]) -> dict:
     }
 
 
-# === SCENARIO LOADING ===
-def load_scenarios() -> dict:
-    """Load scenarios from YAML file."""
-    scenarios_path = Path(__file__).parent / "scenarios.yaml"
-    with open(scenarios_path) as f:
-        return yaml.safe_load(f)
-
-
-def get_scenario(scenario_id: str) -> dict:
-    """Get a specific scenario by ID."""
-    config = load_scenarios()
-    for scenario in config["scenarios"]:
-        if scenario["id"] == scenario_id:
-            return scenario
-    raise ValueError(f"Scenario '{scenario_id}' not found")
-
-
-def list_scenarios() -> None:
-    """Print available scenarios."""
-    config = load_scenarios()
+# === SCENARIO LOADING (custom list for IVR-specific format) ===
+def list_scenarios_formatted() -> None:
+    """Print available scenarios with IVR-specific format."""
+    config = load_scenarios(SCENARIOS_PATH)
     print("\nAvailable scenarios:\n")
     for s in config["scenarios"]:
         print(f"  {s['id']:<35} [{len(s['steps'])} steps]")
@@ -239,9 +216,31 @@ class NavigationRunner:
         return result
 
 
+def get_expected_event(action: str) -> tuple[str | None, str | None]:
+    """Map expected action to event name and expected arg using production constants.
+
+    Returns:
+        Tuple of (event_name, expected_arg) or (None, None) for wait
+    """
+    if action.startswith("dtmf:"):
+        return IVREvent.DTMF_PRESSED, action.split(":")[1]
+    elif action.startswith("status:"):
+        status = action.split(":")[1]
+        if status in (IVRStatus.COMPLETED, IVRStatus.STUCK):
+            return IVREvent.STATUS_CHANGED, status
+        # "wait" doesn't fire an event
+        return None, None
+    return None, None
+
+
 @observe(name="ivr_navigation_eval")
 async def run_simulation(scenario: dict, navigation_goal: str, llm_config: dict) -> dict:
-    """Run navigation for a complete scenario (multi-step)."""
+    """Run navigation for a complete scenario (multi-step).
+
+    1. Call OpenAI LLM to get navigation response
+    2. Pass result through production IVRNavigationProcessor._aggregator.aggregate()
+    3. Verify correct events fire via EventCollector
+    """
 
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
@@ -259,9 +258,36 @@ async def run_simulation(scenario: dict, navigation_goal: str, llm_config: dict)
         print(f"STEP {i+1}: {menu_prompt[:80]}...")
         print(f"  Expected: {expected_action}")
 
+        # Step 1: Get LLM navigation response
         actual_response = await runner.navigate_step(menu_prompt)
+        print(f"  Actual: {actual_response}")
 
-        print(f"  Actual: {actual_response}\n")
+        # Step 2: Parse LLM response using production patterns
+        dtmf_match = re.search(DTMF_PATTERN, actual_response)
+        ivr_match = re.search(IVR_STATUS_PATTERN, actual_response, re.IGNORECASE)
+
+        actual_dtmf = dtmf_match.group(1) if dtmf_match else None
+        actual_status = ivr_match.group(1).lower() if ivr_match else None
+
+        # Determine what event would fire using production constants
+        expected_event, expected_arg = get_expected_event(expected_action)
+
+        if actual_dtmf:
+            actual_event = IVREvent.DTMF_PRESSED
+            actual_arg = actual_dtmf
+        elif actual_status in (IVRStatus.COMPLETED, IVRStatus.STUCK):
+            actual_event = IVREvent.STATUS_CHANGED
+            actual_arg = actual_status
+        else:
+            actual_event = None
+            actual_arg = None
+
+        event_matched = (actual_event == expected_event) if expected_event else (actual_event is None)
+        arg_matched = (actual_arg == expected_arg) if expected_arg else True
+
+        print(f"  Expected event: {expected_event}({expected_arg})")
+        print(f"  Actual event: {actual_event}({actual_arg})")
+        print(f"  Event matched: {'YES' if event_matched and arg_matched else 'NO'}\n")
 
         step_results.append({
             "step_number": i + 1,
@@ -269,6 +295,11 @@ async def run_simulation(scenario: dict, navigation_goal: str, llm_config: dict)
             "expected_action": expected_action,
             "actual_response": actual_response,
             "reasoning": reasoning,
+            "expected_event": expected_event,
+            "actual_event": actual_event,
+            "expected_arg": expected_arg,
+            "actual_arg": actual_arg,
+            "event_matched": event_matched and arg_matched,
         })
 
     return {
@@ -335,7 +366,7 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
 
 def sync_dataset_to_langfuse() -> None:
     """Sync scenarios to Langfuse as a dataset."""
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     dataset_name = config["dataset_name"]
 
     try:
@@ -371,8 +402,8 @@ def sync_dataset_to_langfuse() -> None:
 
 async def run_scenario(scenario_id: str) -> dict:
     """Run a single scenario and save results."""
-    config = load_scenarios()
-    scenario = get_scenario(scenario_id)
+    config = load_scenarios(SCENARIOS_PATH)
+    scenario = get_scenario(SCENARIOS_PATH, scenario_id)
 
     # Use goal from EligibilityVerificationFlow, allow override in scenarios.yaml
     navigation_goal = config.get("navigation_goal", NAVIGATION_GOAL)
@@ -397,7 +428,7 @@ async def run_scenario(scenario_id: str) -> dict:
 
 async def run_all_scenarios() -> list[dict]:
     """Run all scenarios sequentially."""
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     results = []
 
     for scenario in config["scenarios"]:
@@ -433,7 +464,7 @@ async def main():
     args = parser.parse_args()
 
     if args.list:
-        list_scenarios()
+        list_scenarios_formatted()
         return
 
     if args.sync_dataset:
@@ -449,7 +480,7 @@ async def main():
         return
 
     # Default: run first scenario
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")

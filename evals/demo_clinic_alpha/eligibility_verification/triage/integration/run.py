@@ -18,17 +18,20 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent.parent))
-
-import yaml
 
 from pipecat.processors.frame_processor import FrameProcessor
 
 from pipeline.triage_detector import TriageDetector
-from pipeline.ivr_navigation_processor import IVRNavigationProcessor, IVRStatus
+from pipeline.triage_processors import TriageEvent
+from pipeline.ivr_navigation_processor import IVRNavigationProcessor, IVRStatus, IVREvent
 from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
+from evals.triage import EventCollector, MockMatch, load_scenarios, get_scenario, list_scenarios
+
+
+# === CONSTANTS ===
+SCENARIOS_PATH = Path(__file__).parent / "scenarios.yaml"
 
 
 # =============================================================================
@@ -41,35 +44,6 @@ class MockLLMService(FrameProcessor):
     We call _process_classification directly, so this never processes frames.
     """
     pass
-
-
-class EventCollector:
-    """Collects events fired by processors."""
-
-    def __init__(self):
-        self.events: List[tuple[str, Any]] = []
-
-    def handler(self, event_name: str):
-        async def _handler(processor, *args, **kwargs):
-            # Pipecat passes processor as first arg, then event-specific args
-            self.events.append((event_name, args))
-        return _handler
-
-    def clear(self):
-        self.events = []
-
-    def get_event_value(self, event_name: str):
-        """Get the first argument value of an event."""
-        for name, args in self.events:
-            if name == event_name and args:
-                return args[0]
-        return None
-
-
-class MockMatch:
-    """Mock pattern match result."""
-    def __init__(self, content: str):
-        self.content = content
 
 
 # =============================================================================
@@ -86,7 +60,7 @@ async def run_classification_to_ivr(scenario: dict, flow_config: dict) -> dict:
         classifier_prompt=flow_config["classifier_prompt"],
     )
 
-    triage.add_event_handler("on_ivr_detected", collector.handler("on_ivr_detected"))
+    triage.add_event_handler(TriageEvent.IVR_DETECTED, collector.handler(TriageEvent.IVR_DETECTED))
 
     # Add conversation history if provided
     for msg in scenario.get("conversation_history", []):
@@ -143,7 +117,7 @@ async def run_classification_to_conversation(scenario: dict, flow_config: dict) 
         classifier_prompt=flow_config["classifier_prompt"],
     )
 
-    triage.add_event_handler("on_conversation_detected", collector.handler("on_conversation_detected"))
+    triage.add_event_handler(TriageEvent.CONVERSATION_DETECTED, collector.handler(TriageEvent.CONVERSATION_DETECTED))
 
     for msg in scenario.get("conversation_history", []):
         triage._context.add_message(msg)
@@ -222,7 +196,7 @@ async def run_ivr_status(scenario: dict, flow_config: dict) -> dict:
     collector = EventCollector()
     ivr_processor = IVRNavigationProcessor()
 
-    ivr_processor.add_event_handler("on_ivr_status_changed", collector.handler("on_ivr_status_changed"))
+    ivr_processor.add_event_handler(IVREvent.STATUS_CHANGED, collector.handler(IVREvent.STATUS_CHANGED))
     ivr_processor._active = True
 
     await ivr_processor._handle_ivr_action(MockMatch(scenario["ivr_status"]))
@@ -271,7 +245,7 @@ async def run_dtmf(scenario: dict, flow_config: dict) -> dict:
     collector = EventCollector()
     ivr_processor = IVRNavigationProcessor()
 
-    ivr_processor.add_event_handler("on_dtmf_pressed", collector.handler("on_dtmf_pressed"))
+    ivr_processor.add_event_handler(IVREvent.DTMF_PRESSED, collector.handler(IVREvent.DTMF_PRESSED))
     ivr_processor._active = True
 
     await ivr_processor._handle_dtmf_action(MockMatch(scenario["dtmf_key"]))
@@ -282,10 +256,10 @@ async def run_dtmf(scenario: dict, flow_config: dict) -> dict:
 
     if len(collector.events) == 0:
         passed = False
-        reason = "Expected on_dtmf_pressed but no events fired"
-    elif collector.events[0][0] != "on_dtmf_pressed":
+        reason = f"Expected {IVREvent.DTMF_PRESSED} but no events fired"
+    elif collector.events[0][0] != IVREvent.DTMF_PRESSED:
         passed = False
-        reason = f"Expected on_dtmf_pressed but got {collector.events[0][0]}"
+        reason = f"Expected {IVREvent.DTMF_PRESSED} but got {collector.events[0][0]}"
     elif collector.events[0][1][0] != scenario["expected_key"]:
         passed = False
         reason = f"Expected key {scenario['expected_key']} but got {collector.events[0][1][0]}"
@@ -305,7 +279,7 @@ async def run_dtmf_sequence(scenario: dict, flow_config: dict) -> dict:
     collector = EventCollector()
     ivr_processor = IVRNavigationProcessor()
 
-    ivr_processor.add_event_handler("on_dtmf_pressed", collector.handler("on_dtmf_pressed"))
+    ivr_processor.add_event_handler(IVREvent.DTMF_PRESSED, collector.handler(IVREvent.DTMF_PRESSED))
     ivr_processor._active = True
 
     for key in scenario["dtmf_sequence"]:
@@ -340,8 +314,8 @@ async def run_dtmf_then_status(scenario: dict, flow_config: dict) -> dict:
     collector = EventCollector()
     ivr_processor = IVRNavigationProcessor()
 
-    ivr_processor.add_event_handler("on_dtmf_pressed", collector.handler("on_dtmf_pressed"))
-    ivr_processor.add_event_handler("on_ivr_status_changed", collector.handler("on_ivr_status_changed"))
+    ivr_processor.add_event_handler(IVREvent.DTMF_PRESSED, collector.handler(IVREvent.DTMF_PRESSED))
+    ivr_processor.add_event_handler(IVREvent.STATUS_CHANGED, collector.handler(IVREvent.STATUS_CHANGED))
     ivr_processor._active = True
 
     await ivr_processor._handle_dtmf_action(MockMatch(scenario["dtmf_key"]))
@@ -388,9 +362,9 @@ async def run_classification_edge(scenario: dict, flow_config: dict) -> dict:
         classifier_prompt=flow_config["classifier_prompt"],
     )
 
-    triage.add_event_handler("on_ivr_detected", collector.handler("on_ivr_detected"))
-    triage.add_event_handler("on_conversation_detected", collector.handler("on_conversation_detected"))
-    triage.add_event_handler("on_voicemail_detected", collector.handler("on_voicemail_detected"))
+    triage.add_event_handler(TriageEvent.IVR_DETECTED, collector.handler(TriageEvent.IVR_DETECTED))
+    triage.add_event_handler(TriageEvent.CONVERSATION_DETECTED, collector.handler(TriageEvent.CONVERSATION_DETECTED))
+    triage.add_event_handler(TriageEvent.VOICEMAIL_DETECTED, collector.handler(TriageEvent.VOICEMAIL_DETECTED))
 
     await triage._triage_processor._process_classification(scenario["classifier_response"])
     await asyncio.sleep(0.05)
@@ -438,8 +412,8 @@ async def run_classification_only_once(scenario: dict, flow_config: dict) -> dic
         classifier_prompt=flow_config["classifier_prompt"],
     )
 
-    triage.add_event_handler("on_ivr_detected", collector.handler("on_ivr_detected"))
-    triage.add_event_handler("on_conversation_detected", collector.handler("on_conversation_detected"))
+    triage.add_event_handler(TriageEvent.IVR_DETECTED, collector.handler(TriageEvent.IVR_DETECTED))
+    triage.add_event_handler(TriageEvent.CONVERSATION_DETECTED, collector.handler(TriageEvent.CONVERSATION_DETECTED))
 
     for response in scenario["classifier_responses"]:
         await triage._triage_processor._process_classification(response)
@@ -544,33 +518,8 @@ TEST_RUNNERS = {
 
 
 # =============================================================================
-# SCENARIO LOADING
+# FLOW CONFIG
 # =============================================================================
-
-def load_scenarios() -> dict:
-    """Load scenarios from YAML file."""
-    scenarios_path = Path(__file__).parent / "scenarios.yaml"
-    with open(scenarios_path) as f:
-        return yaml.safe_load(f)
-
-
-def get_scenario(scenario_id: str) -> dict:
-    """Get a specific scenario by ID."""
-    config = load_scenarios()
-    for scenario in config["scenarios"]:
-        if scenario["id"] == scenario_id:
-            return scenario
-    raise ValueError(f"Scenario '{scenario_id}' not found")
-
-
-def list_scenarios() -> None:
-    """Print available scenarios."""
-    config = load_scenarios()
-    print("\nAvailable scenarios:\n")
-    for s in config["scenarios"]:
-        print(f"  {s['id']:<5} [{s['test_type']}]")
-        print(f"        {s['description']}\n")
-
 
 def get_flow_config() -> dict:
     """Get triage config from EligibilityVerificationFlow."""
@@ -628,7 +577,7 @@ def save_result(scenario_id: str, result: dict) -> Path:
 
 async def run_scenario(scenario_id: str) -> dict:
     """Run a single scenario."""
-    scenario = get_scenario(scenario_id)
+    scenario = get_scenario(SCENARIOS_PATH, scenario_id)
     flow_config = get_flow_config()
 
     print(f"\n{'='*60}")
@@ -654,7 +603,7 @@ async def run_scenario(scenario_id: str) -> dict:
 
 async def run_all_scenarios() -> list[dict]:
     """Run all scenarios."""
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     results = []
 
     for scenario in config["scenarios"]:
@@ -685,7 +634,7 @@ async def main():
     args = parser.parse_args()
 
     if args.list:
-        list_scenarios()
+        list_scenarios(SCENARIOS_PATH)
         return
 
     if args.all:
@@ -697,7 +646,7 @@ async def main():
         return
 
     # Default: run first scenario
-    config = load_scenarios()
+    config = load_scenarios(SCENARIOS_PATH)
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
     print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")

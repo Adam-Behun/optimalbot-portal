@@ -331,8 +331,7 @@ scenarios:
   - id: "4"
     target_node: closing
     expected_problem: "Bot may fail to answer rep's clarifying questions or get confused by back-and-forth"
-    patient_data:
-      patient_id: "eval-004"
+    patient:
       patient_name: "Susan Park"
       date_of_birth: "04/18/1990"
       insurance_member_id: "CIG778899001"
@@ -446,10 +445,9 @@ scenarios:
   # =============================================================================
 
   - id: "5"
-    target_node: cpt_coverage
+    target_node: closing
     expected_problem: "Bot may repeat questions, lose context, or fail to wait patiently"
-    patient_data:
-      patient_id: "eval-005"
+    patient:
       patient_name: "David Kim"
       date_of_birth: "09/05/1982"
       insurance_member_id: "HUM445566778"
@@ -572,10 +570,9 @@ scenarios:
   # =============================================================================
 
   - id: "6"
-    target_node: cpt_coverage
+    target_node: closing
     expected_problem: "Bot may ask about copay/coinsurance/prior auth/telehealth after CPT is not covered (those are irrelevant). Accumulators and reference number are still relevant."
-    patient_data:
-      patient_id: "eval-006"
+    patient:
       patient_name: "Emily Johnson"
       date_of_birth: "02/28/1975"
       insurance_member_id: "UHC112233445"
@@ -665,8 +662,7 @@ scenarios:
   - id: "7"
     target_node: closing
     expected_problem: "Bot may not correctly record dollar amounts with cents or may round incorrectly"
-    patient_data:
-      patient_id: "eval-007"
+    patient:
       patient_name: "Patricia Brown"
       date_of_birth: "06/12/1988"
       insurance_member_id: "AET556677889"
@@ -757,10 +753,9 @@ scenarios:
   # =============================================================================
 
   - id: "8"
-    target_node: greeting
+    target_node: closing
     expected_problem: "Bot should say 'I don't have that' for missing info (street address, fax). Callback phone IS available."
-    patient_data:
-      patient_id: "eval-008"
+    patient:
       patient_name: "Christopher Lee"
       date_of_birth: "12/03/1970"
       insurance_member_id: "KP998877665"
@@ -850,10 +845,9 @@ scenarios:
   # =============================================================================
 
   - id: "9"
-    target_node: cpt_coverage
+    target_node: closing
     expected_problem: "Bot may not update previously recorded information when rep corrects themselves"
-    patient_data:
-      patient_id: "eval-009"
+    patient:
       patient_name: "Linda Martinez"
       date_of_birth: "08/15/1983"
       insurance_member_id: "CIG334455667"
@@ -944,10 +938,9 @@ scenarios:
   # =============================================================================
 
   - id: "10"
-    target_node: plan_info
+    target_node: closing
     expected_problem: "Bot may not correctly record HDHP plan type or understand deductible-first benefit structure"
-    patient_data:
-      patient_id: "eval-010"
+    patient:
       patient_name: "James Wilson"
       date_of_birth: "05/20/1992"
       insurance_member_id: "BSC223344556"
@@ -1025,8 +1018,7 @@ scenarios:
   - id: "11"
     target_node: closing
     expected_problem: "Bot may not handle realistic multi-turn conversation with holds, clarifications, and follow-up questions"
-    patient_data:
-      patient_id: "eval-011"
+    patient:
       patient_name: "John Smith"
       date_of_birth: "03/15/1985"
       insurance_member_id: "U123456789"
