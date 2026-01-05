@@ -27,12 +27,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from langfuse import Langfuse, observe
-from pipecat.processors.frame_processor import FrameProcessor
 
 from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
-from pipeline.triage_detector import TriageDetector
-from pipeline.triage_processors import CLASSIFICATION_TO_EVENT, TriageEvent
-from evals.triage import EventCollector, call_grader, load_scenarios, get_scenario
+from pipeline.pipeline_factory import PipelineFactory
+from evals.triage import load_scenarios, get_scenario
 
 
 # === LANGFUSE CLIENT ===
@@ -43,107 +41,19 @@ langfuse = Langfuse()
 SCENARIOS_PATH = Path(__file__).parent / "scenarios.yaml"
 CLASSIFIER_PROMPT = EligibilityVerificationFlow.TRIAGE_CLASSIFIER_PROMPT
 
-
-# === MOCK LLM FOR TRIAGE DETECTOR ===
-class MockLLMService(FrameProcessor):
-    """Minimal mock LLM - we call _process_classification directly."""
-    pass
+# Load production LLM config from services.yaml
+_services_config = PipelineFactory.load_services_config("demo_clinic_alpha", "eligibility_verification")
+CLASSIFIER_LLM_CONFIG = _services_config["services"]["classifier_llm"]
 
 
-# === LLM GRADERS ===
-def grade_classification(utterance: str, expected: str, actual: str, reasoning: str) -> dict:
-    """Grade classification correctness with LLM for nuanced cases."""
-
-    # Exact match is always a pass
-    if actual.upper() == expected.upper():
-        return {"pass": True, "reason": f"PASS: Correct classification ({actual})"}
-
-    # For mismatches, use LLM to check if it's actually reasonable
-    prompt = f"""Grade this call classification decision.
-
-AUDIO TRANSCRIPTION:
-"{utterance}"
-
-EXPECTED CLASSIFICATION: {expected}
-ACTUAL CLASSIFICATION: {actual}
-
-CONTEXT:
-{reasoning}
-
-Is the actual classification REASONABLE given the transcription?
-- CONVERSATION: Human speaking naturally, greetings, questions
-- IVR: Automated menus with "Press X for...", system prompts
-- VOICEMAIL: "Leave a message", after-hours, carrier messages
-
-If the actual classification is defensible given the utterance, mark as PASS.
-If clearly wrong, mark as FAIL.
-
-Reply with exactly one line:
-PASS: <brief reason>
-or
-FAIL: <brief reason>"""
-
-    result = call_grader(prompt)
-    return {"pass": result.upper().startswith("PASS"), "reason": result}
-
-
-def grade_confidence(utterance: str, classification: str, is_edge_case: bool) -> dict:
-    """Grade whether the model showed appropriate confidence for the input type."""
-
-    if not is_edge_case:
-        return {"pass": True, "reason": "PASS: Clear case handled correctly"}
-
-    prompt = f"""Grade the classification confidence for this edge case.
-
-AUDIO TRANSCRIPTION:
-"{utterance}"
-
-CLASSIFICATION: {classification}
-
-This is marked as an EDGE CASE - ambiguous input that could go multiple ways.
-
-Did the classifier handle this reasonably? Edge cases should either:
-1. Pick the most likely classification
-2. Not hallucinate features not present in the input
-
-Reply with exactly one line:
-PASS: <brief reason>
-or
-FAIL: <brief reason>"""
-
-    result = call_grader(prompt)
-    return {"pass": result.upper().startswith("PASS"), "reason": result}
-
-
-def grade_scenario(utterance: str, expected: str, actual: str, reasoning: str, is_edge_case: bool) -> dict:
-    """
-    Run all graders and combine results. ALL must pass for overall pass.
-    Returns: {"pass": bool, "reason": str, "details": {...}}
-    """
-    classification_grade = grade_classification(utterance, expected, actual, reasoning)
-    confidence_grade = grade_confidence(utterance, actual, is_edge_case)
-
-    all_passed = classification_grade["pass"] and confidence_grade["pass"]
-
-    failures = []
-    if not classification_grade["pass"]:
-        failures.append(f"classification: {classification_grade['reason']}")
-    if not confidence_grade["pass"]:
-        failures.append(f"confidence: {confidence_grade['reason']}")
-
-    if all_passed:
-        reason = "PASS: All checks passed"
+# === GRADING ===
+def grade_scenario(expected: str, actual: str) -> dict:
+    """Binary comparison: did actual match expected?"""
+    passed = actual.upper() == expected.upper()
+    if passed:
+        return {"pass": True, "reason": f"Correct: {actual}"}
     else:
-        reason = "FAIL: " + "; ".join(failures)
-
-    return {
-        "pass": all_passed,
-        "reason": reason,
-        "details": {
-            "classification": classification_grade,
-            "confidence": confidence_grade,
-        }
-    }
+        return {"pass": False, "reason": f"Expected {expected}, got {actual}"}
 
 
 # === SCENARIO LOADING (custom list_scenarios for classification-specific format) ===
@@ -159,15 +69,15 @@ def list_scenarios_formatted() -> None:
 
 # === CLASSIFIER RUNNER ===
 class ClassifierRunner:
-    """Runs classification using Groq (same as production)."""
+    """Runs classification using production LLM config from services.yaml."""
 
-    def __init__(self, classifier_prompt: str, llm_config: dict):
+    def __init__(self, classifier_prompt: str):
         self.classifier_prompt = classifier_prompt
-        self.llm_config = llm_config
+        self.llm_config = CLASSIFIER_LLM_CONFIG
 
     @observe(as_type="generation", name="classifier_llm")
     async def classify(self, utterance: str) -> str:
-        """Classify a single utterance."""
+        """Classify a single utterance using production config."""
         import groq
 
         messages = [
@@ -175,30 +85,23 @@ class ClassifierRunner:
             {"role": "user", "content": utterance}
         ]
 
-        client = groq.Groq(api_key=os.getenv("GROQ_API_KEY"))
+        client = groq.Groq(api_key=self.llm_config["api_key"])
 
         response = client.chat.completions.create(
-            model=self.llm_config.get("model", "llama-3.3-70b-versatile"),
+            model=self.llm_config["model"],
             messages=messages,
-            temperature=0,
-            max_tokens=50,
+            temperature=self.llm_config.get("temperature", 0),
+            max_tokens=self.llm_config.get("max_tokens", 128),
         )
 
         return response.choices[0].message.content.strip()
 
 
-def get_expected_event(classification: str) -> str | None:
-    """Map classification to expected event name using production constants."""
-    return CLASSIFICATION_TO_EVENT.get(classification.upper())
-
-
 @observe(name="classification_eval")
-async def run_simulation(scenario: dict, classifier_prompt: str, llm_config: dict) -> dict:
+async def run_simulation(scenario: dict, classifier_prompt: str) -> dict:
     """Run classification for a single scenario.
 
-    1. Call Groq LLM to get classification text
-    2. Pass result through production TriageProcessor._process_classification()
-    3. Verify correct event fires via EventCollector
+    Tests the production classifier prompt + LLM to verify correct classification.
     """
     utterance = scenario["utterance"]
     expected = scenario["expected_classification"]
@@ -210,50 +113,17 @@ async def run_simulation(scenario: dict, classifier_prompt: str, llm_config: dic
 
     print(f"UTTERANCE: {utterance}\n")
 
-    # Step 1: Get LLM classification (same as before)
-    runner = ClassifierRunner(classifier_prompt, llm_config)
+    # Get LLM classification using production config
+    runner = ClassifierRunner(classifier_prompt)
     actual = await runner.classify(utterance)
 
     print(f"CLASSIFICATION: {actual}\n")
-
-    # Step 2: Verify production TriageProcessor fires correct event
-    collector = EventCollector()
-    mock_llm = MockLLMService()
-
-    triage = TriageDetector(
-        classifier_llm=mock_llm,
-        classifier_prompt=classifier_prompt,
-        voicemail_response_delay=0.1,  # Short delay for tests
-    )
-
-    # Register event handlers using production constants
-    triage.add_event_handler(TriageEvent.CONVERSATION_DETECTED, collector.handler(TriageEvent.CONVERSATION_DETECTED))
-    triage.add_event_handler(TriageEvent.IVR_DETECTED, collector.handler(TriageEvent.IVR_DETECTED))
-    triage.add_event_handler(TriageEvent.VOICEMAIL_DETECTED, collector.handler(TriageEvent.VOICEMAIL_DETECTED))
-
-    # Pass LLM result through production processor
-    await triage._triage_processor._process_classification(actual)
-    await asyncio.sleep(0.15)  # Allow voicemail delay to complete
-
-    # Check which event fired
-    expected_event = get_expected_event(expected)
-    actual_event = collector.events[0][0] if collector.events else None
-    event_matched = actual_event == expected_event
-
-    print(f"EXPECTED EVENT: {expected_event}")
-    print(f"ACTUAL EVENT: {actual_event}")
-    print(f"EVENT MATCHED: {'YES' if event_matched else 'NO'}\n")
 
     return {
         "scenario_id": scenario["id"],
         "utterance": utterance,
         "expected_classification": expected,
         "actual_classification": actual,
-        "expected_event": expected_event,
-        "actual_event": actual_event,
-        "event_matched": event_matched,
-        "reasoning": scenario.get("reasoning", ""),
-        "is_edge_case": scenario.get("is_edge_case", False),
     }
 
 
@@ -340,18 +210,14 @@ async def run_scenario(scenario_id: str) -> dict:
     config = load_scenarios(SCENARIOS_PATH)
     scenario = get_scenario(SCENARIOS_PATH, scenario_id)
 
-    # Use prompt from EligibilityVerificationFlow, allow override in scenarios.yaml
+    # Use production prompt from EligibilityVerificationFlow
     classifier_prompt = config.get("classifier_prompt", CLASSIFIER_PROMPT)
-    llm_config = config.get("classifier_llm", {"model": "llama-3.3-70b-versatile"})
 
-    result = await run_simulation(scenario, classifier_prompt, llm_config)
+    result = await run_simulation(scenario, classifier_prompt)
 
     grade = grade_scenario(
-        result["utterance"],
         result["expected_classification"],
         result["actual_classification"],
-        result["reasoning"],
-        result["is_edge_case"]
     )
 
     status = "PASS" if grade["pass"] else "FAIL"

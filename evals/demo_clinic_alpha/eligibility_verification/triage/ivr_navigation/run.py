@@ -36,8 +36,16 @@ from pipeline.ivr_navigation_processor import (
     DTMF_PATTERN,
     IVR_STATUS_PATTERN,
 )
+from pipeline.pipeline_factory import PipelineFactory
 from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
-from evals.triage import call_grader, load_scenarios, get_scenario
+from evals.triage import (
+    load_scenarios,
+    get_scenario,
+    grade_single_dtmf,
+    grade_dtmf_sequence,
+    grade_spoken_text,
+    grade_status,
+)
 
 
 # === LANGFUSE CLIENT ===
@@ -46,7 +54,26 @@ langfuse = Langfuse()
 
 # === CONSTANTS ===
 SCENARIOS_PATH = Path(__file__).parent / "scenarios.yaml"
-NAVIGATION_GOAL = EligibilityVerificationFlow.IVR_NAVIGATION_GOAL
+
+# Test patient data for IVR navigation evals
+TEST_PATIENT_DATA = {
+    "caller_name": "Maria Chen",
+    "facility_name": "Westbrook Family Medicine",
+    "tax_id": "84-7291035",
+    "provider_name": "Dr. Sarah Okonkwo",
+    "provider_npi": "1928374650",
+    "provider_call_back_phone": "555-847-2910",
+    "insurance_member_id": "WDH492817365",
+    "patient_name": "Robert Martinez",
+    "date_of_birth": "07/14/1982",
+}
+
+# Format navigation goal with test data
+NAVIGATION_GOAL = EligibilityVerificationFlow.IVR_NAVIGATION_GOAL.format(**TEST_PATIENT_DATA)
+
+# Load production LLM config from services.yaml (same pattern as classification eval)
+_services_config = PipelineFactory.load_services_config("demo_clinic_alpha", "eligibility_verification")
+NAVIGATION_LLM_CONFIG = _services_config["services"]["llm"]
 
 
 def grade_dtmf_selection(
@@ -55,75 +82,22 @@ def grade_dtmf_selection(
     actual_response: str,
     reasoning: str
 ) -> dict:
-    """Grade whether the correct DTMF was selected."""
-
-    # Extract DTMF from response using production patterns
     dtmf_match = re.search(DTMF_PATTERN, actual_response)
     actual_dtmf = dtmf_match.group(1) if dtmf_match else None
-
-    # Extract IVR status from response using production patterns
+    actual_dtmf_seq = "".join(re.findall(DTMF_PATTERN, actual_response))
     ivr_match = re.search(IVR_STATUS_PATTERN, actual_response, re.IGNORECASE)
     actual_status = ivr_match.group(1).lower() if ivr_match else None
+    clean_response = re.sub(r'<[^>]+>', '', actual_response).strip()
 
-    # Check expected action
     if expected_action.startswith("dtmf:"):
-        expected_dtmf = expected_action.split(":")[1]
-        if actual_dtmf == expected_dtmf:
-            return {"pass": True, "reason": f"PASS: Correct DTMF ({actual_dtmf})"}
-
-        # Use LLM for nuanced grading
-        prompt = f"""Grade this IVR navigation decision.
-
-MENU PROMPT:
-"{menu_prompt}"
-
-EXPECTED ACTION: Press {expected_dtmf}
-ACTUAL RESPONSE: {actual_response}
-
-CONTEXT: {reasoning}
-
-Is the actual response REASONABLE for navigating to provider services/eligibility?
-- If pressed a different valid option that could reach the goal, PASS
-- If pressed wrong option that leads away from goal, FAIL
-- If no DTMF found when one was needed, FAIL
-
-Reply with exactly one line:
-PASS: <brief reason>
-or
-FAIL: <brief reason>"""
-
-        result = call_grader(prompt, max_tokens=200)
-        return {"pass": result.upper().startswith("PASS"), "reason": result}
-
-    elif expected_action.startswith("status:"):
-        expected_status = expected_action.split(":")[1]
-        if actual_status == expected_status:
-            return {"pass": True, "reason": f"PASS: Correct status ({actual_status})"}
-
-        prompt = f"""Grade this IVR navigation decision.
-
-PROMPT:
-"{menu_prompt}"
-
-EXPECTED: <ivr>{expected_status}</ivr>
-ACTUAL RESPONSE: {actual_response}
-
-CONTEXT: {reasoning}
-
-Is the actual response REASONABLE?
-- "completed" when transfer is happening or goal reached
-- "stuck" when no relevant options or repeated loops
-- "wait" when need more information
-
-Reply with exactly one line:
-PASS: <brief reason>
-or
-FAIL: <brief reason>"""
-
-        result = call_grader(prompt, max_tokens=200)
-        return {"pass": result.upper().startswith("PASS"), "reason": result}
-
-    return {"pass": False, "reason": f"FAIL: Unknown expected action format: {expected_action}"}
+        return grade_single_dtmf(expected_action.split(":")[1], actual_dtmf)
+    if expected_action.startswith("dtmf_sequence:"):
+        return grade_dtmf_sequence(expected_action.split(":")[1], actual_dtmf_seq)
+    if expected_action.startswith("speak:"):
+        return grade_spoken_text(expected_action.split(":", 1)[1], clean_response)
+    if expected_action.startswith("status:"):
+        return grade_status(expected_action.split(":")[1], actual_status)
+    return {"pass": False, "reason": f"FAIL: Unknown action format: {expected_action}"}
 
 
 def grade_step(step_result: dict) -> dict:
@@ -407,7 +381,8 @@ async def run_scenario(scenario_id: str) -> dict:
 
     # Use goal from EligibilityVerificationFlow, allow override in scenarios.yaml
     navigation_goal = config.get("navigation_goal", NAVIGATION_GOAL)
-    llm_config = config.get("navigation_llm", {"model": "gpt-4o"})
+    # LLM config inherited from production services.yaml
+    llm_config = NAVIGATION_LLM_CONFIG
 
     result = await run_simulation(scenario, navigation_goal, llm_config)
 

@@ -16,7 +16,8 @@ class EligibilityVerificationFlow(DialoutBaseFlow):
 
 HUMAN CONVERSATION (respond "CONVERSATION"):
 - Personal greetings: "Hello?", "Hi", "Speaking", "This is [name]"
-- Department greetings: "Insurance verification, this is Sarah"
+- Department greetings with personal name: "Insurance verification, this is Sarah"
+- Representative with ID: "[Name] speaking, representative ID [number]"
 - Interactive responses: "Who is this?", "How can I help you?"
 - Natural speech with pauses and informal tone
 
@@ -25,21 +26,46 @@ IVR SYSTEM (respond "IVR"):
 - Automated instructions: "Please enter your provider NPI"
 - System prompts: "Thank you for calling [insurance company]"
 - Hold messages: "Please hold while we transfer you"
+- After-hours with options: "dial extension now", "press 1 to..." (still IVR even if closed)
+- Virtual assistants: "I'm your virtual assistant", "I'm the digital assistant"
+- Conversational AI: Named bots like "I'm Eva", automated but natural-sounding
+- AI mid-flow: "I see you're calling about...", "Let me look that up", "Let me transfer you"
 
 VOICEMAIL SYSTEM (respond "VOICEMAIL"):
-- Voicemail greetings: "You've reached the claims department, please leave a message"
-- After-hours messages: "Our office is currently closed"
+- Voicemail greetings: "leave a message", "please leave a message after the tone"
 - Carrier messages: "The number you have dialed is not available"
 - Mailbox messages: "This mailbox is full"
+
+DECISION RULES (in order):
+1. Personal name given (not bot name like "Eva") → CONVERSATION
+2. "leave a message" or voicemail request → VOICEMAIL
+3. Contains "please hold", "hold please", press/dial/enter → IVR
+4. 1-3 words without "hold" (e.g., "Provider services.", "Speaking.", "Yes") → CONVERSATION
+5. Default for longer automated-sounding messages → IVR
 
 Output exactly one classification word: CONVERSATION, IVR, or VOICEMAIL."""
 
     IVR_NAVIGATION_GOAL = """Navigate to speak with a representative who can verify eligibility and benefits.
 
+CALLER INFORMATION (provide exactly as shown when asked):
+- Caller Name: {caller_name}
+- Facility Name: {facility_name}
+- Tax ID: {tax_id}
+- Provider Name: {provider_name}
+- Provider NPI: {provider_npi}
+- Callback Phone: {provider_call_back_phone}
+
 MEMBER INFORMATION (provide exactly as shown when asked):
 - Member ID: {insurance_member_id}
+- Patient Name: {patient_name}
 - Date of Birth: {date_of_birth}
-- Provider NPI: {provider_npi}
+
+DATA ENTRY INSTRUCTIONS:
+- DTMF for numeric values: <dtmf>1</dtmf><dtmf>2</dtmf>... (add <dtmf>#</dtmf> if requested)
+- SPEAK for text/alphanumeric: Output as natural text for TTS
+- Member ID: SPEAK if contains letters, DTMF if purely numeric
+- Dates: MMDDYYYY format as DTMF
+- Tax ID: Digits only, no dashes
 
 NAVIGATION INSTRUCTIONS:
 - When asked if you're a member or provider: Say "Health care professional"
@@ -48,7 +74,7 @@ NAVIGATION INSTRUCTIONS:
 - When offered menu options: Choose "eligibility", "benefits", "provider services", or "speak to representative"
 - When asked to confirm information: Say "Yes" or "Correct"
 - When offered surveys: Say "No, thank you"
-- When put on hold: Say "Sure" or "Thank you"
+- When put on hold or told to wait: Output <ivr>wait</ivr> (wait silently)
 
 Goal: Reach a human representative who can verify coverage details."""
 
@@ -79,9 +105,17 @@ Goal: Reach a human representative who can verify coverage details."""
         return {
             "classifier_prompt": self.TRIAGE_CLASSIFIER_PROMPT,
             "ivr_navigation_goal": self.IVR_NAVIGATION_GOAL.format(
-                insurance_member_id=self._patient_data.get("insurance_member_id", ""),
-                date_of_birth=self._patient_data.get("date_of_birth", ""),
+                # Caller/Provider info
+                caller_name=self._patient_data.get("caller_name", ""),
+                facility_name=self._patient_data.get("facility_name", ""),
+                tax_id=self._patient_data.get("tax_id", ""),
+                provider_name=self._patient_data.get("provider_name", ""),
                 provider_npi=self._patient_data.get("provider_npi", ""),
+                provider_call_back_phone=self._patient_data.get("provider_call_back_phone", ""),
+                # Member info
+                insurance_member_id=self._patient_data.get("insurance_member_id", ""),
+                patient_name=self._patient_data.get("patient_name", ""),
+                date_of_birth=self._patient_data.get("date_of_birth", ""),
             ),
             "voicemail_message": self.VOICEMAIL_MESSAGE_TEMPLATE.format(
                 caller_name=self._patient_data.get("caller_name", "a representative"),

@@ -7,13 +7,11 @@ Used by:
 - integration/run.py
 """
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
-from anthropic import Anthropic
 
 from pipecat.frames.frames import Frame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -235,37 +233,42 @@ def save_result(
 
 
 # =============================================================================
-# LLM GRADING
+# DETERMINISTIC GRADING
 # =============================================================================
 
-def call_grader(prompt: str, model: str = "claude-sonnet-4-20250514", max_tokens: int = 100) -> str:
-    """Call Claude for nuanced grading of test results.
-
-    Args:
-        prompt: Grading prompt with context and criteria
-        model: Claude model to use
-        max_tokens: Max response tokens
-
-    Returns:
-        Model response text (typically "PASS: reason" or "FAIL: reason")
-    """
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text.strip()
+def grade_single_dtmf(expected: str, actual: str) -> dict:
+    if actual == expected:
+        return {"pass": True, "reason": f"PASS: Correct DTMF ({actual})"}
+    if actual is None:
+        return {"pass": False, "reason": f"FAIL: Expected DTMF '{expected}', got no DTMF"}
+    return {"pass": False, "reason": f"FAIL: Expected DTMF '{expected}', got '{actual}'"}
 
 
-def grade_pass_fail(response: str) -> tuple[bool, str]:
-    """Parse a PASS/FAIL response from the grader.
+def grade_dtmf_sequence(expected: str, actual: str) -> dict:
+    if actual == expected:
+        return {"pass": True, "reason": f"PASS: Correct DTMF sequence ({actual})"}
+    if actual + "#" == expected:
+        return {"pass": True, "reason": "PASS: DTMF sequence correct (missing pound)"}
+    if actual == expected + "#":
+        return {"pass": True, "reason": "PASS: DTMF sequence correct (extra pound)"}
+    return {"pass": False, "reason": f"FAIL: Expected DTMF sequence '{expected}', got '{actual}'"}
 
-    Args:
-        response: Grader response (e.g., "PASS: Correct classification")
 
-    Returns:
-        Tuple of (passed: bool, reason: str)
-    """
-    passed = response.upper().startswith("PASS")
-    return passed, response
+def grade_spoken_text(expected: str, actual: str) -> dict:
+    if expected.lower() == actual.lower():
+        return {"pass": True, "reason": f"PASS: Exact match ({expected})"}
+    if expected.lower() in actual.lower():
+        return {"pass": True, "reason": f"PASS: Contains expected value ({expected})"}
+    norm_expected = " ".join(expected.lower().split())
+    norm_actual = " ".join(actual.lower().split())
+    if norm_expected in norm_actual:
+        return {"pass": True, "reason": f"PASS: Match after normalization ({expected})"}
+    return {"pass": False, "reason": f"FAIL: Expected '{expected}' not found in '{actual[:100]}'"}
+
+
+def grade_status(expected: str, actual: str) -> dict:
+    if actual == expected:
+        return {"pass": True, "reason": f"PASS: Correct status ({actual})"}
+    return {"pass": False, "reason": f"FAIL: Expected status '{expected}', got '{actual}'"}
+
+

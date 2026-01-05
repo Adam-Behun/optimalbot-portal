@@ -8,8 +8,10 @@ from evals.triage.common import (
     get_scenario,
     list_scenarios,
     save_result,
-    call_grader,
-    grade_pass_fail,
+    grade_single_dtmf,
+    grade_dtmf_sequence,
+    grade_spoken_text,
+    grade_status,
 )
 
 __all__ = [
@@ -20,6 +22,8 @@ __all__ = [
     "get_scenario",
     "list_scenarios",
     "save_result",
-    "call_grader",
-    "grade_pass_fail",
+    "grade_single_dtmf",
+    "grade_dtmf_sequence",
+    "grade_spoken_text",
+    "grade_status",
 ]

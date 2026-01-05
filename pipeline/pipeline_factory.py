@@ -30,7 +30,7 @@ class PipelineFactory:
         dialin_settings: Dict[str, str] = None
     ) -> tuple:
         organization_slug = session_data.get('organization_slug')
-        services_config = PipelineFactory._load_services_config(organization_slug, client_name)
+        services_config = PipelineFactory.load_services_config(organization_slug, client_name)
 
         call_type = services_config.get('call_type')
         if not call_type:
@@ -83,7 +83,7 @@ class PipelineFactory:
         return pipeline, params, components
 
     @staticmethod
-    def _load_services_config(organization_slug: str, client_name: str) -> Dict[str, Any]:
+    def load_services_config(organization_slug: str, client_name: str) -> Dict[str, Any]:
         """Load and parse services.yaml for a client."""
         client_path = Path(f"clients/{organization_slug}/{client_name}")
         services_path = client_path / "services.yaml"
