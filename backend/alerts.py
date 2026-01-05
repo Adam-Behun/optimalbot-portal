@@ -1,18 +1,25 @@
 """Email alerting for critical failures using Gmail SMTP."""
 
-import os
 import asyncio
+import os
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from collections import OrderedDict
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from functools import partial
 from typing import Optional
+
 from loguru import logger
+
+# Rate limiting: max 1 email per alert type per 5 minutes
+RATE_LIMIT_SECONDS = 300
+# Maximum number of alert types to track (prevents memory leak)
+MAX_ALERT_TYPES = 1000
 
 
 class EmailAlerter:
-    """Send email alerts for critical failures."""
+    """Send email alerts for critical failures with rate limiting."""
 
     def __init__(self):
         self.smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
@@ -26,34 +33,69 @@ class EmailAlerter:
         self._enabled = bool(
             self.smtp_username and self.smtp_password and self.recipients
         )
+        # Rate limiting: track last alert time per alert type (bounded to prevent memory leak)
+        self._last_alert_times: OrderedDict[str, datetime] = OrderedDict()
 
         if self._enabled:
             logger.info(f"Email alerting enabled: {len(self.recipients)} recipients")
         else:
-            logger.warning("Email alerting not configured (set SMTP_USERNAME, SMTP_PASSWORD, ALERT_RECIPIENTS)")
+            logger.warning(
+                "Email alerting not configured (set SMTP_USERNAME, SMTP_PASSWORD, ALERT_RECIPIENTS)"
+            )
 
     def is_enabled(self) -> bool:
         """Check if alerting is enabled."""
         return self._enabled
+
+    def _is_rate_limited(self, alert_type: str) -> bool:
+        """Check if alert type is rate limited (max 1 per 5 minutes)."""
+        now = datetime.now(timezone.utc)
+        last_time = self._last_alert_times.get(alert_type)
+
+        if last_time is None:
+            return False
+
+        elapsed = (now - last_time).total_seconds()
+        return elapsed < RATE_LIMIT_SECONDS
+
+    def _record_alert(self, alert_type: str):
+        """Record that an alert was sent for rate limiting."""
+        # Evict oldest entry if at capacity to prevent unbounded growth
+        if len(self._last_alert_times) >= MAX_ALERT_TYPES:
+            self._last_alert_times.popitem(last=False)
+        self._last_alert_times[alert_type] = datetime.now(timezone.utc)
 
     async def send_alert(
         self,
         subject: str,
         body: str,
         priority: str = "normal",
+        alert_type: str = None,
     ):
-        """Send alert email asynchronously.
+        """Send alert email asynchronously with rate limiting.
 
         Args:
             subject: Email subject
             body: Email body text
             priority: "high" or "normal"
+            alert_type: Alert category for rate limiting (defaults to subject)
         """
         if not self._enabled:
             logger.warning(f"Alert not sent (alerting disabled): {subject}")
             return
 
+        # Use subject as alert_type if not specified
+        rate_limit_key = alert_type or subject
+
+        # Check rate limiting
+        if self._is_rate_limited(rate_limit_key):
+            logger.debug(f"Alert rate limited (5 min cooldown): {subject}")
+            return
+
         try:
+            # Record timestamp BEFORE sending to prevent retry storms on failure
+            self._record_alert(rate_limit_key)
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
@@ -93,7 +135,9 @@ class EmailAlerter:
 Error: {error}
 
 Please investigate the service health and take appropriate action."""
-        await self.send_alert(subject, body, priority="high")
+        await self.send_alert(
+            subject, body, priority="high", alert_type=f"service_degraded:{service}"
+        )
 
     async def alert_call_failure_spike(
         self,
@@ -102,14 +146,17 @@ Please investigate the service health and take appropriate action."""
         window_minutes: int = 15,
     ):
         """Alert when call failures exceed threshold."""
-        subject = f"Call Failure Spike Detected"
+        subject = "Call Failure Spike Detected"
         body = f"""High number of call failures detected.
 
 Organization: {organization_id}
 Failures in last {window_minutes} minutes: {failure_count}
 
 Please review call logs and investigate the root cause."""
-        await self.send_alert(subject, body, priority="high")
+        await self.send_alert(
+            subject, body, priority="high",
+            alert_type=f"call_failure_spike:{organization_id}"
+        )
 
     async def alert_bot_start_failure(
         self,
@@ -126,7 +173,7 @@ Patient ID: {patient_id or 'N/A'}
 Error: {error}
 
 The patient's call status has been marked as Failed."""
-        await self.send_alert(subject, body, priority="high")
+        await self.send_alert(subject, body, priority="high", alert_type="bot_start_failure")
 
     async def alert_dialout_exhausted(
         self,
@@ -145,7 +192,7 @@ Phone Number: {phone_number}
 Attempts: {attempts}
 
 The call could not be connected after multiple retries."""
-        await self.send_alert(subject, body, priority="normal")
+        await self.send_alert(subject, body, priority="normal", alert_type="dialout_exhausted")
 
     async def alert_critical_error(
         self,
@@ -169,7 +216,9 @@ Message: {error_message}
 {context_str}
 
 Immediate attention may be required."""
-        await self.send_alert(subject, body, priority="high")
+        await self.send_alert(
+            subject, body, priority="high", alert_type=f"critical_error:{error_type}"
+        )
 
 
 # Singleton instance

@@ -2,10 +2,11 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
 from bson import ObjectId
 from loguru import logger
 
-from backend.database import get_database, MONGO_DB_NAME
+from backend.database import get_database
 
 
 class MetricsCollector:
@@ -208,6 +209,8 @@ class MetricsCollector:
                 result = results[0]
                 del result["_id"]
                 result["date"] = start_of_day.isoformat()
+                # Rename avg_duration to avg_duration_seconds for frontend compatibility
+                result["avg_duration_seconds"] = result.pop("avg_duration", None)
                 result["success_rate"] = (
                     (result["completed"] / result["total_calls"] * 100)
                     if result["total_calls"] > 0 else 0
@@ -220,7 +223,7 @@ class MetricsCollector:
                 "completed": 0,
                 "failed": 0,
                 "voicemail": 0,
-                "avg_duration": None,
+                "avg_duration_seconds": None,
                 "total_dial_attempts": 0,
                 "success_rate": 0,
             }
@@ -282,30 +285,71 @@ class MetricsCollector:
                 result = results[0]
                 del result["_id"]
                 result["period"] = period
-                result["start_date"] = start_date.isoformat()
-                result["end_date"] = now.isoformat()
+                result["period_start"] = start_date.isoformat()
+                result["period_end"] = now.isoformat()
+                # Rename avg_duration to avg_duration_seconds for frontend compatibility
+                result["avg_duration_seconds"] = result.pop("avg_duration", None)
                 result["success_rate"] = (
                     (result["completed"] / result["total_calls"] * 100)
                     if result["total_calls"] > 0 else 0
+                )
+                # Add cost aggregation
+                result["total_cost_usd"] = await self._get_period_cost(
+                    organization_id, start_date, now
                 )
                 return result
 
             return {
                 "period": period,
-                "start_date": start_date.isoformat(),
-                "end_date": now.isoformat(),
+                "period_start": start_date.isoformat(),
+                "period_end": now.isoformat(),
                 "total_calls": 0,
                 "completed": 0,
                 "failed": 0,
                 "voicemail": 0,
                 "in_progress": 0,
-                "avg_duration": None,
+                "avg_duration_seconds": None,
                 "total_dial_attempts": 0,
                 "success_rate": 0,
+                "total_cost_usd": 0,
             }
         except Exception as e:
             logger.error(f"Failed to get period summary: {e}")
             return {}
+
+    async def _get_period_cost(
+        self,
+        organization_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> float:
+        """Aggregate total cost from sessions collection for the period."""
+        try:
+            sessions = self.db["sessions"]
+            pipeline = [
+                {
+                    "$match": {
+                        "organization_id": ObjectId(organization_id),
+                        "created_at": {"$gte": start_date, "$lt": end_date},
+                        "total_cost_usd": {"$exists": True, "$ne": None}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": None,
+                        "total_cost": {"$sum": "$total_cost_usd"}
+                    }
+                }
+            ]
+            cursor = sessions.aggregate(pipeline)
+            results = await cursor.to_list(length=1)
+
+            if results and results[0].get("total_cost") is not None:
+                return round(results[0]["total_cost"], 2)
+            return 0.0
+        except Exception as e:
+            logger.error(f"Failed to get period cost: {e}")
+            return 0.0
 
     async def get_status_breakdown(
         self,
