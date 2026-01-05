@@ -35,6 +35,13 @@ dependencies = [
     "passlib[bcrypt]",
     "python-jose[cryptography]",
 
+    # MFA (Two-Factor Authentication)
+    "pyotp>=2.9.0",
+    "qrcode[pil]>=7.4",
+
+    # Email alerting
+    "aiosmtplib>=3.0.0",
+
     # Rate limiting
     "slowapi",
 
