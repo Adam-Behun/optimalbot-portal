@@ -1,9 +1,8 @@
 # IVR Navigation Scenarios
 # Tests DTMF menu navigation and status detection
 #
-# PRINCIPLE: Only include scenarios that challenge the system.
-# Obvious "Press 2 for provider services" tests are not needed.
-# Focus on: ambiguous choices, stuck detection, recovery, traps.
+# PRINCIPLE: Each scenario is a realistic, challenging journey through an insurance IVR.
+# 8-12 steps per scenario. Includes: traps, dead ends, recovery, garbled audio, loops.
 #
 # Usage:
 #   python run.py --scenario <id>
@@ -11,716 +10,1036 @@
 #   python run.py --sync-dataset
 
 dataset_name: "demo_clinic_alpha/eligibility_verification/triage/ivr_navigation"
-dataset_description: "Edge case scenarios for insurance IVR navigation (BCBS, Aetna, Cigna, etc.)"
+dataset_description: "Complex multi-step IVR navigation scenarios for insurance companies"
 
-navigation_llm:
-  model: gpt-4o
-
-navigation_goal: |
-  Navigate to speak with a representative who can verify:
-  - Patient eligibility and benefits
-  - Prior authorization status
-  - CPT code coverage
-
-  Look for options like: "eligibility", "benefits", "prior authorization",
-  "provider services", "speak to representative", or "agent".
+# LLM config inherited from clients/demo_clinic_alpha/eligibility_verification/services.yaml
+# Navigation goal is formatted with TEST_PATIENT_DATA in run.py (no override here)
 
 scenarios:
   # =============================================================================
-  # MISLEADING OPTIONS - Wrong choice sounds right
+  # 1. BCBS - Member vs Provider Trap with Recovery
   # =============================================================================
-
   - id: "1"
-    description: "Trap: 'Member eligibility' vs need for provider eligibility"
+    description: "BCBS: Member eligibility trap, wrong department, recovery to provider services"
     steps:
-      - menu_prompt: "For member eligibility and benefits, press 1. For claims, press 2. For pharmacy, press 3. To speak with an operator, press 0."
-        expected_action: "dtmf:0"
-        reasoning: "'Member eligibility' is for patients checking their own benefits, not providers. Need operator to reach provider services."
-
-  - id: "2"
-    description: "Trap: 'Eligibility' option leads to automated system, not human"
-    steps:
-      - menu_prompt: "For automated eligibility verification, press 1. For prior authorization status, press 2. To speak with a representative, press 0."
-        expected_action: "dtmf:0"
-        reasoning: "Automated eligibility won't help for complex verification - need human rep"
-
-  - id: "3"
-    description: "Trap: Provider option exists but buried, obvious choice is wrong"
-    steps:
-      - menu_prompt: "Welcome to United Healthcare. For members, press 1. For employers, press 2. For brokers, press 3. For all other callers, press 4."
-        expected_action: "dtmf:4"
-        reasoning: "Providers are 'all other callers' - not member/employer/broker"
-
-      - menu_prompt: "For provider services, press 1. For government programs, press 2."
+      - menu_prompt: "Thank you for calling BlueCross BlueShield. For English, press 1. Para español, oprima 2."
         expected_action: "dtmf:1"
-        reasoning: "Now provider services is available"
+        reasoning: "Select English"
 
-      - menu_prompt: "Connecting you to provider services."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # STUCK DETECTION - No good options, need to recognize dead end
-  # =============================================================================
-
-  - id: "4"
-    description: "Stuck: Pharmacy-only menu with no escape"
-    steps:
-      - menu_prompt: "Pharmacy services. For prescription refills, press 1. For drug pricing, press 2. For mail order, press 3. For specialty pharmacy, press 4."
-        expected_action: "status:stuck"
-        reasoning: "No eligibility options and no way back - wrong department entirely"
-
-  - id: "5"
-    description: "Stuck: Menu loop with no relevant options"
-    steps:
-      - menu_prompt: "Main menu. For claims status, press 1. For payment information, press 2. For dental, press 3. For vision, press 4."
-        expected_action: "status:stuck"
-        reasoning: "No eligibility/provider/representative option - stuck in wrong system"
-
-  - id: "6"
-    description: "Stuck: Repeated invalid selection indicates system problem"
-    steps:
-      - menu_prompt: "For claims, press 1. For pharmacy, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Claims is closer to our goal than pharmacy"
-
-      - menu_prompt: "I'm sorry, that is not a valid selection. For claims, press 1. For pharmacy, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Try again"
-
-      - menu_prompt: "I'm sorry, that is not a valid selection. For claims, press 1. For pharmacy, press 2."
-        expected_action: "status:stuck"
-        reasoning: "System not accepting valid input - stuck"
-
-  # =============================================================================
-  # RECOVERY - Backtrack from wrong path
-  # =============================================================================
-
-  - id: "7"
-    description: "Recovery: Recognize wrong submenu, use star to go back"
-    steps:
-      - menu_prompt: "Claims department. For claim status, press 1. For submit new claim, press 2. For appeals, press 3. To return to main menu, press star."
-        expected_action: "dtmf:*"
-        reasoning: "Wrong department - no eligibility here, go back"
-
-      - menu_prompt: "Main menu. For eligibility verification, press 1. For claims, press 2. For prior authorization, press 3."
-        expected_action: "dtmf:1"
-        reasoning: "Found eligibility in main menu"
-
-      - menu_prompt: "Connecting you to eligibility."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "8"
-    description: "Recovery: Use 0 for operator when menu is unhelpful"
-    steps:
-      - menu_prompt: "For new prescriptions, press 1. For refills, press 2. For drug interactions, press 3. For operator, press 0."
-        expected_action: "dtmf:0"
-        reasoning: "None of these help - operator can redirect to eligibility"
-
-      - menu_prompt: "Connecting you to an operator."
-        expected_action: "status:completed"
-        reasoning: "Operator will help reach goal"
-
-  # =============================================================================
-  # WAIT VS ACTION - Know when NOT to press anything
-  # =============================================================================
-
-  - id: "9"
-    description: "Wait: Incomplete menu, don't act yet"
-    steps:
-      - menu_prompt: "Thank you for calling Aetna. Please listen carefully as our menu options have recently changed. For..."
-        expected_action: "status:wait"
-        reasoning: "Menu is still being read - wait for all options"
-
-  - id: "10"
-    description: "Wait: System asking for verbal/data input, not DTMF"
-    steps:
-      - menu_prompt: "Please say or enter your 10-digit provider NPI number."
-        expected_action: "status:wait"
-        reasoning: "Requires data entry - not a menu navigation step"
-
-  - id: "11"
-    description: "Wait: Hold music/message, nothing to do"
-    steps:
-      - menu_prompt: "[Music playing] Thank you for holding. Your call is important to us. A representative will be with you shortly."
-        expected_action: "status:wait"
-        reasoning: "On hold - wait for human or new menu"
-
-  - id: "12"
-    description: "Wait: Transfer in progress, don't interrupt"
-    steps:
-      - menu_prompt: "Please hold while we transfer you..."
-        expected_action: "status:wait"
-        reasoning: "Transfer happening - wait for it to complete or new prompt"
-
-  # =============================================================================
-  # AMBIGUOUS CHOICES - Multiple reasonable options
-  # =============================================================================
-
-  - id: "13"
-    description: "Ambiguous: Prior auth vs eligibility - both relevant"
-    steps:
-      - menu_prompt: "For eligibility verification, press 1. For prior authorization, press 2. For both, press 3."
-        expected_action: "dtmf:3"
-        reasoning: "Option 3 covers both our needs"
-
-      - menu_prompt: "Connecting you to a benefits specialist."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "14"
-    description: "Ambiguous: Long menu, find the right option"
-    steps:
-      - menu_prompt: "For Medicare Advantage, press 1. For Medicare Supplement, press 2. For Medicaid, press 3. For commercial plans, press 4. For provider services including eligibility and authorization, press 5. For pharmacy, press 6. For dental, press 7."
-        expected_action: "dtmf:5"
-        reasoning: "Provider services with eligibility mentioned - correct despite being buried"
-
-      - menu_prompt: "Provider services. Please hold for the next available representative."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # COMPLETION DETECTION - Various phrasings
-  # =============================================================================
-
-  - id: "15"
-    description: "Completion: Ambiguous 'one moment' - is it transfer or processing?"
-    steps:
-      - menu_prompt: "One moment please... [pause] ...I'm transferring you to an eligibility specialist now."
-        expected_action: "status:completed"
-        reasoning: "Transfer confirmed after pause - navigation complete"
-
-  - id: "16"
-    description: "Completion: Queue confirmation"
-    steps:
-      - menu_prompt: "You are caller number 3 in queue. Estimated wait time is 2 minutes. Please remain on the line."
-        expected_action: "status:completed"
-        reasoning: "In queue for human - navigation complete"
-
-  # =============================================================================
-  # DEEP NAVIGATION - Multiple levels of decision
-  # =============================================================================
-
-  - id: "17"
-    description: "Deep: 5-level navigation with decision at each step"
-    steps:
-      - menu_prompt: "Thank you for calling Cigna. For faster service, you may use our website. For phone service, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Need phone service for this call"
-
-      - menu_prompt: "For personal health insurance, press 1. For employer-sponsored plans, press 2. For healthcare professionals, press 3."
-        expected_action: "dtmf:3"
-        reasoning: "Healthcare professionals = providers"
-
-      - menu_prompt: "For provider network questions, press 1. For claims and billing, press 2. For eligibility and benefits verification, press 3. For credentialing, press 4."
-        expected_action: "dtmf:3"
-        reasoning: "Eligibility and benefits matches goal"
-
-      - menu_prompt: "For real-time automated eligibility, press 1. To speak with a representative, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Need human for complex verification"
-
-      - menu_prompt: "Please hold for the next available representative."
-        expected_action: "status:completed"
-        reasoning: "Goal reached after 5 levels"
-
-  - id: "18"
-    description: "Deep: Navigation with NPI entry mid-flow"
-    steps:
-      - menu_prompt: "For providers, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Provider option"
-
-      - menu_prompt: "Please enter your 10-digit NPI number."
-        expected_action: "status:wait"
-        reasoning: "NPI entry required - not a menu"
-
-      - menu_prompt: "Thank you. For eligibility, press 1. For claims, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Continue to eligibility after NPI"
-
-      - menu_prompt: "Connecting you to eligibility verification."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # EDGE CASES - Unusual patterns
-  # =============================================================================
-
-  - id: "19"
-    description: "Edge: Menu mentions numbers in context, not just options"
-    steps:
-      - menu_prompt: "Our offices are open Monday through Friday, 8 AM to 5 PM. For eligibility, available 24 hours a day 7 days a week, press 1. For other services, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Press 1 for eligibility - ignore numbers in time description"
-
-      - menu_prompt: "24-hour eligibility line. Please hold."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # CONVERSATIONAL AI IVR - No "Press X", speech-based navigation
-  # =============================================================================
-
-  - id: "20"
-    description: "Conversational AI: Speech-only navigation, no DTMF options"
-    steps:
-      - menu_prompt: "Hello! I'm your virtual assistant for Anthem. Tell me what you need help with today. You can say things like 'check my benefits' or 'find a doctor'."
-        expected_action: "status:wait"
-        reasoning: "No DTMF options - need to speak. Wait for verbal response capability."
-
-  - id: "21"
-    description: "Conversational AI: Confirming request before transfer"
-    steps:
-      - menu_prompt: "I heard you say you want to verify eligibility for a patient. Is that right?"
-        expected_action: "status:wait"
-        reasoning: "Yes/no verbal response needed - not a DTMF menu"
-
-  - id: "22"
-    description: "Conversational AI: Disambiguation when multiple intents detected"
-    steps:
-      - menu_prompt: "I can help with a few things. Are you calling about: 1) checking patient eligibility, 2) a prior authorization request, or 3) something else? Just tell me which one."
-        expected_action: "status:wait"
-        reasoning: "Verbal response expected - the numbers are not DTMF options"
-
-  # =============================================================================
-  # PROVIDER AUTHENTICATION - NPI/TIN entry sequences
-  # =============================================================================
-
-  - id: "23"
-    description: "Auth: NPI entry before menu access"
-    steps:
-      - menu_prompt: "Welcome to the provider portal. To continue, please enter your 10-digit NPI number, followed by the pound key."
-        expected_action: "status:wait"
-        reasoning: "NPI entry required - 10 digit sequence, not menu navigation"
-
-      - menu_prompt: "Thank you. Now please enter your Tax ID number, followed by pound."
-        expected_action: "status:wait"
-        reasoning: "Second authentication step - TIN entry"
-
-      - menu_prompt: "Your provider is verified. For eligibility, press 1. For claims, press 2. For prior authorization, press 3."
-        expected_action: "dtmf:1"
-        reasoning: "Post-auth menu - eligibility is option 1"
-
-      - menu_prompt: "Connecting you to provider eligibility."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "24"
-    description: "Auth: Failed authentication handling"
-    steps:
-      - menu_prompt: "Please enter your NPI number."
-        expected_action: "status:wait"
-        reasoning: "NPI entry required"
-
-      - menu_prompt: "I'm sorry, that NPI was not found in our system. Press 1 to try again. Press 2 to speak with a representative."
-        expected_action: "dtmf:2"
-        reasoning: "Auth failed - need human help to resolve"
-
-      - menu_prompt: "Please hold for a representative."
-        expected_action: "status:completed"
-        reasoning: "Representative will help with auth issue"
-
-  # =============================================================================
-  # VERY DEEP NAVIGATION - 6+ steps
-  # =============================================================================
-
-  - id: "25"
-    description: "Deep: 7-level enterprise IVR maze"
-    steps:
-      - menu_prompt: "Thank you for calling UnitedHealth Group. For UnitedHealthcare, press 1. For Optum, press 2. For all other inquiries, press 3."
-        expected_action: "dtmf:1"
-        reasoning: "UnitedHealthcare is the insurance arm"
-
-      - menu_prompt: "UnitedHealthcare. For individual and family plans, press 1. For employer-sponsored plans, press 2. For Medicare, press 3. For healthcare providers, press 4."
+      - menu_prompt: "Please listen carefully as our menu options have changed. For individual and family plans, press 1. For group and employer plans, press 2. For Medicare, press 3. For healthcare providers, press 4."
         expected_action: "dtmf:4"
         reasoning: "We are calling as a healthcare provider"
 
-      - menu_prompt: "Provider services. For contracting and credentialing, press 1. For claims and payment, press 2. For clinical programs, press 3. For patient support services, press 4."
-        expected_action: "dtmf:4"
-        reasoning: "Patient support services is closest to eligibility verification"
-
-      - menu_prompt: "Patient support. For eligibility and benefits verification, press 1. For referral management, press 2. For care coordination, press 3."
-        expected_action: "dtmf:1"
-        reasoning: "Direct match for eligibility verification"
-
-      - menu_prompt: "Eligibility verification. For commercial plans, press 1. For Medicare Advantage, press 2. For Medicaid, press 3. For all plan types, press 4."
-        expected_action: "dtmf:4"
-        reasoning: "All plan types covers any patient"
-
-      - menu_prompt: "To expedite your call, please have your provider NPI ready. Press 1 to continue."
-        expected_action: "dtmf:1"
-        reasoning: "Continue past informational prompt"
-
-      - menu_prompt: "Please hold for the next available eligibility specialist. Current wait time is 3 minutes."
-        expected_action: "status:completed"
-        reasoning: "In queue for specialist - goal achieved"
-
-  - id: "26"
-    description: "Deep: 6-level with wrong turn and recovery"
-    steps:
-      - menu_prompt: "Blue Cross Blue Shield of Illinois. For member services, press 1. For provider services, press 2. For pharmacy, press 3."
-        expected_action: "dtmf:2"
-        reasoning: "Provider services"
-
-      - menu_prompt: "Provider services. For network status, press 1. For fee schedules, press 2. For claims, press 3. For all other inquiries, press 4."
-        expected_action: "dtmf:4"
-        reasoning: "Eligibility not listed - try other inquiries"
-
-      - menu_prompt: "Other inquiries. For medical policy, press 1. For appeals, press 2. Press star to return to provider menu."
-        expected_action: "dtmf:*"
-        reasoning: "Wrong path - no eligibility option, go back"
-
-      - menu_prompt: "Provider services. For network status, press 1. For fee schedules, press 2. For claims, press 3. For all other inquiries, press 4. For eligibility verification, press 5."
-        expected_action: "dtmf:5"
-        reasoning: "Eligibility option appeared on re-read of menu"
-
-      - menu_prompt: "Eligibility verification. Please hold."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # TRAP MENUS - Correct choice is counterintuitive
-  # =============================================================================
-
-  - id: "27"
-    description: "Trap: Eligibility vs Prior Auth - both sound right but different paths"
-    steps:
-      - menu_prompt: "Thank you for calling Cigna provider services. For eligibility inquiries, our automated system can help you 24/7 - press 1. For prior authorization, press 2. To speak with a representative, press 0."
+      - menu_prompt: "Provider services. For member eligibility and benefits, press 1. For claims status, press 2. For pharmacy, press 3. To speak with a provider representative, press 0."
         expected_action: "dtmf:0"
-        reasoning: "Automated eligibility won't handle complex PA questions - need human"
+        reasoning: "'Member eligibility' is for members checking their OWN benefits. Need provider rep."
 
-      - menu_prompt: "Please hold for a representative who can assist with eligibility and authorization."
-        expected_action: "status:completed"
-        reasoning: "Representative can handle both"
-
-  - id: "28"
-    description: "Trap: Member ID lookup sounds helpful but wastes time"
-    steps:
-      - menu_prompt: "To check eligibility, press 1 and have the member ID ready. If you don't have the member ID, press 2 to search by patient name and date of birth. Press 0 for a representative."
+      - menu_prompt: "All representatives are currently assisting other callers. Your estimated wait time is 25 minutes. To continue holding, press 1. To receive a callback, press 2."
         expected_action: "dtmf:1"
-        reasoning: "We have member ID in patient data - use direct path"
+        reasoning: "25 minutes is under 30 min threshold - hold instead of callback"
 
-      - menu_prompt: "Please enter the member ID followed by pound."
+      - menu_prompt: "Thank you for holding. Your estimated wait time is now 18 minutes."
         expected_action: "status:wait"
-        reasoning: "Member ID entry - need to enter actual digits"
+        reasoning: "Wait time decreasing - continue holding"
 
-  - id: "29"
-    description: "Trap: Premium line that costs money"
-    steps:
-      - menu_prompt: "For priority service with no wait time, press 1. A $4.99 fee applies. For standard service, press 2. Average wait: 12 minutes."
-        expected_action: "dtmf:2"
-        reasoning: "Don't incur charges - use standard queue"
-
-      - menu_prompt: "Standard service. Please hold for the next available representative."
-        expected_action: "status:completed"
-        reasoning: "In queue without fee"
-
-  - id: "30"
-    description: "Trap: Self-service eligibility is automated voice, not human"
-    steps:
-      - menu_prompt: "For eligibility verification, press 1. For prior authorization status, press 2. For benefit information, press 3. To speak with someone, press 0."
-        expected_action: "dtmf:1"
-        reasoning: "Try direct eligibility first"
-
-      - menu_prompt: "Welcome to self-service eligibility. Please enter the member ID."
+      - menu_prompt: "Your estimated wait time is now 8 minutes. Thank you for your patience."
         expected_action: "status:wait"
-        reasoning: "Entering member ID"
+        reasoning: "Almost there - continue holding"
 
-      - menu_prompt: "Member found. The member is currently active. Benefits include: deductible $500, out of pocket max $3000. For coverage details by CPT code, press 1. To return to main menu, press star. To speak with a representative about this member, press 0."
-        expected_action: "dtmf:0"
-        reasoning: "Automated gave basic info but need human for PA/CPT details"
-
-      - menu_prompt: "Please hold while I transfer you to an eligibility representative with the member information."
-        expected_action: "status:completed"
-        reasoning: "Human will have member context"
-
-  # =============================================================================
-  # STUCK SCENARIOS - Various dead ends
-  # =============================================================================
-
-  - id: "31"
-    description: "Stuck: Infinite loop detection"
-    steps:
-      - menu_prompt: "For claims, press 1. For pharmacy, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "Claims is closer to eligibility than pharmacy"
-
-      - menu_prompt: "Claims department. For claim status, press 1. For submit a claim, press 2. For all other questions, press 3."
-        expected_action: "dtmf:3"
-        reasoning: "Other questions might lead to eligibility"
-
-      - menu_prompt: "For claims, press 1. For pharmacy, press 2."
-        expected_action: "status:stuck"
-        reasoning: "Returned to same menu - stuck in loop"
-
-  - id: "32"
-    description: "Stuck: Fax-only department"
-    steps:
-      - menu_prompt: "For eligibility, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Eligibility option"
-
-      - menu_prompt: "Eligibility verification requests must be submitted by fax to 555-0123. For other options, press star."
-        expected_action: "dtmf:*"
-        reasoning: "Fax-only - try to find another path"
-
-      - menu_prompt: "Main menu. For eligibility, press 1. For claims, press 2."
-        expected_action: "status:stuck"
-        reasoning: "Only path to eligibility is fax - no phone option available"
-
-  - id: "33"
-    description: "Stuck: Website-only service"
-    steps:
-      - menu_prompt: "Welcome to Humana. For faster service, visit humana.com/providers. For Medicare, press 1. For commercial, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Try commercial for eligibility"
-
-      - menu_prompt: "Commercial plans. Eligibility verification is available exclusively through our online portal at providerportal.humana.com. For claims, press 1. For prior auth, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Try prior auth since eligibility is web-only"
-
-      - menu_prompt: "Prior authorization. All prior auth requests must be submitted online. To speak with a representative about a pending prior auth, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Representative option for prior auth"
-
-      - menu_prompt: "Please hold."
-        expected_action: "status:completed"
-        reasoning: "Reached human who can help with both elig and PA"
-
-  # =============================================================================
-  # CALLBACK VS HOLD DECISIONS
-  # =============================================================================
-
-  - id: "34"
-    description: "Decision: Callback offer during long wait"
-    steps:
-      - menu_prompt: "All representatives are currently busy. Estimated wait time is 45 minutes. To continue holding, stay on the line. To schedule a callback, press 1. To leave a message, press 2."
-        expected_action: "dtmf:1"
-        reasoning: "45 minute wait is too long - callback is better"
-
-      - menu_prompt: "We'll call you back at this number within 2 hours. Press 1 to confirm."
-        expected_action: "dtmf:1"
-        reasoning: "Confirm callback request"
-
-      - menu_prompt: "Your callback has been scheduled. You may hang up now."
-        expected_action: "status:completed"
-        reasoning: "Callback scheduled - navigation complete"
-
-  - id: "35"
-    description: "Decision: Stay on hold for short wait"
-    steps:
-      - menu_prompt: "Please hold for the next available representative. Your wait time is approximately 2 minutes. To receive a callback instead, press 1."
+      - menu_prompt: "You are next in queue. A representative will be with you shortly."
         expected_action: "status:wait"
-        reasoning: "2 minutes is short - better to hold than risk callback delays"
+        reasoning: "Next in queue - wait"
 
-      - menu_prompt: "Thank you for holding. This is Maria, how can I help you?"
+      - menu_prompt: "[Hold music] Thank you for your patience. A representative will be with you shortly."
+        expected_action: "status:wait"
+        reasoning: "Still on hold"
+
+      - menu_prompt: "Thank you for holding. This is Jennifer with provider services. How may I help you today?"
         expected_action: "status:completed"
-        reasoning: "Human answered"
+        reasoning: "Human answered - navigation complete"
 
   # =============================================================================
-  # MULTI-LANGUAGE WITH COMPLEX NAVIGATION
+  # 2. UnitedHealthcare - Deep Enterprise Maze
   # =============================================================================
-
-  - id: "36"
-    description: "Language: Spanish-first with provider buried"
+  - id: "2"
+    description: "UnitedHealthcare: 8-level enterprise IVR with authentication and plan selection"
     steps:
-      - menu_prompt: "Gracias por llamar a Kaiser Permanente. Para español, oprima 1. For English, press 2."
-        expected_action: "dtmf:2"
-        reasoning: "Select English"
-
-      - menu_prompt: "Welcome to Kaiser. For appointments, press 1. For prescriptions, press 2. For billing, press 3. For medical records, press 4. For all other services, press 5."
-        expected_action: "dtmf:5"
-        reasoning: "Provider eligibility under other services"
-
-      - menu_prompt: "Other services. For durable medical equipment, press 1. For transportation, press 2. For provider services, press 3."
-        expected_action: "dtmf:3"
-        reasoning: "Provider services found"
-
-      - menu_prompt: "Provider services. For eligibility verification, press 1. For prior authorization, press 2."
+      - menu_prompt: "Thank you for calling UnitedHealth Group. For UnitedHealthcare, press 1. For Optum, press 2. For UnitedHealth corporate, press 3."
         expected_action: "dtmf:1"
-        reasoning: "Eligibility verification"
+        reasoning: "UnitedHealthcare is the insurance arm"
 
-      - menu_prompt: "Please hold."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # CONFUSING OPTION NUMBERING
-  # =============================================================================
-
-  - id: "37"
-    description: "Numbering: Letters and numbers mixed"
-    steps:
-      - menu_prompt: "If you know your party's extension, enter it now. For provider services, press P-R-O-V. For member services, press M-E-M-B."
-        expected_action: "status:wait"
-        reasoning: "Need to enter letters on keypad - P=7, R=7, O=6, V=8"
-
-  - id: "38"
-    description: "Numbering: Pound and star for important options"
-    steps:
-      - menu_prompt: "For automated services, press 1. For claims, press 2. To speak with a live representative at any time, press pound."
-        expected_action: "dtmf:#"
-        reasoning: "Pound for live rep - skips automated"
-
-      - menu_prompt: "Please hold for the next available representative."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # PARTIAL / INTERRUPTED MENUS
-  # =============================================================================
-
-  - id: "39"
-    description: "Partial: Menu cut off mid-option"
-    steps:
-      - menu_prompt: "Thank you for calling. For eligibility, press 1. For claims—"
-        expected_action: "status:wait"
-        reasoning: "Menu incomplete - wait for full options"
-
-      - menu_prompt: "—press 2. For pharmacy, press 3. For provider services, press 4."
+      - menu_prompt: "UnitedHealthcare. For individual and family plans, press 1. For employer-sponsored, press 2. For Medicare and retirement, press 3. For healthcare providers, press 4. For brokers, press 5."
         expected_action: "dtmf:4"
-        reasoning: "Now have full menu - provider services is most relevant"
+        reasoning: "We are calling as a healthcare provider"
 
-      - menu_prompt: "Provider services. Please hold."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  - id: "40"
-    description: "Partial: System interruption with different voice"
-    steps:
-      - menu_prompt: "For eligibility verification, press 1. For prior— [different voice] Attention: this system will be down for maintenance tonight from midnight to 2 AM."
+      - menu_prompt: "Provider services. To continue, please enter your 10-digit NPI number followed by pound."
         expected_action: "status:wait"
-        reasoning: "System announcement interrupted - wait for menu to continue"
+        reasoning: "NPI authentication required - not a menu choice"
 
-      - menu_prompt: "Sorry for the interruption. For eligibility verification, press 1. For prior authorization, press 2."
+      - menu_prompt: "Thank you. For contracting and credentialing, press 1. For claims and payment, press 2. For clinical programs, press 3. For eligibility and benefits, press 4. For prior authorization, press 5."
+        expected_action: "dtmf:4"
+        reasoning: "Eligibility and benefits matches our goal"
+
+      - menu_prompt: "Eligibility and benefits. For commercial plans, press 1. For Medicare Advantage, press 2. For Medicaid and CHIP, press 3. If you don't know the plan type, press 4."
         expected_action: "dtmf:1"
-        reasoning: "Menu resumed - select eligibility"
+        reasoning: "Commercial plans is most common - try it first"
 
-      - menu_prompt: "Connecting you to eligibility."
-        expected_action: "status:completed"
-        reasoning: "Goal reached"
-
-  # =============================================================================
-  # DEPARTMENT TRANSFERS MID-NAVIGATION
-  # =============================================================================
-
-  - id: "41"
-    description: "Transfer: Unexpected department redirect"
-    steps:
-      - menu_prompt: "Provider services. For eligibility, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Eligibility option"
-
-      - menu_prompt: "Due to high call volume, eligibility calls are being handled by our partner organization. Please hold while we transfer you."
+      - menu_prompt: "Commercial plans. Please enter the member ID number followed by pound."
         expected_action: "status:wait"
-        reasoning: "Transfer in progress - wait"
+        reasoning: "Member ID entry required"
 
-      - menu_prompt: "Thank you for holding. Welcome to HealthFirst eligibility services. Press 1 to continue in English."
+      - menu_prompt: "Member found. John Smith, date of birth January 15, 1980. Commercial PPO plan. Press 1 if correct, press 2 if this is not the member you're looking for."
         expected_action: "dtmf:1"
-        reasoning: "New IVR system - continue navigating"
+        reasoning: "Confirm correct member"
 
-      - menu_prompt: "Please enter the member's date of birth using 2 digits for month, 2 for day, and 4 for year."
-        expected_action: "status:wait"
-        reasoning: "DOB entry required"
+      - menu_prompt: "For real-time benefit check, press 1. For detailed eligibility including accumulators, press 2. To speak with a benefits specialist, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Need specialist for complex PA and CPT questions"
 
-      - menu_prompt: "Thank you. An eligibility specialist will be with you shortly."
+      - menu_prompt: "Connecting you to a benefits specialist. Current wait time is 4 minutes."
         expected_action: "status:completed"
-        reasoning: "Goal reached at partner organization"
-
-  - id: "42"
-    description: "Transfer: Cold transfer to wrong department, need recovery"
-    steps:
-      - menu_prompt: "I'm transferring you to benefits. Please hold."
-        expected_action: "status:wait"
-        reasoning: "Transfer in progress"
-
-      - menu_prompt: "Pharmacy benefits. For prescription coverage, press 1. For mail order, press 2. For specialty pharmacy, press 3. To return to main menu, press star."
-        expected_action: "dtmf:*"
-        reasoning: "Wrong department - this is pharmacy, need medical eligibility"
-
-      - menu_prompt: "Main menu. For medical, press 1. For pharmacy, press 2. For dental, press 3."
-        expected_action: "dtmf:1"
-        reasoning: "Medical benefits"
-
-      - menu_prompt: "Medical benefits. For eligibility verification, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Eligibility verification"
-
-      - menu_prompt: "Please hold for an eligibility representative."
-        expected_action: "status:completed"
-        reasoning: "Correct department reached"
+        reasoning: "In queue for specialist - navigation complete"
 
   # =============================================================================
-  # ERROR HANDLING / INVALID INPUT
+  # 3. Aetna - Automated System Then Human Escalation
   # =============================================================================
-
-  - id: "43"
-    description: "Error: System error message"
-    steps:
-      - menu_prompt: "For eligibility, press 1."
-        expected_action: "dtmf:1"
-        reasoning: "Eligibility option"
-
-      - menu_prompt: "We're sorry, we are experiencing technical difficulties. Please try your call again later."
-        expected_action: "status:stuck"
-        reasoning: "System error - cannot proceed"
-
-  # =============================================================================
-  # COMPLEX REAL-WORLD INSURANCE SCENARIOS
-  # =============================================================================
-
-  - id: "44"
-    description: "Real-world: Aetna full navigation path"
+  - id: "3"
+    description: "Aetna: Automated eligibility first, then escalate to human for PA details"
     steps:
       - menu_prompt: "Thank you for calling Aetna. If you're a healthcare provider, press 1. If you're a member, press 2. For all other callers, press 3."
         expected_action: "dtmf:1"
         reasoning: "Healthcare provider"
 
-      - menu_prompt: "Provider services. For our automated eligibility and benefits information available 24/7, press 1. For prior authorization, press 2. For claims, press 3. To speak with a provider services representative, press 0."
+      - menu_prompt: "Provider services. For our automated eligibility system available 24/7, press 1. For prior authorization, press 2. For claims, press 3. For credentialing, press 4. To speak with a representative, press 0."
         expected_action: "dtmf:1"
-        reasoning: "Try automated eligibility first"
+        reasoning: "Try automated eligibility first - faster if it works"
 
-      - menu_prompt: "Automated eligibility. Please enter the subscriber ID number."
+      - menu_prompt: "Automated eligibility. Please enter the subscriber ID."
         expected_action: "status:wait"
         reasoning: "Enter subscriber/member ID"
 
-      - menu_prompt: "I found the member. The plan is active with Aetna Choice POS II. Annual deductible: $1,500. Current status: $800 met. To hear more benefits, press 1. To verify specific CPT codes, press 2. To speak with a representative about this member, press 3."
+      - menu_prompt: "I found the member. Plan: Aetna Choice POS II. Status: Active. Deductible: $1,500, $800 met. Out of pocket max: $6,000, $1,200 met. For more benefits, press 1. To verify CPT code coverage, press 2. To speak with a representative, press 3."
         expected_action: "dtmf:2"
-        reasoning: "Need CPT code verification for prior auth"
+        reasoning: "Need CPT code verification"
 
-      - menu_prompt: "Please enter the 5-digit CPT code."
+      - menu_prompt: "Enter the 5-digit CPT code."
         expected_action: "status:wait"
         reasoning: "CPT code entry"
 
-      - menu_prompt: "CPT 99213 is covered under this plan. Prior authorization is required. To submit a prior authorization, press 1. To speak with a prior auth specialist, press 2."
+      - menu_prompt: "CPT 99214 is covered. Prior authorization is required for this service. Estimated patient responsibility: $45 copay plus 20% coinsurance after deductible. To submit prior auth online, press 1. To speak with a prior auth specialist, press 2. To check another CPT code, press 3."
         expected_action: "dtmf:2"
-        reasoning: "Need to speak with specialist for complex PA"
+        reasoning: "Need PA specialist for complex authorization"
 
-      - menu_prompt: "Please hold for a prior authorization specialist. Your wait time is approximately 4 minutes."
+      - menu_prompt: "Transferring to prior authorization. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Transfer in progress"
+
+      - menu_prompt: "Prior authorization department. For status of existing auth, press 1. To initiate new authorization, press 2. For clinical review questions, press 3."
+        expected_action: "dtmf:2"
+        reasoning: "Need to initiate new authorization"
+
+      - menu_prompt: "New authorization. Please hold for the next available clinical reviewer."
         expected_action: "status:completed"
-        reasoning: "Goal achieved - reaching PA specialist"
+        reasoning: "In queue for clinical reviewer - goal achieved"
 
-  - id: "45"
-    description: "Real-world: Medicare Advantage plan navigation"
+  # =============================================================================
+  # 4. Cigna - Wrong Department and Recovery
+  # =============================================================================
+  - id: "4"
+    description: "Cigna: Accidentally routed to dental, recover to medical eligibility"
     steps:
-      - menu_prompt: "Thank you for calling Blue Cross Medicare Advantage. For member services, press 1. For healthcare providers, press 2. To report fraud, press 3."
+      - menu_prompt: "Thank you for calling Cigna. For faster service, visit cigna.com. To continue by phone, press 1."
+        expected_action: "dtmf:1"
+        reasoning: "Continue by phone"
+
+      - menu_prompt: "For medical, press 1. For dental, press 2. For pharmacy, press 3. For behavioral health, press 4."
+        expected_action: "dtmf:1"
+        reasoning: "Medical services"
+
+      - menu_prompt: "Medical services. For personal health insurance, press 1. For employer plans, press 2. For healthcare professionals, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Healthcare professionals = providers"
+
+      - menu_prompt: "One moment while we transfer you."
+        expected_action: "status:wait"
+        reasoning: "Transfer in progress"
+
+      - menu_prompt: "Cigna Dental provider services. For credentialing, press 1. For claims, press 2. For fee schedules, press 3. To return to main menu, press star."
+        expected_action: "dtmf:*"
+        reasoning: "Wrong department! Transferred to dental instead of medical. Go back."
+
+      - menu_prompt: "Main menu. For medical, press 1. For dental, press 2. For pharmacy, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Try medical again"
+
+      - menu_prompt: "Medical. For members, press 1. For employers, press 2. For providers, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider services. For eligibility and benefits, press 1. For claims, press 2. For prior authorization, press 3. For network status, press 4."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility and benefits"
+
+      - menu_prompt: "Eligibility. For automated lookup, press 1. To speak with a representative, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Need representative for complex verification"
+
+      - menu_prompt: "Please hold for the next available representative. Wait time is approximately 6 minutes."
+        expected_action: "status:completed"
+        reasoning: "In queue - navigation complete"
+
+  # =============================================================================
+  # 5. Humana - Website-Only Dead End, Find Alternate Path
+  # =============================================================================
+  - id: "5"
+    description: "Humana: Eligibility is web-only, find alternate path through prior auth"
+    steps:
+      - menu_prompt: "Thank you for calling Humana. For English, press 1. Para español, oprima 2."
+        expected_action: "dtmf:1"
+        reasoning: "Select English"
+
+      - menu_prompt: "For faster service, visit humana.com/providers. For Medicare Advantage, press 1. For commercial plans, press 2. For Medicaid, press 3."
+        expected_action: "dtmf:2"
+        reasoning: "Try commercial for eligibility"
+
+      - menu_prompt: "Commercial plans. For claims, press 1. For prior authorization, press 2. For eligibility, press 3. For credentialing, press 4."
+        expected_action: "dtmf:3"
+        reasoning: "Eligibility option available"
+
+      - menu_prompt: "Eligibility verification for commercial plans is now available exclusively through our online provider portal at availity.com. For portal registration help, press 1. To return to main menu, press star."
+        expected_action: "dtmf:*"
+        reasoning: "Eligibility is web-only - need alternate path"
+
+      - menu_prompt: "Commercial plans. For claims, press 1. For prior authorization, press 2. For eligibility, press 3. For credentialing, press 4."
+        expected_action: "dtmf:2"
+        reasoning: "Try prior authorization - they can help with eligibility too"
+
+      - menu_prompt: "Prior authorization. For status of pending auth, press 1. To initiate new auth, press 2. For clinical questions, press 3. To speak with a representative, press 0."
+        expected_action: "dtmf:0"
+        reasoning: "Representative can help with both elig and PA"
+
+      - menu_prompt: "All representatives are busy. Expected wait: 8 minutes. To continue holding, press 1. For callback, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "8 minutes is reasonable - continue holding"
+
+      - menu_prompt: "[Hold music] Your call is important to us."
+        expected_action: "status:wait"
+        reasoning: "On hold"
+
+      - menu_prompt: "Thank you for holding. This is Marcus with prior authorization. How can I assist you?"
+        expected_action: "status:completed"
+        reasoning: "Human answered - can help with eligibility and PA"
+
+  # =============================================================================
+  # 6. Anthem - Garbled/Incomplete Audio Recovery
+  # =============================================================================
+  - id: "6"
+    description: "Anthem: Menu audio cuts out, recover and navigate"
+    steps:
+      - menu_prompt: "Thank you for calling Anthem Blue Cross. For English—"
+        expected_action: "status:wait"
+        reasoning: "Menu cut off - wait for more"
+
+      - menu_prompt: "—press 1. Para español, dos."
+        expected_action: "dtmf:1"
+        reasoning: "Select English"
+
+      - menu_prompt: "Please listen carefully. For members, press... [static] ...providers, press 3. For employers, press 4."
+        expected_action: "dtmf:3"
+        reasoning: "Heard 'providers press 3' through static"
+
+      - menu_prompt: "Provider services. [garbled audio]...eligibility...press 1...claims...2..."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility heard as option 1 despite garbled audio"
+
+      - menu_prompt: "I'm sorry, I didn't understand. For eligibility, press 1. For claims, press 2. For prior auth, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Menu repeated clearly - select eligibility"
+
+      - menu_prompt: "Eligibility verification. Enter member ID followed by pound."
+        expected_action: "status:wait"
+        reasoning: "Member ID entry"
+
+      - menu_prompt: "[Long pause] ... [beep] I'm sorry, I didn't receive your input. Please enter the member ID."
+        expected_action: "status:wait"
+        reasoning: "System didn't receive input - waiting for another attempt"
+
+      - menu_prompt: "Thank you. Member verified. For benefit details, press 1. To speak with a representative, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Need representative for PA questions"
+
+      - menu_prompt: "Connecting you now."
+        expected_action: "status:completed"
+        reasoning: "Transfer to representative - navigation complete"
+
+  # =============================================================================
+  # 7. Kaiser - Spanish-First with Deep Provider Path
+  # =============================================================================
+  - id: "7"
+    description: "Kaiser: Spanish-first menu, buried provider option, multiple departments"
+    steps:
+      - menu_prompt: "Gracias por llamar a Kaiser Permanente. Para español, oprima uno. For English, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Select English"
+
+      - menu_prompt: "Welcome to Kaiser Permanente. For appointments, press 1. For prescription refills, press 2. For billing questions, press 3. For medical advice, press 4. For all other services, press 5."
+        expected_action: "dtmf:5"
+        reasoning: "Provider eligibility would be under 'all other services'"
+
+      - menu_prompt: "Other services. For medical records, press 1. For durable medical equipment, press 2. For transportation, press 3. For provider services, press 4. For member services, press 5."
+        expected_action: "dtmf:4"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider services. Are you a contracted Kaiser provider? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:2"
+        reasoning: "Non-contracted provider calling about patient eligibility"
+
+      - menu_prompt: "For out-of-network claims, press 1. For patient eligibility verification, press 2. For authorization requests, press 3."
+        expected_action: "dtmf:2"
+        reasoning: "Patient eligibility verification"
+
+      - menu_prompt: "Patient eligibility. Please have the member's Kaiser ID number ready. Press 1 to continue."
+        expected_action: "dtmf:1"
+        reasoning: "Continue with eligibility"
+
+      - menu_prompt: "Enter the member's 10-digit Kaiser ID."
+        expected_action: "status:wait"
+        reasoning: "Member ID entry"
+
+      - menu_prompt: "Member located. Active HMO plan. For benefit summary, press 1. For specific service authorization, press 2. To speak with eligibility staff, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Need to speak with staff for PA and CPT questions"
+
+      - menu_prompt: "Transferring to eligibility department. Please hold."
+        expected_action: "status:completed"
+        reasoning: "Transfer to eligibility - navigation complete"
+
+  # =============================================================================
+  # 8. Medicare Advantage - Complex Plan Type Navigation
+  # =============================================================================
+  - id: "8"
+    description: "Medicare Advantage: Navigate plan types, authentication, and specialist routing"
+    steps:
+      - menu_prompt: "Thank you for calling Blue Cross Medicare Solutions. For members, press 1. For healthcare providers, press 2. For sales, press 3."
         expected_action: "dtmf:2"
         reasoning: "Healthcare providers"
 
-      - menu_prompt: "Provider services. Are you calling about a Medicare Advantage member or a Medicare Supplement member? For Medicare Advantage, press 1. For Medicare Supplement, press 2."
+      - menu_prompt: "Provider services. Are you calling about Medicare Advantage, press 1. Medicare Supplement, press 2. Medicare Part D, press 3. Not sure, press 4."
         expected_action: "dtmf:1"
-        reasoning: "Medicare Advantage (most common)"
+        reasoning: "Medicare Advantage is most common"
 
-      - menu_prompt: "Medicare Advantage provider line. For coverage determination and prior authorization, press 1. For claims, press 2. For eligibility, press 3. For appeals, press 4."
+      - menu_prompt: "Medicare Advantage. Please enter your NPI."
+        expected_action: "status:wait"
+        reasoning: "NPI authentication"
+
+      - menu_prompt: "NPI verified. For coverage determinations, press 1. For claims, press 2. For eligibility, press 3. For appeals, press 4. For network questions, press 5."
         expected_action: "dtmf:3"
         reasoning: "Eligibility verification"
 
-      - menu_prompt: "Eligibility verification. To use our automated system, you'll need the member's HICN or MBI number. Press 1 to continue with automated lookup. Press 2 to speak with a representative."
+      - menu_prompt: "Medicare eligibility. To use automated lookup, you'll need the member's Medicare Beneficiary Identifier or HICN. Press 1 to continue. Press 2 for representative."
         expected_action: "dtmf:2"
-        reasoning: "May not have HICN/MBI - representative can look up by name/DOB"
+        reasoning: "May not have MBI/HICN - representative can search by name/DOB"
 
-      - menu_prompt: "Please hold for a Medicare Advantage eligibility representative."
+      - menu_prompt: "Medicare representatives handle complex inquiries. Expected wait: 12 minutes. For callback, press 1. To hold, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "12 minutes is acceptable for Medicare complexity"
+
+      - menu_prompt: "[Hold music] Thank you for your patience. Did you know you can check eligibility online at our provider portal?"
+        expected_action: "status:wait"
+        reasoning: "Still on hold"
+
+      - menu_prompt: "We appreciate your patience. You are next in queue."
+        expected_action: "status:wait"
+        reasoning: "Almost there"
+
+      - menu_prompt: "Thank you for holding. This is Patricia with Medicare Advantage provider services."
         expected_action: "status:completed"
-        reasoning: "Human can verify with alternate identifiers"
+        reasoning: "Human answered - navigation complete"
+
+  # =============================================================================
+  # 9. Molina - Medicaid Navigation with Verification Loop
+  # =============================================================================
+  - id: "9"
+    description: "Molina Medicaid: Multiple verification attempts, system issues, recovery"
+    steps:
+      - menu_prompt: "Thank you for calling Molina Healthcare. For English, press 1. Para español, oprima 2."
+        expected_action: "dtmf:1"
+        reasoning: "Select English"
+
+      - menu_prompt: "For members, press 1. For providers, press 2. For pharmacies, press 3."
+        expected_action: "dtmf:2"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider services. Please enter your Tax ID followed by pound."
+        expected_action: "status:wait"
+        reasoning: "Tax ID authentication"
+
+      - menu_prompt: "I'm sorry, that Tax ID was not found. Press 1 to try again. Press 2 for representative assistance."
+        expected_action: "dtmf:1"
+        reasoning: "Try Tax ID again - may have mistyped"
+
+      - menu_prompt: "Please enter your Tax ID followed by pound."
+        expected_action: "status:wait"
+        reasoning: "Second attempt at Tax ID"
+
+      - menu_prompt: "I'm sorry, that Tax ID was not found. Press 1 to try again. Press 2 for representative assistance."
+        expected_action: "dtmf:2"
+        reasoning: "Two failures - need human help"
+
+      - menu_prompt: "Connecting you to provider enrollment. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Transfer in progress"
+
+      - menu_prompt: "Provider enrollment. For new enrollment, press 1. For Tax ID issues, press 2. For eligibility questions, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Eligibility questions - can handle auth issue too"
+
+      - menu_prompt: "Eligibility. Please hold for the next available representative."
+        expected_action: "status:completed"
+        reasoning: "In queue for eligibility rep - navigation complete"
+
+  # =============================================================================
+  # 10. WellCare - Infinite Loop Detection and Escape
+  # =============================================================================
+  - id: "10"
+    description: "WellCare: Menu loop detection, escape via operator"
+    steps:
+      - menu_prompt: "Thank you for calling WellCare. For Medicare, press 1. For Medicaid, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Medicare services"
+
+      - menu_prompt: "Medicare. For pharmacy, press 1. For medical, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Medical services"
+
+      - menu_prompt: "Medical. For members, press 1. For providers, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Provider services"
+
+      - menu_prompt: "For claims, press 1. For other questions, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Other questions - eligibility not listed"
+
+      - menu_prompt: "For Medicare, press 1. For Medicaid, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Back to same menu - trying again"
+
+      - menu_prompt: "Medicare. For pharmacy, press 1. For medical, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Medical again"
+
+      - menu_prompt: "Medical. For members, press 1. For providers, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Providers again"
+
+      - menu_prompt: "For claims, press 1. For other questions, press 2."
+        expected_action: "status:stuck"
+        reasoning: "Same loop detected - no eligibility option, stuck"
+
+  # =============================================================================
+  # 11. Centene - Multi-Transfer Journey
+  # =============================================================================
+  - id: "11"
+    description: "Centene: Multiple unexpected transfers between departments"
+    steps:
+      - menu_prompt: "Thank you for calling Centene Corporation. For Ambetter, press 1. For Health Net, press 2. For WellCare, press 3. For other plans, press 4."
+        expected_action: "dtmf:4"
+        reasoning: "Other plans for general inquiry"
+
+      - menu_prompt: "Please hold while we direct your call."
+        expected_action: "status:wait"
+        reasoning: "Transfer in progress"
+
+      - menu_prompt: "Centene provider services. For credentialing, press 1. For claims, press 2. For benefits, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Benefits includes eligibility"
+
+      - menu_prompt: "Transferring you to the benefits department."
+        expected_action: "status:wait"
+        reasoning: "Another transfer"
+
+      - menu_prompt: "Pharmacy benefits. For drug coverage, press 1. For formulary, press 2. For prior auth, press 3. Press star for main menu."
+        expected_action: "dtmf:*"
+        reasoning: "Wrong department - transferred to pharmacy benefits, not medical"
+
+      - menu_prompt: "Main menu. For medical benefits, press 1. For pharmacy, press 2. For dental, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Medical benefits"
+
+      - menu_prompt: "Medical benefits. For eligibility verification, press 1. For claims status, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility verification"
+
+      - menu_prompt: "Please hold for an eligibility specialist."
+        expected_action: "status:completed"
+        reasoning: "In queue - navigation complete"
+
+  # =============================================================================
+  # 12. Oscar Health - Conversational AI Navigation
+  # =============================================================================
+  - id: "12"
+    description: "Oscar: Conversational AI IVR with speech recognition, then DTMF fallback"
+    steps:
+      - menu_prompt: "Hi! I'm Oscar's virtual assistant. Tell me what you need help with today. You can say things like 'check my benefits' or 'find a doctor'."
+        expected_action: "status:wait"
+        reasoning: "Conversational AI - no DTMF options presented"
+
+      - menu_prompt: "I heard you say you're a healthcare provider. Is that correct? Say yes or no."
+        expected_action: "status:wait"
+        reasoning: "Verbal confirmation needed"
+
+      - menu_prompt: "Great! Are you calling about eligibility, claims, or prior authorization? Just tell me which one."
+        expected_action: "status:wait"
+        reasoning: "Verbal response expected"
+
+      - menu_prompt: "I'll connect you to our provider eligibility team. If you'd prefer, you can also press 1 for eligibility, 2 for claims, or 3 for prior auth."
+        expected_action: "dtmf:1"
+        reasoning: "DTMF option now available - use it for reliability"
+
+      - menu_prompt: "Provider eligibility. To verify a member, I'll need some information. Please enter the member ID."
+        expected_action: "status:wait"
+        reasoning: "Member ID entry"
+
+      - menu_prompt: "Member found. Do you need to speak with someone about this member's benefits? Press 1 for yes, 2 for no."
+        expected_action: "dtmf:1"
+        reasoning: "Need to speak with representative"
+
+      - menu_prompt: "Connecting you to a benefits specialist now."
+        expected_action: "status:completed"
+        reasoning: "Transfer to specialist - navigation complete"
+
+  # =============================================================================
+  # 13. Fax-Only Dead End with Eventual Recovery
+  # =============================================================================
+  - id: "13"
+    description: "Insurance X: Eligibility is fax-only, find human through appeals"
+    steps:
+      - menu_prompt: "Thank you for calling XYZ Insurance. For providers, press 1. For members, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider line. For eligibility, press 1. For claims, press 2. For prior auth, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility option"
+
+      - menu_prompt: "Eligibility verification requests must be submitted via fax to 1-800-555-0123. For fax confirmation, press 1. For other options, press star."
+        expected_action: "dtmf:*"
+        reasoning: "Fax-only won't work - find alternate path"
+
+      - menu_prompt: "Provider line. For eligibility, press 1. For claims, press 2. For prior auth, press 3. For appeals, press 4."
+        expected_action: "dtmf:3"
+        reasoning: "Try prior auth - they often handle eligibility too"
+
+      - menu_prompt: "Prior authorization. All new auths must be submitted online at xyzportal.com. For status of existing auth, press 1. For urgent auth requests, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Urgent requests might reach a human"
+
+      - menu_prompt: "Urgent authorization. These require clinical documentation. Do you have complete clinical notes available? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:2"
+        reasoning: "Saying no might get us to a representative"
+
+      - menu_prompt: "For non-urgent requests, please use our online portal. To speak with a clinical coordinator, press 1."
+        expected_action: "dtmf:1"
+        reasoning: "Clinical coordinator can help with eligibility questions"
+
+      - menu_prompt: "Please hold for the next available clinical coordinator. They can assist with eligibility and authorization questions."
+        expected_action: "status:completed"
+        reasoning: "Found a human who can help - navigation complete"
+
+  # =============================================================================
+  # 14. Callback Scheduling Flow
+  # =============================================================================
+  - id: "14"
+    description: "Long hold time, schedule callback, callback arrives"
+    steps:
+      - menu_prompt: "Thank you for calling HealthPlus. For providers, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider services. For eligibility, press 1."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility"
+
+      - menu_prompt: "Eligibility department. All representatives are currently busy. Estimated wait time is 47 minutes. To hold, stay on the line. For callback, press 1. To leave a message, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "47 minutes is too long - request callback"
+
+      - menu_prompt: "Callback scheduling. We'll call you back at this number. Press 1 to confirm. Press 2 to enter different number."
+        expected_action: "dtmf:1"
+        reasoning: "Confirm callback to current number"
+
+      - menu_prompt: "You'll receive a call within 2 hours. Your confirmation number is CB-47829. Press 1 to repeat, press 2 to continue with other options, or hang up now."
+        expected_action: "dtmf:2"
+        reasoning: "Check if other options available"
+
+      - menu_prompt: "Other options. To cancel callback and hold instead, press 1. To check status later, press 2. To schedule different time, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Check scheduling options"
+
+      - menu_prompt: "Next available slots: Press 1 for today 3-5 PM. Press 2 for tomorrow 9-11 AM. Press 3 to keep current callback."
+        expected_action: "dtmf:1"
+        reasoning: "Today 3-5 PM works better"
+
+      - menu_prompt: "Callback scheduled for today between 3 and 5 PM. You will receive a call from 1-800-555-7890. Thank you."
+        expected_action: "status:completed"
+        reasoning: "Callback scheduled - navigation complete"
+
+  # =============================================================================
+  # 15. System Error and Retry
+  # =============================================================================
+  - id: "15"
+    description: "System errors mid-navigation, persistent retry succeeds"
+    steps:
+      - menu_prompt: "Thank you for calling Regional Health Plan. For providers, press 1."
+        expected_action: "dtmf:1"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Enter your NPI."
+        expected_action: "status:wait"
+        reasoning: "NPI entry"
+
+      - menu_prompt: "We're sorry, our system is temporarily unavailable. Please try again. Press 1 to retry. Press 2 to speak with an operator."
+        expected_action: "dtmf:1"
+        reasoning: "Try again first"
+
+      - menu_prompt: "Enter your NPI."
+        expected_action: "status:wait"
+        reasoning: "NPI entry second attempt"
+
+      - menu_prompt: "We're sorry, our system is temporarily unavailable. Please try again. Press 1 to retry. Press 2 to speak with an operator."
+        expected_action: "dtmf:2"
+        reasoning: "Two failures - get operator"
+
+      - menu_prompt: "Connecting to operator. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Transfer to operator"
+
+      - menu_prompt: "Operator services. How may I direct your call? For eligibility, press 1. For claims, press 2. For other, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility through operator path"
+
+      - menu_prompt: "Transferring to eligibility. Note: our automated systems are experiencing issues. A representative will assist you."
+        expected_action: "status:wait"
+        reasoning: "Transfer in progress"
+
+      - menu_prompt: "Eligibility department. Please hold for the next representative."
+        expected_action: "status:completed"
+        reasoning: "In queue despite system issues - navigation complete"
+
+  # =============================================================================
+  # 16. Premium/Priority Line Avoidance
+  # =============================================================================
+  - id: "16"
+    description: "Avoid paid priority options, navigate through free channels"
+    steps:
+      - menu_prompt: "Welcome to Premium Care Insurance. For priority access with no wait, press 1. A $5.99 per-call fee applies. For standard service, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Avoid per-call fee - use standard service"
+
+      - menu_prompt: "Standard service. For providers, press 1. For members, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider line. For expedited service, press 1. Fee: $2.99. For regular queue, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Avoid expedited fee - use regular queue"
+
+      - menu_prompt: "Regular provider queue. For eligibility, press 1. For claims, press 2. For prior auth, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility"
+
+      - menu_prompt: "Eligibility verification. Current wait: 18 minutes. For priority callback within 1 hour, press 1. Fee: $3.99. To hold for free, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Hold for free - 18 minutes is acceptable"
+
+      - menu_prompt: "Thank you for holding. [Music] Your estimated wait is now 15 minutes."
+        expected_action: "status:wait"
+        reasoning: "On hold"
+
+      - menu_prompt: "Your estimated wait is now 8 minutes."
+        expected_action: "status:wait"
+        reasoning: "Still holding"
+
+      - menu_prompt: "Thank you for your patience. The next representative will be with you shortly."
+        expected_action: "status:wait"
+        reasoning: "Almost there"
+
+      - menu_prompt: "Hello, this is David with eligibility. How can I help you?"
+        expected_action: "status:completed"
+        reasoning: "Human answered - navigation complete without fees"
+
+  # =============================================================================
+  # 17. After-Hours Routing
+  # =============================================================================
+  - id: "17"
+    description: "After-hours call, navigate to 24/7 automated then escalate"
+    steps:
+      - menu_prompt: "Thank you for calling ABC Health. Our offices are currently closed. For pharmacy emergencies, press 1. For nurse advice line, press 2. For 24-hour automated services, press 3. To leave a message, press 4."
+        expected_action: "dtmf:3"
+        reasoning: "24-hour automated services for eligibility check"
+
+      - menu_prompt: "Automated services. For member ID cards, press 1. For claim status, press 2. For eligibility verification, press 3. For PCP information, press 4."
+        expected_action: "dtmf:3"
+        reasoning: "Eligibility verification"
+
+      - menu_prompt: "Enter the member ID."
+        expected_action: "status:wait"
+        reasoning: "Member ID entry"
+
+      - menu_prompt: "Member: Jane Doe. Plan: PPO Gold. Status: Active through December 31. Deductible: $2,000 individual. For benefit details, press 1. For provider network, press 2. For prior auth requirements, press 3. To speak with after-hours support, press 0."
+        expected_action: "dtmf:3"
+        reasoning: "Need prior auth requirements"
+
+      - menu_prompt: "Prior authorization. This service may require prior authorization. For a list of services requiring auth, press 1. To speak with a clinical reviewer, press 2. Note: clinical review is available during business hours only."
+        expected_action: "dtmf:1"
+        reasoning: "Get list of services requiring auth"
+
+      - menu_prompt: "Services requiring prior authorization include: MRI, CT scan, specialty medications, DME over $500, and surgeries. For specific CPT code lookup, press 1. To return to main menu, press star."
+        expected_action: "dtmf:1"
+        reasoning: "Need CPT code lookup"
+
+      - menu_prompt: "Enter the 5-digit CPT code."
+        expected_action: "status:wait"
+        reasoning: "CPT entry"
+
+      - menu_prompt: "CPT 99214: Office visit, established patient, moderate complexity. No prior authorization required for this plan. Press 1 to check another code. Press 0 to speak with after-hours support."
+        expected_action: "dtmf:0"
+        reasoning: "Got basic info, but need to confirm with support"
+
+      - menu_prompt: "After-hours support. For urgent coverage questions, press 1. For pharmacy, press 2. For all other, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Urgent coverage questions"
+
+      - menu_prompt: "Please hold for after-hours coverage support."
+        expected_action: "status:completed"
+        reasoning: "In queue for after-hours support - navigation complete"
+
+  # =============================================================================
+  # 18. Complex Plan Type Disambiguation
+  # =============================================================================
+  - id: "18"
+    description: "Multiple plan types offered, navigate to correct one through questions"
+    steps:
+      - menu_prompt: "Thank you for calling BrightHealth. For individual and family plans, press 1. For employer plans, press 2. For Medicare, press 3. For healthcare providers, press 4."
+        expected_action: "dtmf:4"
+        reasoning: "Healthcare providers"
+
+      - menu_prompt: "Provider services. Which type of plan are you calling about? Individual/family, press 1. Small group, press 2. Large group, press 3. Medicare Advantage, press 4. ACA Marketplace, press 5. Don't know, press 6."
+        expected_action: "dtmf:6"
+        reasoning: "Don't know plan type - let them help identify"
+
+      - menu_prompt: "No problem. Do you have the member ID? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:1"
+        reasoning: "We have member ID"
+
+      - menu_prompt: "Great. Please enter the member ID and we'll identify the plan."
+        expected_action: "status:wait"
+        reasoning: "Member ID entry"
+
+      - menu_prompt: "Member found. This is a Small Group PPO plan. For eligibility, press 1. For prior authorization, press 2. For claims, press 3. For network, press 4."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility"
+
+      - menu_prompt: "Eligibility. Member is active through plan year. Deductible: $1,500, $340 met. Out of pocket max: $6,500. For detailed benefits, press 1. For specific service coverage, press 2. For representative, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Need representative for PA questions"
+
+      - menu_prompt: "Please hold for a small group benefits representative."
+        expected_action: "status:completed"
+        reasoning: "In queue for correct plan type representative - navigation complete"
+
+  # =============================================================================
+  # 19. Voicemail Detection During Navigation
+  # =============================================================================
+  - id: "19"
+    description: "Navigate to department, reach voicemail, try alternate path"
+    steps:
+      - menu_prompt: "Thank you for calling Community Health Plan. For providers, press 1."
+        expected_action: "dtmf:1"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider services. For eligibility, press 1. For claims, press 2. For prior auth, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility"
+
+      - menu_prompt: "Please hold for eligibility."
+        expected_action: "status:wait"
+        reasoning: "Holding for eligibility"
+
+      - menu_prompt: "[Long pause] You have reached the eligibility department. No one is available to take your call. Please leave a message after the tone, or press 1 to return to main menu."
+        expected_action: "dtmf:1"
+        reasoning: "Don't leave message - try alternate path"
+
+      - menu_prompt: "Main menu. For eligibility, press 1. For claims, press 2. For prior auth, press 3. For operator, press 0."
+        expected_action: "dtmf:0"
+        reasoning: "Try operator since eligibility went to voicemail"
+
+      - menu_prompt: "Operator. How may I direct your call?"
+        expected_action: "status:wait"
+        reasoning: "Verbal response to operator"
+
+      - menu_prompt: "I can transfer you to a supervisor in the eligibility department. They may be available. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Transfer to supervisor"
+
+      - menu_prompt: "Eligibility supervisor line. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Holding for supervisor"
+
+      - menu_prompt: "This is Karen, eligibility supervisor. How can I help?"
+        expected_action: "status:completed"
+        reasoning: "Reached supervisor - navigation complete"
+
+  # =============================================================================
+  # 20. Complex Real-World Aetna Journey with All Challenges
+  # =============================================================================
+  - id: "20"
+    description: "Aetna: Complete real-world journey with every challenge type"
+    steps:
+      - menu_prompt: "Thank you for calling Aetna. Your call may be recorded. For faster service, try our mobile app. Press 1 to continue."
+        expected_action: "dtmf:1"
+        reasoning: "Continue to menu"
+
+      - menu_prompt: "For English, press 1. Para español, oprima 2. For Mandarin Chinese, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Select English"
+
+      - menu_prompt: "Are you a healthcare provider? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:1"
+        reasoning: "We are a healthcare provider"
+
+      - menu_prompt: "Provider services. Before we continue, please enter your 10-digit NPI followed by pound."
+        expected_action: "status:wait"
+        reasoning: "NPI authentication"
+
+      - menu_prompt: "Thank you. Your NPI is registered with Aetna. For eligibility and benefits, press 1. For claims, press 2. For prior auth— [static] —press 3. For credentialing, press 4. For network status, press 5."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility despite minor static"
+
+      - menu_prompt: "Eligibility. For commercial plans, press 1. For Medicare Advantage, press 2. For Medicaid, press 3. For student health, press 4. If unsure, press 5."
+        expected_action: "dtmf:5"
+        reasoning: "Let them determine plan type"
+
+      - menu_prompt: "Enter member ID."
+        expected_action: "status:wait"
+        reasoning: "Member ID entry"
+
+      - menu_prompt: "Member located: Aetna Choice POS II. Commercial plan. For real-time benefits, press 1. To speak with representative, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Try real-time benefits first"
+
+      - menu_prompt: "Active member. In-network benefits: $1,500 deductible, $750 met. Office visits: $25 copay. For CPT-specific coverage, enter 5-digit code. For representative, press 0."
+        expected_action: "status:wait"
+        reasoning: "Enter CPT code for specific coverage"
+
+      - menu_prompt: "CPT 99214: Covered. Specialist copay applies. Prior auth: Not required. For another code, enter it now. For auth requirements list, press 1. For representative, press 0."
+        expected_action: "dtmf:0"
+        reasoning: "Got info needed, but want to confirm with representative for PA"
+
+      - menu_prompt: "Connecting to a benefits representative. Current wait: 6 minutes. Continue holding, or press 1 for callback."
+        expected_action: "status:wait"
+        reasoning: "6 minutes is fine - continue holding"
+
+      - menu_prompt: "Thank you for holding. This is Michelle with Aetna provider services. I see you were checking eligibility for a member. How can I help?"
+        expected_action: "status:completed"
+        reasoning: "Human answered with context - navigation complete"
+
+  # =============================================================================
+  # DATA ENTRY SCENARIOS - Complex multi-step journeys with DTMF and verbal input
+  # Uses TEST_PATIENT_DATA from run.py:
+  #   provider_npi: "1928374650"
+  #   tax_id: "84-7291035" (digits: 847291035)
+  #   insurance_member_id: "WDH492817365" (digits: 492817365)
+  #   date_of_birth: "07/14/1982" (MMDDYYYY: 07141982)
+  #   caller_name: "Maria Chen"
+  #   facility_name: "Westbrook Family Medicine"
+  #   provider_name: "Dr. Sarah Okonkwo"
+  #   patient_name: "Robert Martinez"
+  # =============================================================================
+
+  - id: "21"
+    description: "Aetna: Full provider auth with NPI, Tax ID, and verbal confirmation"
+    steps:
+      - menu_prompt: "Thank you for calling Aetna. For English, press 1. Para español, oprima 2."
+        expected_action: "dtmf:1"
+        reasoning: "Select English"
+
+      - menu_prompt: "Are you a healthcare provider? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:1"
+        reasoning: "We are a healthcare provider"
+
+      - menu_prompt: "To verify your identity, please enter your 10-digit NPI number followed by the pound key."
+        expected_action: "dtmf_sequence:1928374650#"
+        reasoning: "Enter NPI 1928374650 with pound terminator"
+
+      - menu_prompt: "Thank you. Now please enter your 9-digit Tax ID number."
+        expected_action: "dtmf_sequence:847291035"
+        reasoning: "Enter Tax ID digits only (84-7291035 → 847291035)"
+
+      - menu_prompt: "I found your provider record. You are registered as Westbrook Family Medicine. Is that correct? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:1"
+        reasoning: "Confirm facility name is correct"
+
+      - menu_prompt: "For eligibility verification, press 1. For prior authorization, press 2. For claims, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Select eligibility verification"
+
+      - menu_prompt: "Please enter the member ID number from the insurance card."
+        expected_action: "speak:WDH492817365"
+        reasoning: "Member ID contains letters - must speak it verbally (DTMF only supports digits)"
+
+      - menu_prompt: "Member found. For real-time benefits, press 1. To speak with a representative, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Need representative for complex verification"
+
+      - menu_prompt: "Please hold for the next available eligibility specialist."
+        expected_action: "status:wait"
+        reasoning: "Still on hold - wait for human to answer"
+
+  - id: "22"
+    description: "BCBS: Conversational AI with verbal responses and NPI entry"
+    steps:
+      - menu_prompt: "Hello! I'm the Blue Cross virtual assistant. Are you a member or a healthcare provider?"
+        expected_action: "speak:Health care professional"
+        reasoning: "Verbal response to identify as provider"
+
+      - menu_prompt: "I can help with eligibility. First, what facility are you calling from?"
+        expected_action: "speak:Westbrook Family Medicine"
+        reasoning: "Speak facility name"
+
+      - menu_prompt: "Thank you. And may I have your name?"
+        expected_action: "speak:Maria Chen"
+        reasoning: "Speak caller name"
+
+      - menu_prompt: "Got it, Maria. For security, please enter your 10-digit NPI number."
+        expected_action: "dtmf_sequence:1928374650"
+        reasoning: "Enter NPI via DTMF"
+
+      - menu_prompt: "Perfect. What is the patient's name you're calling about?"
+        expected_action: "speak:Robert Martinez"
+        reasoning: "Speak patient name"
+
+      - menu_prompt: "And the patient's date of birth? Please enter it as month, day, year using the keypad."
+        expected_action: "dtmf_sequence:07141982"
+        reasoning: "Enter DOB as MMDDYYYY (07/14/1982 → 07141982)"
+
+      - menu_prompt: "I found Robert Martinez in our system. The plan is active. Would you like me to transfer you to an eligibility specialist for detailed benefits? Press 1 for yes, press 2 for no."
+        expected_action: "dtmf:1"
+        reasoning: "Need specialist for detailed benefits"
+
+      - menu_prompt: "Transferring you now. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Transfer in progress - wait for human to answer"
+
+  - id: "23"
+    description: "United: Auth failure, recovery, re-entry with Tax ID"
+    steps:
+      - menu_prompt: "Welcome to UnitedHealthcare provider services. Please enter your NPI."
+        expected_action: "dtmf_sequence:1928374650"
+        reasoning: "Enter NPI"
+
+      - menu_prompt: "I'm sorry, I didn't find that NPI in our system. Press 1 to try again. Press 2 to enter your Tax ID instead. Press 0 for a representative."
+        expected_action: "dtmf:0"
+        reasoning: "Get representative to help with authentication issue"
+
+      - menu_prompt: "Please enter your 9-digit Tax ID followed by pound."
+        expected_action: "dtmf_sequence:847291035#"
+        reasoning: "Enter Tax ID with pound"
+
+      - menu_prompt: "Thank you. I found Westbrook Family Medicine. For eligibility, press 1. For prior auth, press 2."
+        expected_action: "dtmf:1"
+        reasoning: "Select eligibility"
+
+      - menu_prompt: "Please enter the subscriber ID from the member's card."
+        expected_action: "speak:WDH492817365"
+        reasoning: "Member ID contains letters - must speak it verbally"
+
+      - menu_prompt: "Member located. Plan is active through December 2025. For detailed benefits, press 1. For CPT lookup, press 2. For representative, press 3."
+        expected_action: "dtmf:3"
+        reasoning: "Need representative for full verification"
+
+      - menu_prompt: "What is the patient's date of birth for verification?"
+        expected_action: "dtmf_sequence:07141982"
+        reasoning: "Enter DOB for verification"
+
+      - menu_prompt: "Verified. Connecting you to eligibility. Current wait: 4 minutes."
+        expected_action: "status:wait"
+        reasoning: "In queue with wait time - wait for human to answer"
+
+  - id: "24"
+    description: "Cigna: Deep menu navigation with provider callback number"
+    steps:
+      - menu_prompt: "Thank you for calling Cigna. For faster service, have your NPI ready. Press 1 to continue."
+        expected_action: "dtmf:1"
+        reasoning: "Continue to main menu"
+
+      - menu_prompt: "For providers, press 1. For members, press 2. For pharmacies, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Provider services"
+
+      - menu_prompt: "Provider services. For eligibility and benefits, press 1. For claims, press 2. For prior authorization, press 3. For credentialing, press 4."
+        expected_action: "dtmf:1"
+        reasoning: "Eligibility and benefits"
+
+      - menu_prompt: "To access eligibility, I'll need to verify your information. Please enter your NPI."
+        expected_action: "dtmf_sequence:1928374650"
+        reasoning: "Enter NPI"
+
+      - menu_prompt: "What is your callback number in case we get disconnected? Enter 10 digits."
+        expected_action: "dtmf_sequence:5558472910"
+        reasoning: "Enter callback phone (555-847-2910 → 5558472910)"
+
+      - menu_prompt: "Thank you. Enter the member's ID number."
+        expected_action: "speak:WDH492817365"
+        reasoning: "Member ID contains letters - must speak it verbally"
+
+      - menu_prompt: "For automated eligibility response, press 1. To speak with a representative, press 2."
+        expected_action: "dtmf:2"
+        reasoning: "Need representative for complete verification"
+
+      - menu_prompt: "All representatives are currently busy. Estimated wait: 8 minutes. Press 1 to hold. Press 2 for callback."
+        expected_action: "dtmf:1"
+        reasoning: "8 minutes is acceptable - hold"
+
+      - menu_prompt: "Thank you for holding. A representative will be with you shortly."
+        expected_action: "status:wait"
+        reasoning: "Still on hold - wait for human to answer"
+
+  - id: "25"
+    description: "Humana: Mixed verbal and DTMF with wrong department recovery"
+    steps:
+      - menu_prompt: "Welcome to Humana. I'm your virtual assistant. Are you a healthcare provider or a member?"
+        expected_action: "speak:Health care professional"
+        reasoning: "Verbal response - we are a provider"
+
+      - menu_prompt: "Great! What's your facility name?"
+        expected_action: "speak:Westbrook Family Medicine"
+        reasoning: "Speak facility name"
+
+      - menu_prompt: "And who am I speaking with today?"
+        expected_action: "speak:Maria Chen"
+        reasoning: "Speak caller name"
+
+      - menu_prompt: "Thanks Maria. For your security, enter your Tax ID."
+        expected_action: "dtmf_sequence:847291035"
+        reasoning: "Enter Tax ID digits"
+
+      - menu_prompt: "I'm connecting you to pharmacy benefits. Please hold."
+        expected_action: "status:wait"
+        reasoning: "Wrong department - wait for transfer"
+
+      - menu_prompt: "Pharmacy benefits. For prescription coverage, press 1. For formulary, press 2. To return to main menu, press star."
+        expected_action: "dtmf:*"
+        reasoning: "Wrong department - go back to main menu"
+
+      - menu_prompt: "Main menu. For medical eligibility, press 1. For pharmacy, press 2. For dental, press 3."
+        expected_action: "dtmf:1"
+        reasoning: "Medical eligibility"
+
+      - menu_prompt: "Medical eligibility. Enter the member ID."
+        expected_action: "speak:WDH492817365"
+        reasoning: "Member ID contains letters - must speak it verbally"
+
+      - menu_prompt: "Member found. Connecting you to an eligibility specialist."
+        expected_action: "status:completed"
+        reasoning: "Transfer to specialist - navigation complete"

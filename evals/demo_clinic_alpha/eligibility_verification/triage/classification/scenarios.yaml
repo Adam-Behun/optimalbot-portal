@@ -12,9 +12,6 @@
 dataset_name: "demo_clinic_alpha/eligibility_verification/triage/classification"
 dataset_description: "Edge case scenarios for eligibility verification call classification (insurance companies)"
 
-classifier_llm:
-  model: llama-3.3-70b-versatile
-
 scenarios:
   # =============================================================================
   # HUMAN THAT SOUNDS AUTOMATED
@@ -255,9 +252,9 @@ scenarios:
     reasoning: "Same department name but with 'please hold' = automated"
 
   - id: "37"
-    expected_classification: IVR
+    expected_classification: CONVERSATION
     utterance: "Mmhmm. And what is the member's date of birth?"
-    reasoning: "Conversational AI mimicking human acknowledgment"
+    reasoning: "Mmhmm is a distinctly human acknowledgment sound - AI wouldn't use it naturally"
     is_edge_case: true
 
   # =============================================================================
