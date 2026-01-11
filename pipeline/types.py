@@ -24,4 +24,3 @@ class ConversationComponents:
     safety_monitor: Optional[Any] = None
     output_validator: Optional[Any] = None
     safety_config: dict = field(default_factory=dict)
-    llm_wrapper: Optional[Any] = None  # FallbackLLMWrapper for LLM failover

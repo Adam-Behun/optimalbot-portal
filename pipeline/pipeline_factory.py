@@ -17,7 +17,7 @@ from pipeline.ivr_navigation_processor import IVRNavigationProcessor
 from pipeline.safety_processors import OutputValidator, SafetyMonitor
 from pipeline.triage_detector import TriageDetector
 from pipeline.types import ConversationComponents
-from services.service_factory import FallbackLLMWrapper, ServiceFactory
+from services.service_factory import ServiceFactory
 
 
 class PipelineFactory:
@@ -47,16 +47,9 @@ class PipelineFactory:
         stt = ServiceFactory.create_stt(services_config['services']['stt'])
         tts = ServiceFactory.create_tts(services_config['services']['tts'])
 
-        # Create main LLM with optional fallback
+        # Create main LLM
         llm_config = services_config['services']['llm']
-        fallback_llm_config = services_config['services'].get('fallback_llm')
-
-        if fallback_llm_config:
-            llm_wrapper = ServiceFactory.create_llm_with_fallback(llm_config, fallback_llm_config)
-            main_llm = llm_wrapper.active  # Use active LLM for pipeline
-        else:
-            llm_wrapper = None
-            main_llm = ServiceFactory.create_llm(llm_config)
+        main_llm = ServiceFactory.create_llm(llm_config)
 
         classifier_llm_config = services_config['services'].get('classifier_llm')
         if classifier_llm_config:
@@ -75,7 +68,6 @@ class PipelineFactory:
             classifier_llm=classifier_llm,
             call_type=call_type,
             services_config=services_config,
-            llm_wrapper=llm_wrapper,
         )
 
         pipeline, params = PipelineFactory._assemble_pipeline(components)
@@ -118,7 +110,6 @@ class PipelineFactory:
         classifier_llm: Any,
         call_type: str,
         services_config: Dict[str, Any],
-        llm_wrapper: FallbackLLMWrapper = None,
     ) -> ConversationComponents:
         """Create flow and conversation components."""
         context = LLMContext()
@@ -209,7 +200,6 @@ class PipelineFactory:
             safety_monitor=safety_monitor,
             output_validator=output_validator,
             safety_config=safety_config,
-            llm_wrapper=llm_wrapper,
         )
 
     @staticmethod
