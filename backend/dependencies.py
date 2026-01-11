@@ -1,5 +1,5 @@
 import os
-from typing import List, Tuple, Union
+from typing import Tuple
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -111,40 +111,6 @@ async def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-def require_role(roles: Union[str, List[str]]):
-    """
-    Dependency factory that requires user to have one of the specified roles.
-
-    Usage:
-        @router.get("/admin-only")
-        async def admin_endpoint(
-            current_user: dict = Depends(require_role("admin"))
-        ):
-            ...
-
-        @router.get("/multi-role")
-        async def multi_role_endpoint(
-            current_user: dict = Depends(require_role(["admin", "user"]))
-        ):
-            ...
-    """
-    if isinstance(roles, str):
-        roles = [roles]
-
-    async def role_checker(
-        current_user: dict = Depends(get_current_user)
-    ) -> dict:
-        user_role = current_user.get("role")
-        if user_role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required role: {', '.join(roles)}"
-            )
-        return current_user
-
-    return role_checker
 
 
 def get_current_user_organization_id(current_user: dict = Depends(get_current_user)) -> str:

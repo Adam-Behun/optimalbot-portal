@@ -65,7 +65,7 @@ Dynamic schema per workflow. Common fields:
 - `created_at`, `updated_at`
 
 ### `users`
-- `_id`, `email`, `hashed_password`, `organization_id`, `role` (user|admin)
+- `_id`, `email`, `hashed_password`, `organization_id`, `role` (always "admin")
 - `status`: active | locked | inactive
 - `password_history[]`, `password_expires_at`, `failed_login_attempts`
 - `handoff_token`, `handoff_token_expires` (for central login flow)

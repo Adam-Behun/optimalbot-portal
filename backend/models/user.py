@@ -71,7 +71,7 @@ class AsyncUserRecord:
         password: str,
         organization_id: str,
         created_by: Optional[str] = None,
-        role: str = "user"
+        role: str = "admin"
     ) -> Optional[str]:
         try:
             await self._ensure_indexes()

@@ -7,7 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, HttpUrl
 
-from backend.dependencies import get_current_user_organization_id, require_role
+from backend.dependencies import get_current_user, get_current_user_organization_id
 from backend.webhooks import get_webhook_dispatcher
 
 router = APIRouter()
@@ -85,10 +85,10 @@ def _format_webhook(webhook: dict) -> dict:
 
 @router.get("")
 async def list_webhooks(
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """List all webhooks for the organization (admin only)."""
+    """List all webhooks for the organization ."""
     dispatcher = get_webhook_dispatcher()
     webhooks = await dispatcher.list_webhooks(org_id)
 
@@ -101,10 +101,10 @@ async def list_webhooks(
 @router.post("", response_model=WebhookCreateResponse)
 async def create_webhook(
     data: WebhookCreate,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """Create a new webhook endpoint (admin only).
+    """Create a new webhook endpoint .
 
     Returns the webhook configuration including the secret for HMAC verification.
     The secret is only shown once at creation time.
@@ -147,10 +147,10 @@ async def create_webhook(
 @router.get("/{webhook_id}")
 async def get_webhook(
     webhook_id: str,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """Get a single webhook configuration (admin only)."""
+    """Get a single webhook configuration ."""
     dispatcher = get_webhook_dispatcher()
     webhook = await dispatcher.get_webhook(webhook_id, org_id)
 
@@ -164,10 +164,10 @@ async def get_webhook(
 async def update_webhook(
     webhook_id: str,
     data: WebhookUpdate,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """Update webhook configuration (admin only)."""
+    """Update webhook configuration ."""
     # Validate event types if provided
     if data.event_types:
         invalid = set(data.event_types) - set(VALID_EVENT_TYPES)
@@ -195,10 +195,10 @@ async def update_webhook(
 @router.delete("/{webhook_id}")
 async def delete_webhook(
     webhook_id: str,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """Delete a webhook (admin only)."""
+    """Delete a webhook ."""
     dispatcher = get_webhook_dispatcher()
     success = await dispatcher.delete_webhook(webhook_id, org_id)
 
@@ -211,10 +211,10 @@ async def delete_webhook(
 @router.post("/{webhook_id}/test")
 async def test_webhook(
     webhook_id: str,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """Send a test event to a webhook (admin only)."""
+    """Send a test event to a webhook ."""
     dispatcher = get_webhook_dispatcher()
     result = await dispatcher.send_test_event(webhook_id, org_id)
 
@@ -236,10 +236,10 @@ async def test_webhook(
 @router.post("/{webhook_id}/reset")
 async def reset_webhook_failures(
     webhook_id: str,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
-    """Reset failure count and re-enable a disabled webhook (admin only)."""
+    """Reset failure count and re-enable a disabled webhook ."""
     dispatcher = get_webhook_dispatcher()
     success = await dispatcher.update_webhook(
         webhook_id,

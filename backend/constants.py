@@ -19,11 +19,6 @@ class CallStatus(str, Enum):
     VOICEMAIL = "Voicemail"
 
 
-class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
-
-
 class UserStatus(str, Enum):
     ACTIVE = "active"
     LOCKED = "locked"

@@ -271,7 +271,7 @@ async def login(
                 ip_address=ip_address,
                 user_agent=user_agent,
                 success=True,
-                details={"mfa_required": True, "role": user.get("role", "user")},
+                details={"mfa_required": True, "role": user.get("role", "admin")},
                 organization_id=organization_id
             )
 
@@ -290,7 +290,7 @@ async def login(
             ip_address=ip_address,
             user_agent=user_agent,
             success=True,
-            details={"role": user.get("role", "user")},
+            details={"role": user.get("role", "admin")},
             organization_id=organization_id
         )
 
@@ -298,7 +298,7 @@ async def login(
             data={
                 "sub": user_id,
                 "email": login_data.email,
-                "role": user.get("role", "user"),
+                "role": user.get("role", "admin"),
                 "organization_id": organization_id,
                 "organization_slug": organization_slug
             }
@@ -611,7 +611,7 @@ async def exchange_token(
             data={
                 "sub": str(user["_id"]),
                 "email": user.get("email"),
-                "role": user.get("role", "user"),
+                "role": user.get("role", "admin"),
                 "organization_id": org_id,
                 "organization_slug": org.get("slug", "")
             }
@@ -718,7 +718,7 @@ async def login_mfa(
             data={
                 "sub": user_id,
                 "email": email,
-                "role": user.get("role", "user"),
+                "role": user.get("role", "admin"),
                 "organization_id": organization_id,
                 "organization_slug": organization_slug
             }
