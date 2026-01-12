@@ -1,9 +1,78 @@
 import os
 import sys
 import logging
+import smtplib
+from email.mime.text import MIMEText
+from datetime import datetime, timezone
+from collections import OrderedDict
 from loguru import logger
 
 NOISY_LIBRARIES = ['pymongo', 'websockets', 'websockets.client', 'httpx', 'httpcore', 'urllib3']
+
+# Rate limiting for email alerts: max 1 per error type per 5 minutes
+_error_timestamps: OrderedDict[str, datetime] = OrderedDict()
+_RATE_LIMIT_SECONDS = 300
+_MAX_ERROR_TYPES = 100
+
+
+def _email_sink(message):
+    """Send email on ERROR/CRITICAL logs with rate limiting."""
+    record = message.record
+    level = record["level"].name
+
+    if level not in ("ERROR", "CRITICAL"):
+        return
+
+    # Get email config
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USERNAME")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    recipients = [r.strip() for r in os.getenv("ALERT_RECIPIENTS", "").split(",") if r.strip()]
+
+    if not (smtp_user and smtp_pass and recipients):
+        return
+
+    # Rate limit by error message (first 100 chars)
+    error_key = f"{record['name']}:{str(record['message'])[:100]}"
+    now = datetime.now(timezone.utc)
+
+    if error_key in _error_timestamps:
+        elapsed = (now - _error_timestamps[error_key]).total_seconds()
+        if elapsed < _RATE_LIMIT_SECONDS:
+            return
+
+    # Record timestamp and evict old entries
+    if len(_error_timestamps) >= _MAX_ERROR_TYPES:
+        _error_timestamps.popitem(last=False)
+    _error_timestamps[error_key] = now
+
+    # Build email
+    env = os.getenv("ENV", "local")
+    subject = f"[OptimalBot {env.upper()}] {level}: {record['name']}"
+    body = f"""{level} in {record['name']}:{record['function']}
+
+Message: {record['message']}
+
+File: {record['file'].path}:{record['line']}
+Time: {record['time'].strftime('%Y-%m-%d %H:%M:%S UTC')}
+Environment: {env}
+"""
+    if record["exception"]:
+        body += f"\nException:\n{record['exception']}"
+
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = smtp_user
+        msg["To"] = ", ".join(recipients)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, recipients, msg.as_string())
+    except Exception:
+        pass  # Don't log email failures to avoid recursion
 
 
 def setup_logging(debug: bool = None):
@@ -15,8 +84,10 @@ def setup_logging(debug: bool = None):
 
     logger.remove()
 
-    if env == "production":
+    if env != "local":
         logger.add(sys.stderr, level=level, format="{message}", serialize=True)
+        # Email alerts for errors in deployed environments (not local)
+        logger.add(_email_sink, level="ERROR")
     else:
         logger.add(
             sys.stderr,

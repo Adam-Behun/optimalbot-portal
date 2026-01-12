@@ -75,7 +75,8 @@ deploy_backend() {
 
     if [ "$env" = "test" ]; then
         # Sync secrets for test
-        grep -E "^(JWT_SECRET_KEY|MONGO_URI|DAILY_API_KEY|PIPECAT_API_KEY)=" .env > /tmp/fly-secrets.txt
+        grep -E "^(JWT_SECRET_KEY|MONGO_URI|DAILY_API_KEY|PIPECAT_API_KEY|SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|ALERT_RECIPIENTS)=" .env > /tmp/fly-secrets.txt
+        echo "ENV=test" >> /tmp/fly-secrets.txt
         echo "PIPECAT_AGENT_NAME=test" >> /tmp/fly-secrets.txt
         fly secrets import -a optimalbot-test < /tmp/fly-secrets.txt
         rm /tmp/fly-secrets.txt

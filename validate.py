@@ -3,7 +3,7 @@
 Local Development Validation
 
 Validates environment, dependencies, configs, and connectivity before starting services.
-Called by dev.sh before launching backend/bot/frontend.
+Called by run.sh before launching backend/bot/frontend.
 
 Usage:
     python validate.py          # Full validation

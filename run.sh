@@ -42,7 +42,7 @@ if [ "$SKIP_VALIDATE" = false ]; then
         grep -E "\[ERROR\]" "$LOG_DIR/validate.log" 2>/dev/null || cat "$LOG_DIR/validate.log"
         echo ""
         echo "Full log: $LOG_DIR/validate.log"
-        echo "Or run: ./dev.sh --skip-validate"
+        echo "Or run: ./run.sh --skip-validate"
         exit 1
     fi
     deactivate 2>/dev/null || true

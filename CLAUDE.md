@@ -4,7 +4,7 @@
 
 ```bash
 # Local development
-./dev.sh                          # validates, then starts 
+./run.sh                          # validates, starts all services on localhost 
 # First-time setup
 ./setup-local.sh                  # create .venv with uv
 cd frontend && npm install        # install frontend deps
