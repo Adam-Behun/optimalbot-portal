@@ -13,7 +13,7 @@ import { SessionTimeoutModal } from './components/SessionTimeoutModal';
 import { Home } from './components/Home';
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext';
 import { SidebarLayout } from './components/SidebarLayout';
-import { removeAuthToken, onLogoutEvent } from './lib/auth';
+import { onLogoutEvent } from './lib/auth';
 import {
   EligibilityVerificationDashboard,
   EligibilityVerificationPatientList,
@@ -36,25 +36,15 @@ import {
   PrescriptionStatusCallList,
 } from './components/workflows/prescription_status';
 
-// HIPAA Compliance: Clear session data on tab close and handle logout events
 function SessionCleanup() {
   const { clearOrganization } = useOrganization();
 
   useEffect(() => {
-    // Clear session data when tab/browser is closed
-    const handleBeforeUnload = () => {
-      removeAuthToken();
-    };
-
-    // Listen for logout events from API interceptors
     const unsubscribe = onLogoutEvent(() => {
       clearOrganization();
     });
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
       unsubscribe();
     };
   }, [clearOrganization]);

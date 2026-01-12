@@ -6,7 +6,7 @@ from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat_flows.types import ActionConfig
 from loguru import logger
 
-from backend.models import get_async_patient_db
+from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 from backend.utils import normalize_sip_endpoint
 from handlers.transcript import save_transcript_to_db

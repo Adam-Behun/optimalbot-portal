@@ -1,0 +1,48 @@
+[project]
+name = "healthcare-voice-ai-api"
+version = "1.0.0"
+description = "Healthcare voice AI - Backend API server"
+requires-python = ">=3.10"
+dependencies = [
+    # Pipecat Cloud client (for starting bots in production)
+    "pipecatcloud",
+
+    # Database
+    "motor",
+
+    # Web framework
+    "uvicorn",
+    "fastapi",
+    "python-multipart",
+
+    # HTTP clients
+    "aiohttp",
+    "httpx",
+
+    # Authentication
+    "passlib[bcrypt]",
+    "python-jose[cryptography]",
+
+    # MFA (Two-Factor Authentication)
+    "pyotp>=2.9.0",
+    "qrcode[pil]>=7.4",
+
+    # Email alerting
+    "aiosmtplib>=3.0.0",
+
+    # Rate limiting
+    "slowapi",
+
+    # Retry logic
+    "tenacity",
+
+    # Caching
+    "cachetools",
+
+    # Utilities
+    "pyyaml",
+    "pydantic",
+    "python-dateutil",
+    "python-dotenv",
+    "loguru",
+]

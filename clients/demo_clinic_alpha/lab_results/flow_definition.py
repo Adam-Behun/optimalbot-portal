@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from loguru import logger
 
-from backend.models import get_async_patient_db
+from backend.models.patient import get_async_patient_db
 from clients.demo_clinic_alpha.dialin_base_flow import DialinBaseFlow
 
 

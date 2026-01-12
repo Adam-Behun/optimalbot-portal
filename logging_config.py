@@ -23,6 +23,11 @@ def _email_sink(message):
     if level not in ("ERROR", "CRITICAL"):
         return
 
+    # Skip startup validation errors (caught by deploy validation)
+    msg_str = str(record["message"])
+    if "Startup validation failed" in msg_str or "fix configuration" in msg_str:
+        return
+
     # Get email config
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))

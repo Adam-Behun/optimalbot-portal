@@ -2,7 +2,8 @@
 # Used by: fly deploy
 #
 # REQUIRED FILES (do NOT add these to ignore):
-#   - requirements.txt
+#   - pyproject.api.toml
+#   - uv.api.lock
 #   - app.py
 #   - logging_config.py
 #   - backend/
@@ -17,9 +18,9 @@ handlers/
 services/
 clients/
 observers/
-requirements.bot.txt
 pyproject.bot.toml
-uv.lock
+uv.bot.lock
+uv.local.lock
 
 # ============================================
 # EXCLUDE: Frontend (deployed separately to Vercel)
@@ -45,6 +46,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.venv/
 venv/
 env/
 ENV/
@@ -88,7 +90,6 @@ Thumbs.db
 # Deployment configs (other services)
 # ============================================
 pcc-deploy*.toml
-deploy-*.sh
 Dockerfile.bot
 Dockerfile.bot.dockerignore
 .dockerignore

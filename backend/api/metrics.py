@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.get("/summary")
 async def get_metrics_summary(
-    period: str = Query("day", regex="^(day|week|month)$"),
+    period: str = Query("day", pattern="^(day|week|month)$"),
     current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
@@ -26,7 +26,7 @@ async def get_metrics_summary(
 
 @router.get("/breakdown/status")
 async def get_status_breakdown(
-    period: str = Query("day", regex="^(day|week|month)$"),
+    period: str = Query("day", pattern="^(day|week|month)$"),
     current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):
@@ -38,7 +38,7 @@ async def get_status_breakdown(
 
 @router.get("/breakdown/errors")
 async def get_error_breakdown(
-    period: str = Query("day", regex="^(day|week|month)$"),
+    period: str = Query("day", pattern="^(day|week|month)$"),
     current_user: dict = Depends(get_current_user),
     org_id: str = Depends(get_current_user_organization_id),
 ):

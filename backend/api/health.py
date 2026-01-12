@@ -63,28 +63,6 @@ async def _check_service(
         return False, str(e)[:50]
 
 
-async def check_openai() -> Tuple[bool, str]:
-    """Check OpenAI API connectivity."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    return await _check_service(
-        "OpenAI",
-        "https://api.openai.com/v1/models",
-        {"Authorization": f"Bearer {api_key}"},
-        api_key
-    )
-
-
-async def check_deepgram() -> Tuple[bool, str]:
-    """Check Deepgram API connectivity."""
-    api_key = os.getenv("DEEPGRAM_API_KEY")
-    return await _check_service(
-        "Deepgram",
-        "https://api.deepgram.com/v1/projects",
-        {"Authorization": f"Token {api_key}"},
-        api_key
-    )
-
-
 async def check_daily() -> Tuple[bool, str]:
     """Check Daily.co API connectivity."""
     api_key = os.getenv("DAILY_API_KEY")
@@ -92,29 +70,6 @@ async def check_daily() -> Tuple[bool, str]:
         "Daily",
         "https://api.daily.co/v1/",
         {"Authorization": f"Bearer {api_key}"},
-        api_key
-    )
-
-
-async def check_pipecat() -> Tuple[bool, str]:
-    """Check Pipecat Cloud API (production only)."""
-    api_key = os.getenv("PIPECAT_API_KEY")
-    return await _check_service(
-        "Pipecat",
-        "https://api.pipecat.daily.co/v1/public/agents",
-        {"Authorization": f"Bearer {api_key}"},
-        api_key,
-        skip_if_local=True
-    )
-
-
-async def check_cartesia() -> Tuple[bool, str]:
-    """Check Cartesia TTS API connectivity."""
-    api_key = os.getenv("CARTESIA_API_KEY")
-    return await _check_service(
-        "Cartesia",
-        "https://api.cartesia.ai/voices",
-        {"X-API-Key": api_key, "Cartesia-Version": "2024-06-10"},
         api_key
     )
 
@@ -144,25 +99,20 @@ async def root():
 
 @router.get("/health")
 async def health():
-    """Enhanced health check with all service status.
+    """Health check for backend services.
 
-    Returns overall status:
-    - healthy: All services operational
-    - degraded: Some non-critical services down
-    - unhealthy: Critical services down (MongoDB)
+    Only checks services the backend actually uses:
+    - MongoDB (database)
+    - Daily (call room creation)
+
+    Bot-only services (OpenAI, Deepgram, Cartesia) are not checked here.
     """
-    # Run all checks in parallel for efficiency
     results = await asyncio.gather(
         check_connection(),  # MongoDB
-        check_openai(),
-        check_deepgram(),
         check_daily(),
-        check_pipecat(),
-        check_cartesia(),
         return_exceptions=True
     )
 
-    # Process results (handle exceptions)
     def process_result(result, service_name: str) -> dict:
         if isinstance(result, Exception):
             logger.error(f"{service_name} health check exception: {result}")
@@ -172,16 +122,10 @@ async def health():
 
     services = {
         "mongodb": process_result(results[0], "mongodb"),
-        "openai": process_result(results[1], "openai"),
-        "deepgram": process_result(results[2], "deepgram"),
-        "daily": process_result(results[3], "daily"),
-        "pipecat": process_result(results[4], "pipecat"),
-        "cartesia": process_result(results[5], "cartesia"),
+        "daily": process_result(results[1], "daily"),
     }
 
-    # Determine overall status
-    # Critical: MongoDB must be up
-    # Non-critical: External services can be degraded
+    # MongoDB is critical, Daily is important but not blocking
     mongodb_healthy = services["mongodb"]["healthy"]
     all_healthy = all(s["healthy"] for s in services.values())
 

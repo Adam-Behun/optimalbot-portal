@@ -44,6 +44,7 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
+  subdomain: string;
   branding: {
     company_name: string;
     logo_url?: string;

@@ -1,9 +1,9 @@
 # Bot ignore file (for Dockerfile.bot)
-# Used by: deploy-test.sh, deploy-prod.sh
+# Used by: deploy.sh
 #
 # REQUIRED FILES (do NOT add these to ignore):
 #   - pyproject.bot.toml (dependency specification)
-#   - uv.lock (lockfile for reproducible builds)
+#   - uv.bot.lock (lockfile for reproducible builds)
 #   - bot.py, logging_config.py
 #   - backend/{__init__,database,constants,sessions,utils}.py
 #   - backend/models/, services/, clients/, handlers/, core/, pipeline/, observers/, utils/
@@ -20,12 +20,15 @@ backend/lifespan.py
 backend/exceptions.py
 backend/audit.py
 backend/schemas.py
+backend/alerts.py
+backend/metrics.py
 backend/server_utils.py
 backend/CLAUDE.md
 app.py
-requirements.txt
 pyproject.toml
-requirements.bot.txt
+pyproject.api.toml
+uv.api.lock
+uv.local.lock
 
 # ============================================
 # EXCLUDE: Frontend (deployed separately to Vercel)
@@ -50,6 +53,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.venv/
 venv/
 env/
 ENV/
@@ -93,9 +97,9 @@ Thumbs.db
 # Deployment configs (other services)
 # ============================================
 fly.toml
+fly.test.toml
 vercel.json
 pcc-deploy*.toml
-deploy-*.sh
 Dockerfile.api
 Dockerfile.api.dockerignore
 .dockerignore

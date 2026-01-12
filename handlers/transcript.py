@@ -2,7 +2,7 @@ import os
 import aiohttp
 from datetime import datetime, timezone
 from loguru import logger
-from backend.models import get_async_patient_db
+from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 
 

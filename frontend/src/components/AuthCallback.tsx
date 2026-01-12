@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { exchangeToken } from '../api';
 import { setAuthToken, setAuthUser } from '../lib/auth';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { getOrgSlug } from '../utils/tenant';
+import { getSubdomain } from '../utils/tenant';
 
 export function AuthCallback() {
   const navigate = useNavigate();
@@ -28,8 +28,8 @@ export function AuthCallback() {
     const handleCallback = async () => {
       try {
         // Get org slug from query param (for app.optimalbot.ai) or subdomain
-        const orgSlug = searchParams.get('org') || getOrgSlug();
-        const response = await exchangeToken(token, orgSlug);
+        const subdomain = searchParams.get('org') || getSubdomain();
+        const response = await exchangeToken(token, subdomain);
 
         setAuthToken(response.access_token);
         setAuthUser({ user_id: response.user_id, email: response.email });

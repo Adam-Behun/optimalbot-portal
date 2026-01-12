@@ -6,7 +6,7 @@ from loguru import logger
 from pipecat.frames.frames import EndFrame
 
 from backend.constants import CallStatus
-from backend.models import get_async_patient_db
+from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 from handlers.transcript import save_transcript_to_db
 

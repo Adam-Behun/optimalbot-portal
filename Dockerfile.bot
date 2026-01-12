@@ -53,7 +53,10 @@ COPY backend/database.py backend/
 COPY backend/constants.py backend/
 COPY backend/sessions.py backend/
 COPY backend/utils.py backend/
-COPY backend/models/ backend/models/
+
+# Only copy patient model (bot doesn't need user.py which requires bcrypt)
+RUN mkdir -p backend/models && touch backend/models/__init__.py
+COPY backend/models/patient.py backend/models/
 COPY core/ ./core/
 COPY services/ ./services/
 COPY clients/ ./clients/

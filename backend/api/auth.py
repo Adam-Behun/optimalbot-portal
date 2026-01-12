@@ -40,6 +40,7 @@ class OrganizationResponse(BaseModel):
     id: str
     name: str
     slug: str
+    subdomain: str  # URL-friendly identifier (hyphens, e.g., "demo-clinic-alpha")
     branding: dict
     workflows: dict  # Contains workflow configs with patient_schema
 
@@ -68,6 +69,7 @@ class OrganizationSummary(BaseModel):
     id: str
     name: str
     slug: str
+    subdomain: str  # URL-friendly identifier for redirects
 
 
 class CentralLoginResponse(BaseModel):
@@ -315,6 +317,7 @@ async def login(
                 id=organization_id,
                 name=org.get("name", ""),
                 slug=organization_slug,
+                subdomain=org.get("subdomain", organization_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
             )
@@ -520,10 +523,12 @@ async def login_central(
         if not org:
             raise HTTPException(status_code=403, detail="No organization found")
 
+        org_slug = org.get("slug", "")
         organizations = [OrganizationSummary(
             id=org_id,
             name=org.get("name", ""),
-            slug=org.get("slug", "")
+            slug=org_slug,
+            subdomain=org.get("subdomain", org_slug.replace("_", "-"))
         )]
 
         handoff_token = secrets.token_urlsafe(32)
@@ -593,7 +598,12 @@ async def exchange_token(
         org_id = str(user.get("organization_id", ""))
         org = await org_db.get_by_id(org_id)
 
-        if not org or org.get("slug") != data.organization_slug:
+        # Accept either slug or subdomain for org validation
+        org_slug = org.get("slug", "") if org else ""
+        org_subdomain = org.get("subdomain", org_slug.replace("_", "-")) if org else ""
+        requested_org = data.organization_slug
+
+        if not org or (requested_org != org_slug and requested_org != org_subdomain):
             await audit_logger.log_event(
                 event_type="token_exchange",
                 user_id=str(user["_id"]),
@@ -639,6 +649,7 @@ async def exchange_token(
                 id=org_id,
                 name=org.get("name", ""),
                 slug=org.get("slug", ""),
+                subdomain=org.get("subdomain", org.get("slug", "").replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
             )
@@ -735,6 +746,7 @@ async def login_mfa(
                 id=organization_id,
                 name=org.get("name", ""),
                 slug=organization_slug,
+                subdomain=org.get("subdomain", organization_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
             )

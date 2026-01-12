@@ -25,6 +25,24 @@ usage() {
     exit 1
 }
 
+# Generate lockfile if missing
+ensure_lockfile() {
+    local name=$1
+    local pyproject=$2
+    local lockfile=$3
+
+    if [ ! -f "$lockfile" ]; then
+        echo -e "${YELLOW}Generating $lockfile...${NC}"
+        [ -f "pyproject.toml" ] && mv pyproject.toml pyproject.toml.backup
+        cp "$pyproject" pyproject.toml
+        uv lock --upgrade
+        mv uv.lock "$lockfile"
+        rm pyproject.toml
+        [ -f "pyproject.toml.backup" ] && mv pyproject.toml.backup pyproject.toml
+        echo -e "${YELLOW}Consider running ./setup-local.sh to generate all lockfiles${NC}"
+    fi
+}
+
 # Parse arguments
 ENV=$1
 COMPONENT=${2:-both}
@@ -73,9 +91,12 @@ deploy_backend() {
     echo ""
     echo -e "${GREEN}Deploying backend...${NC}"
 
+    # Ensure API lockfile exists
+    ensure_lockfile "api" "pyproject.api.toml" "uv.api.lock"
+
     if [ "$env" = "test" ]; then
         # Sync secrets for test
-        grep -E "^(JWT_SECRET_KEY|MONGO_URI|DAILY_API_KEY|PIPECAT_API_KEY|SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|ALERT_RECIPIENTS)=" .env > /tmp/fly-secrets.txt
+        grep -E "^(JWT_SECRET_KEY|MONGO_URI|DAILY_API_KEY|PIPECAT_API_KEY|ALLOWED_ORIGINS|SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|ALERT_RECIPIENTS)=" .env > /tmp/fly-secrets.txt
         echo "ENV=test" >> /tmp/fly-secrets.txt
         echo "PIPECAT_AGENT_NAME=test" >> /tmp/fly-secrets.txt
         fly secrets import -a optimalbot-test < /tmp/fly-secrets.txt
@@ -95,16 +116,8 @@ deploy_bot() {
     echo ""
     echo -e "${GREEN}Deploying bot...${NC}"
 
-    # Check bot lockfile
-    if [ ! -f "uv.bot.lock" ]; then
-        echo "Generating uv.bot.lock..."
-        [ -f "pyproject.toml" ] && mv pyproject.toml pyproject.toml.backup
-        cp pyproject.bot.toml pyproject.toml
-        uv lock --upgrade
-        mv uv.lock uv.bot.lock
-        rm pyproject.toml
-        [ -f "pyproject.toml.backup" ] && mv pyproject.toml.backup pyproject.toml
-    fi
+    # Ensure bot lockfile exists
+    ensure_lockfile "bot" "pyproject.bot.toml" "uv.bot.lock"
 
     if [ "$env" = "test" ]; then
         TAG=$(date +%Y%m%d-%H%M%S)
@@ -116,11 +129,12 @@ deploy_bot() {
             -t adambehun/bot:${TAG} \
             --push .
 
-        # Use test config
-        cp pcc-deploy.test.toml pcc-deploy.toml.active
-        sed -i "s|image = \".*\"|image = \"adambehun/bot:${TAG}\"|" pcc-deploy.toml.active
-        pipecat cloud deploy -c pcc-deploy.toml.active --force
-        rm pcc-deploy.toml.active
+        # Use test config - rename to pcc-deploy.toml for CLI
+        cp pcc-deploy.toml pcc-deploy.toml.backup
+        cp pcc-deploy.test.toml pcc-deploy.toml
+        sed -i "s|image = \".*\"|image = \"adambehun/bot:${TAG}\"|" pcc-deploy.toml
+        pipecat cloud deploy --force
+        mv pcc-deploy.toml.backup pcc-deploy.toml
 
         echo -e "${GREEN}Bot deployed: test (bot:${TAG})${NC}"
     else

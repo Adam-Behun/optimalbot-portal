@@ -18,6 +18,7 @@ class AsyncOrganizationRecord:
     async def _ensure_indexes(self):
         try:
             await self.organizations.create_index("slug", unique=True)
+            await self.organizations.create_index("subdomain", unique=True, sparse=True)
         except Exception as e:
             logger.warning(f"Index creation warning: {e}")
 
@@ -45,6 +46,14 @@ class AsyncOrganizationRecord:
             return await self.organizations.find_one({"slug": slug})
         except Exception as e:
             logger.error(f"Error finding organization by slug {slug}: {e}")
+            return None
+
+    async def get_by_subdomain(self, subdomain: str) -> Optional[dict]:
+        """Find organization by subdomain (URL-friendly identifier with hyphens)."""
+        try:
+            return await self.organizations.find_one({"subdomain": subdomain})
+        except Exception as e:
+            logger.error(f"Error finding organization by subdomain {subdomain}: {e}")
             return None
 
     async def update(self, org_id: str, update_fields: dict) -> bool:
