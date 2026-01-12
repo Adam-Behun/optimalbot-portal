@@ -166,8 +166,8 @@ export function SessionTable({
           const bDur = b.completed_at ? new Date(b.completed_at).getTime() - new Date(b.created_at).getTime() : 0;
           return sortDirection === 'asc' ? aDur - bDur : bDur - aDur;
         } else {
-          aVal = (a as Record<string, unknown>)[sortField] as string | undefined;
-          bVal = (b as Record<string, unknown>)[sortField] as string | undefined;
+          aVal = (a as unknown as Record<string, unknown>)[sortField] as string | undefined;
+          bVal = (b as unknown as Record<string, unknown>)[sortField] as string | undefined;
         }
 
         const comparison = String(aVal ?? '').localeCompare(String(bVal ?? ''));

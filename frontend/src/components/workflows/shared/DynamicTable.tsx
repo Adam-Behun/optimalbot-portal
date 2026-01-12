@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { WorkflowConfig, Patient, SchemaField } from '@/types';
 import { useBreakpoint } from '@/hooks/use-mobile';
 import { formatDate, formatDatetime, formatTime } from '@/lib/utils';
@@ -26,8 +26,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import { ArrowUpDown, Phone, Trash2, MoreHorizontal, Pencil, Eye } from 'lucide-react';
+import { ArrowUpDown, Phone, Trash2, MoreHorizontal, Pencil, Eye, Columns3, Download, RotateCcw } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,10 +44,12 @@ import {
 interface DynamicTableProps {
   schema: WorkflowConfig;
   patients: Patient[];
+  workflowName: string;
   onRowClick?: (patient: Patient) => void;
   loading?: boolean;
   onStartCalls?: (patients: Patient[]) => void | Promise<void>;
   onDeletePatients?: (patients: Patient[]) => void | Promise<void>;
+  onExportPatients?: (patients: Patient[]) => void;
   onViewPatient?: (patient: Patient) => void;
   onEditPatient?: (patient: Patient) => void;
   onStartCall?: (patient: Patient) => void;
@@ -106,10 +110,12 @@ type SortDirection = 'asc' | 'desc' | null;
 export function DynamicTable({
   schema,
   patients,
+  workflowName,
   onRowClick,
   loading,
   onStartCalls,
   onDeletePatients,
+  onExportPatients,
   onViewPatient,
   onEditPatient,
   onStartCall,
@@ -117,12 +123,57 @@ export function DynamicTable({
 }: DynamicTableProps) {
   const hasRowActions = onViewPatient || onEditPatient || onStartCall || onDeletePatient;
   const breakpoint = useBreakpoint();
+  const storageKey = `optimalbot_columns_${workflowName}`;
 
-  // Get columns from schema, sorted by display_order, filtered by breakpoint
+  // All fields sorted by display_order (for column selector)
+  const allFields = useMemo(() => {
+    return [...schema.patient_schema.fields]
+      .filter(f => !f.computed) // Exclude computed fields from selector
+      .sort((a, b) => a.display_order - b.display_order);
+  }, [schema.patient_schema.fields]);
+
+  // Default columns (fields with display_in_list: true)
+  const defaultColumns = useMemo(() => {
+    return allFields.filter(f => f.display_in_list).map(f => f.key);
+  }, [allFields]);
+
+  // Visible columns state - initialize from localStorage or defaults
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
+    const stored = localStorage.getItem(storageKey);
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        return defaultColumns;
+      }
+    }
+    return defaultColumns;
+  });
+
+  // Persist to localStorage when visibleColumns changes
+  useEffect(() => {
+    localStorage.setItem(storageKey, JSON.stringify(visibleColumns));
+  }, [visibleColumns, storageKey]);
+
+  // Toggle column visibility
+  const toggleColumn = (key: string, checked: boolean) => {
+    if (checked) {
+      setVisibleColumns(prev => [...prev, key]);
+    } else {
+      setVisibleColumns(prev => prev.filter(k => k !== key));
+    }
+  };
+
+  // Reset to defaults
+  const resetColumns = () => {
+    setVisibleColumns(defaultColumns);
+  };
+
+  // Get columns filtered by visibility and breakpoint
   const columns = useMemo(() => {
-    return schema.patient_schema.fields
+    return allFields
       .filter((f) => {
-        if (!f.display_in_list) return false;
+        if (!visibleColumns.includes(f.key)) return false;
 
         // Filter by display_priority based on current breakpoint
         const priority = f.display_priority || 'desktop';
@@ -134,9 +185,8 @@ export function DynamicTable({
         }
         // Desktop shows all columns
         return true;
-      })
-      .sort((a, b) => a.display_order - b.display_order);
-  }, [schema.patient_schema.fields, breakpoint]);
+      });
+  }, [allFields, visibleColumns, breakpoint]);
 
   // Find the patient_name field for filtering (search all fields, not just visible ones)
   const patientNameField = schema.patient_schema.fields.find(f => f.key === 'patient_name' || f.key.includes('name'));
@@ -274,38 +324,66 @@ export function DynamicTable({
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-        <Input
-          placeholder="Filter by name..."
-          value={nameFilter}
-          onChange={(e) => {
-            setNameFilter(e.target.value);
-            setPageIndex(0);
-          }}
-          className="w-full sm:max-w-sm"
-        />
-        <Select
-          value={statusFilter}
-          onValueChange={(value) => {
-            setStatusFilter(value);
-            setPageIndex(0);
-          }}
-        >
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue placeholder="Call Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="Not Started">Not Started</SelectItem>
-            <SelectItem value="In Progress">In Progress</SelectItem>
-            <SelectItem value="Completed">Completed</SelectItem>
-            <SelectItem value="Failed">Failed</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <Input
+            placeholder="Filter by name..."
+            value={nameFilter}
+            onChange={(e) => {
+              setNameFilter(e.target.value);
+              setPageIndex(0);
+            }}
+            className="w-full sm:max-w-sm"
+          />
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => {
+              setStatusFilter(value);
+              setPageIndex(0);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Call Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="Not Started">Not Started</SelectItem>
+              <SelectItem value="In Progress">In Progress</SelectItem>
+              <SelectItem value="Completed">Completed</SelectItem>
+              <SelectItem value="Failed">Failed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Column Selector */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              <Columns3 className="mr-2 h-4 w-4" />
+              Columns
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            {allFields.map((field) => (
+              <DropdownMenuCheckboxItem
+                key={field.key}
+                checked={visibleColumns.includes(field.key)}
+                onCheckedChange={(checked) => toggleColumn(field.key, !!checked)}
+              >
+                {field.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={resetColumns}>
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Reset to defaults
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Bulk Actions Bar */}
-      {selectedPatients.length > 0 && (onStartCalls || onDeletePatients) && (
+      {selectedPatients.length > 0 && (onStartCalls || onDeletePatients || onExportPatients) && (
         <div className="flex flex-col gap-3 p-4 bg-muted rounded-lg sm:flex-row sm:items-center sm:gap-2">
           <span className="text-sm font-medium">
             {selectedPatients.length} selected
@@ -321,6 +399,17 @@ export function DynamicTable({
               >
                 <Phone className="mr-2 h-4 w-4" />
                 Start Calls
+              </Button>
+            )}
+            {onExportPatients && (
+              <Button
+                onClick={() => onExportPatients(selectedPatients)}
+                variant="outline"
+                size="default"
+                className="flex-1 sm:flex-none sm:size-auto"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Export ({selectedPatients.length})
               </Button>
             )}
             {onDeletePatients && (

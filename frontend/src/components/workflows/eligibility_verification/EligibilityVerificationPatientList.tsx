@@ -9,6 +9,7 @@ import { useOrganization } from '@/contexts/OrganizationContext';
 import { Patient, SchemaField, TranscriptMessage } from '@/types';
 import { getPatients, getPatient, startCall, deletePatient, updatePatient } from '@/api';
 import { formatDate, formatDatetime, formatTime } from '@/lib/utils';
+import { exportToCSV } from '@/lib/export';
 import {
   Sheet,
   SheetContent,
@@ -286,6 +287,15 @@ export function EligibilityVerificationPatientList() {
     toast.success(`Deleted: ${successCount} success, ${failCount} failed`);
   };
 
+  const handleExportPatients = (selectedPatients: Patient[]) => {
+    if (!schema) return;
+    const allFields = schema.patient_schema.fields
+      .sort((a, b) => a.display_order - b.display_order);
+    const timestamp = new Date().toISOString().split('T')[0];
+    exportToCSV(selectedPatients, allFields, `patients_export_${timestamp}`);
+    toast.success(`Exported ${selectedPatients.length} patient(s)`);
+  };
+
   const handleStartCallFromSheet = async () => {
     if (!selectedPatient) return;
     const phoneNumber = selectedPatient.insurance_phone || selectedPatient.phone;
@@ -366,7 +376,7 @@ export function EligibilityVerificationPatientList() {
       title="Patients"
       actions={
         <div className="flex gap-2">
-          <Button onClick={loadPatients} variant="outline" size="sm">
+          <Button onClick={loadPatients} variant="outline">
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
@@ -383,10 +393,12 @@ export function EligibilityVerificationPatientList() {
         <DynamicTable
           schema={schema}
           patients={patients}
+          workflowName="eligibility_verification"
           loading={loading}
           onRowClick={handleViewPatient}
           onStartCalls={handleStartCalls}
           onDeletePatients={handleDeletePatients}
+          onExportPatients={handleExportPatients}
           onViewPatient={handleViewPatient}
           onEditPatient={handleEditPatient}
           onStartCall={handleStartCallSingle}

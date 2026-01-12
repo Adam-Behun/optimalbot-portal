@@ -10,6 +10,7 @@ const WORKFLOW_KEY = 'selected_workflow';
 export interface AuthUser {
   user_id: string;
   email: string;
+  role?: string;
 }
 
 export const setAuthToken = (token: string): void => {
