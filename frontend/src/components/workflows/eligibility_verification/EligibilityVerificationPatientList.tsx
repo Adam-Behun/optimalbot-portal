@@ -7,7 +7,7 @@ import { TranscriptViewer } from '../shared/TranscriptViewer';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { Patient, SchemaField, TranscriptMessage } from '@/types';
-import { getPatients, getPatient, startCall, deletePatient, updatePatient } from '@/api';
+import { getPatients, getPatient, startCall, deletePatient, updatePatient, getCallTranscript } from '@/api';
 import { formatDate, formatDatetime, formatTime } from '@/lib/utils';
 import { exportToCSV } from '@/lib/export';
 import {
@@ -130,17 +130,11 @@ export function EligibilityVerificationPatientList() {
       const patientData = await getPatient(patient.patient_id);
       setSelectedPatient(patientData);
 
-      // Parse transcript
-      if (patientData.call_transcript) {
+      // Fetch transcript from session if available
+      if (patientData.last_call_session_id) {
         try {
-          let parsed;
-          if (typeof patientData.call_transcript === 'string') {
-            parsed = JSON.parse(patientData.call_transcript);
-          } else {
-            parsed = patientData.call_transcript;
-          }
-          const messages = parsed.messages || parsed;
-          setTranscript(Array.isArray(messages) ? messages : []);
+          const transcriptData = await getCallTranscript(patientData.last_call_session_id);
+          setTranscript(transcriptData.messages || []);
         } catch {
           setTranscript([]);
         }

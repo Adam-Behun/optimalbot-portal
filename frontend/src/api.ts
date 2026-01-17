@@ -113,6 +113,12 @@ export const deleteSession = async (sessionId: string): Promise<void> => {
   await api.delete(`/sessions/${sessionId}`);
 };
 
+// GET /call/:sessionId/transcript - Get call transcript
+export const getCallTranscript = async (sessionId: string): Promise<{ messages: Array<{ role: string; content: string; timestamp?: string }> }> => {
+  const response = await api.get(`/call/${sessionId}/transcript`);
+  return { messages: response.data.transcripts || [] };
+};
+
 // Get call history for a patient
 export const getPatientCallHistory = async (patientId: string): Promise<Session[]> => {
   return getSessions(undefined, patientId);

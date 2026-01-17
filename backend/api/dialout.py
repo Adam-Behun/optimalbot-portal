@@ -231,8 +231,8 @@ async def get_call_transcript(
 
     return {
         "session_id": session_id,
-        "transcripts": patient.get("call_transcript", {}).get("messages", []),
-        "patient_name": patient.get("patient_name")
+        "transcripts": session.get("call_transcript", {}).get("messages", []),
+        "patient_name": patient.get("patient_name") if patient else None
     }
 
 

@@ -9,9 +9,9 @@ services:
   stt:
     api_key: ${DEEPGRAM_API_KEY}
     model: flux-general-en
-    eager_eot_threshold: 0.55
-    eot_threshold: 0.65
-    eot_timeout_ms: 3500
+    eager_eot_threshold: 0.65
+    eot_threshold: 0.75
+    eot_timeout_ms: 5000
     keyterm:
       - "Alexandra"
       - "prior authorization"

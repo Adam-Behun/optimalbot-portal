@@ -122,7 +122,7 @@ class PipelineFactory:
         FlowClass = flow_loader.load_flow_class()
 
         flow_kwargs = {
-            'call_data': session_data['call_data'],
+            'patient_data': session_data['call_data'],
             'session_id': session_data['session_id'],
             'flow_manager': None,
             'main_llm': main_llm,

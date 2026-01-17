@@ -141,6 +141,7 @@ async def save_transcript_to_db(pipeline):
                         "last_call_session_id": pipeline.session_id,
                         "last_call_timestamp": datetime.now(timezone.utc).isoformat()
                     }, pipeline.organization_id)
+                    logger.info(f"Patient {pipeline.patient_id} last_call_session_id updated to {pipeline.session_id}")
                 except Exception as e:
                     logger.warning(f"Could not update patient last_call reference: {e}")
 

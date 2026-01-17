@@ -105,6 +105,13 @@ deploy_backend() {
         fly deploy -c fly.test.toml
         echo -e "${GREEN}Backend deployed: https://optimalbot-test.fly.dev${NC}"
     else
+        # Sync secrets for prod
+        grep -E "^(JWT_SECRET_KEY|MONGO_URI|DAILY_API_KEY|PIPECAT_API_KEY|ALLOWED_ORIGINS|SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|ALERT_RECIPIENTS)=" .env > /tmp/fly-secrets.txt
+        echo "ENV=production" >> /tmp/fly-secrets.txt
+        echo "PIPECAT_AGENT_NAME=prod" >> /tmp/fly-secrets.txt
+        fly secrets import -a optimalbot-api < /tmp/fly-secrets.txt
+        rm /tmp/fly-secrets.txt
+
         fly deploy
         echo -e "${GREEN}Backend deployed: https://optimalbot-api.fly.dev${NC}"
     fi
