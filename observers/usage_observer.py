@@ -26,12 +26,12 @@ _PRICING_CACHE: Optional[dict] = None
 
 
 def load_pricing() -> dict:
-    """Load pricing config from config/pricing.yaml (cached)."""
+    """Load pricing config from costs/variable_costs.yaml (cached)."""
     global _PRICING_CACHE
     if _PRICING_CACHE is not None:
         return _PRICING_CACHE
 
-    pricing_path = Path(__file__).parent.parent / "config" / "pricing.yaml"
+    pricing_path = Path(__file__).parent.parent / "costs" / "variable_costs.yaml"
     try:
         with open(pricing_path) as f:
             _PRICING_CACHE = yaml.safe_load(f)
@@ -95,7 +95,9 @@ class UsageObserver(BaseObserver):
 
     def _record_llm(self, metric: LLMUsageMetricsData):
         """Record LLM token usage, aggregating by provider/model."""
-        provider = metric.processor.lower() if metric.processor else "unknown"
+        # Normalize provider: "GroqLLMService#0" -> "groq", "OpenAILLMService#0" -> "openai"
+        raw_provider = metric.processor.lower() if metric.processor else "unknown"
+        provider = raw_provider.replace("llmservice", "").split("#")[0]
         model = metric.model or "unknown"
         tokens = metric.value
 
@@ -107,15 +109,15 @@ class UsageObserver(BaseObserver):
         self._llm_usage[provider][model]["prompt"] += tokens.prompt_tokens
         self._llm_usage[provider][model]["completion"] += tokens.completion_tokens
 
-        logger.debug(
-            f"LLM usage: {provider}/{model} +{tokens.prompt_tokens}/{tokens.completion_tokens}"
-        )
+        logger.debug(f"LLM usage: {provider}/{model} +{tokens.prompt_tokens}/{tokens.completion_tokens}")
 
     def _record_tts(self, metric: TTSUsageMetricsData):
         """Record TTS character usage."""
         self._tts_characters += metric.value
         if metric.processor:
-            self._tts_provider = metric.processor.lower()
+            # Normalize: "CartesiaTTSService#1" -> "cartesia"
+            raw = metric.processor.lower()
+            self._tts_provider = raw.replace("ttsservice", "").split("#")[0]
         logger.debug(f"TTS usage: +{metric.value} chars (total: {self._tts_characters})")
 
     def mark_call_connected(self):

@@ -1,0 +1,95 @@
+# Fixed Costs - Monthly subscriptions and base fees
+# These costs are incurred regardless of call volume
+# All prices in USD per month
+
+database:
+  mongodb_atlas:
+    pricing_url: https://www.mongodb.com/pricing
+    last_verified: 2025-01-17
+    hipaa: dedicated_only
+    alternatives: [aws_documentdb, azure_cosmosdb, planetscale]
+    notes: Free tier for dev. Production needs M10+ for HIPAA
+    M0:
+      monthly: 0
+    M10:
+      monthly: 57
+      hipaa_compliant: true
+
+backend_hosting:
+  fly_io:
+    pricing_url: https://fly.io/pricing
+    last_verified: 2025-01-17
+    hipaa: no
+    alternatives: [aws_ecs, gcp_cloud_run, render, railway]
+    notes: No HIPAA BAA available
+    shared-cpu-1x:
+      monthly: 5
+
+frontend_hosting:
+  vercel:
+    pricing_url: https://vercel.com/pricing
+    last_verified: 2025-01-17
+    hipaa: no
+    alternatives: [aws_amplify, netlify, cloudflare_pages]
+    notes: No HIPAA BAA
+    hobby:
+      monthly: 0
+    pro:
+      monthly: 20
+
+bot_hosting:
+  pipecat_cloud:
+    pricing_url: https://www.daily.co/pricing/pipecat-cloud/
+    last_verified: 2025-01-17
+    hipaa: verify
+    notes: Bot orchestration in production. Daily product.
+    pay_as_you_go:
+      monthly: 0
+
+observability:
+  langfuse:
+    pricing_url: https://langfuse.com/pricing
+    last_verified: 2025-01-17
+    hipaa: self_host
+    alternatives: [langsmith, helicone]
+    notes: Self-host option available for HIPAA compliance
+    hobby:
+      monthly: 0
+    pro:
+      monthly: 59
+    self_hosted:
+      monthly: 0
+      hipaa_compliant: true
+
+email:
+  gmail_smtp:
+    pricing_url: null
+    last_verified: 2025-01-17
+    hipaa: no
+    alternatives: [sendgrid, postmark, aws_ses]
+    notes: Current setup - NOT HIPAA compliant for PHI
+    free:
+      monthly: 0
+
+  sendgrid:
+    pricing_url: https://sendgrid.com/en-us/pricing
+    last_verified: 2025-01-17
+    hipaa: pro_only
+    status: not_implemented
+    free:
+      monthly: 0
+    essentials:
+      monthly: 20
+    pro:
+      monthly: 90
+      hipaa_compliant: true
+
+  postmark:
+    pricing_url: https://postmarkapp.com/pricing
+    last_verified: 2025-01-17
+    hipaa: yes
+    status: not_implemented
+    notes: HIPAA-compliant by default
+    starter:
+      monthly: 15
+      hipaa_compliant: true
