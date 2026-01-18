@@ -8,9 +8,13 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
-from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
-from pipecat.processors.transcript_processor import TranscriptProcessor
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
+from pipecat.turns.mute import FirstSpeechUserMuteStrategy
+from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from core.flow_loader import FlowLoader
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
@@ -113,8 +117,15 @@ class PipelineFactory:
     ) -> ConversationComponents:
         """Create flow and conversation components."""
         context = LLMContext()
-        context_aggregator = LLMContextAggregatorPair(context)
-        transcript_processor = TranscriptProcessor()
+        context_aggregator = LLMContextAggregatorPair(
+            context,
+            user_params=LLMUserAggregatorParams(
+                user_turn_strategies=UserTurnStrategies(
+                    start=[TranscriptionUserTurnStartStrategy(enable_interruptions=True)],
+                ),
+                user_mute_strategies=[FirstSpeechUserMuteStrategy()],
+            )
+        )
 
         organization_slug = session_data.get('organization_slug')
         organization_id = session_data.get('organization_id')
@@ -191,7 +202,6 @@ class PipelineFactory:
             active_llm=main_llm,
             context=context,
             context_aggregator=context_aggregator,
-            transcript_processor=transcript_processor,
             flow=flow,
             call_type=call_type,
             classifier_llm=classifier_llm,
@@ -204,10 +214,6 @@ class PipelineFactory:
 
     @staticmethod
     def _assemble_pipeline(components: ConversationComponents) -> tuple[Pipeline, PipelineParams]:
-        stt_mute_processor = STTMuteFilter(
-            config=STTMuteConfig(strategies={STTMuteStrategy.FIRST_SPEECH})
-        )
-
         processors = [components.transport.input(), components.stt]
 
         if components.safety_monitor:
@@ -220,8 +226,6 @@ class PipelineFactory:
             ])
 
         processors.extend([
-            stt_mute_processor,
-            components.transcript_processor.user(),
             components.context_aggregator.user(),
             components.active_llm,
         ])
@@ -235,7 +239,6 @@ class PipelineFactory:
             processors.append(components.triage_detector.gate())
 
         processors.extend([
-            components.transcript_processor.assistant(),
             components.context_aggregator.assistant(),
             components.transport.output()
         ])
@@ -245,7 +248,6 @@ class PipelineFactory:
         params = PipelineParams(
             audio_in_sample_rate=16000,
             audio_out_sample_rate=24000,
-            allow_interruptions=True,
             enable_metrics=True,
             enable_usage_metrics=True
         )
