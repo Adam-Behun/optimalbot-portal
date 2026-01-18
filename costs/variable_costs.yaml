@@ -4,72 +4,44 @@
 
 llm:
   openai:
-    pricing_url: https://openai.com/api/pricing/
-    last_verified: 2025-01-17
-    hipaa: enterprise_only
-    alternatives: [anthropic, groq]
+    pricing_url: https://platform.openai.com/docs/pricing?latest-pricing=priority
+    last_verified: 2025-01-18
+    hipaa: baa_available
     gpt-4o:
-      input_per_1m_tokens: 2.50
-      output_per_1m_tokens: 10.00
+      input_per_1m_tokens: 4.25
+      output_per_1m_tokens: 17.00
     gpt-4o-mini:
-      input_per_1m_tokens: 0.15
-      output_per_1m_tokens: 0.60
+      input_per_1m_tokens: 0.25
+      output_per_1m_tokens: 1.00
 
   groq:
     pricing_url: https://groq.com/pricing
     last_verified: 2025-01-17
-    hipaa: verify
-    notes: Fast classifier for triage/greeting
-    alternatives: [openai]
+    hipaa: baa_available
     llama-3.3-70b-versatile:
       input_per_1m_tokens: 0.59
       output_per_1m_tokens: 0.79
-
-  anthropic:
-    pricing_url: https://www.anthropic.com/pricing
-    last_verified: 2025-01-17
-    hipaa: baa_available
-    notes: Alternative LLM, not currently active
-    alternatives: [openai]
-    claude-3.5-sonnet:
-      input_per_1m_tokens: 3.00
-      output_per_1m_tokens: 15.00
 
 stt:
   deepgram:
     pricing_url: https://deepgram.com/pricing
     last_verified: 2025-01-17
     hipaa: baa_available
-    alternatives: [assembly-ai]
-    nova-2:
-      per_minute: 0.0043
     flux:
-      per_minute: 0.0059
-      notes: Primary STT with built-in turn detection
+      per_minute: 0.0077
 
 tts:
   cartesia:
     pricing_url: https://cartesia.ai/pricing
     last_verified: 2025-01-17
-    hipaa: verify
-    notes: Primary TTS
-    alternatives: [elevenlabs, playht]
+    hipaa: baa_available
     sonic:
       per_1m_characters: 60.00
-
-  elevenlabs:
-    pricing_url: https://elevenlabs.io/pricing
-    last_verified: 2025-01-17
-    hipaa: enterprise_only
-    notes: Alternative TTS, API key configured but not primary
-    default:
-      per_1m_characters: 30.00
 
 telephony:
   daily:
     pricing_url: https://www.daily.co/pricing/pipecat-cloud/
     last_verified: 2025-01-17
     hipaa: baa_available
-    alternatives: [twilio, vonage]
     sip:
       per_minute: 0.004

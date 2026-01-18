@@ -6,53 +6,26 @@ from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 
 
-def assemble_transcript(raw_messages: list) -> list:
-    if not raw_messages:
-        return []
-
-    assembled = []
-    current_group = None
-    TIME_THRESHOLD = 3.0  # seconds - messages within this window get merged
-
-    for msg in raw_messages:
-        try:
-            msg_time = datetime.fromisoformat(msg['timestamp'].replace('+00:00', ''))
-        except (ValueError, KeyError):
-            # If timestamp parsing fails, treat as new message
-            msg_time = datetime.now()
-
-        if current_group is None:
-            # Start first group
-            current_group = msg.copy()
-        elif (msg['role'] == current_group['role'] and
-              (msg_time - datetime.fromisoformat(current_group['timestamp'].replace('+00:00', ''))).total_seconds() < TIME_THRESHOLD):
-            # Same role + within time window -> merge content
-            current_group['content'] = current_group['content'].strip() + ' ' + msg['content'].strip()
-        else:
-            # Different role or time gap -> save current group and start new
-            assembled.append(current_group)
-            current_group = msg.copy()
-
-    # Don't forget the last group
-    if current_group:
-        assembled.append(current_group)
-
-    return assembled
-
-
 def setup_transcript_handler(pipeline):
-    """Monitor transcripts for call completion"""
+    """Set up transcript collection using context aggregator events."""
+    user_aggregator = pipeline.context_aggregator.user()
+    assistant_aggregator = pipeline.context_aggregator.assistant()
 
-    @pipeline.transcript_processor.event_handler("on_transcript_update")
-    async def handle_transcript_update(processor, frame):
-        for message in frame.messages:
-            transcript_entry = {
-                "role": message.role,
+    def append_transcript(role: str, message):
+        if message.content:
+            pipeline.transcripts.append({
+                "role": role,
                 "content": message.content,
                 "timestamp": message.timestamp or datetime.now().isoformat(),
-                "type": "transcript"
-            }
-            pipeline.transcripts.append(transcript_entry)
+            })
+
+    @user_aggregator.event_handler("on_user_turn_stopped")
+    async def handle_user_turn_stopped(aggregator, strategy, message):
+        append_transcript("user", message)
+
+    @assistant_aggregator.event_handler("on_assistant_turn_stopped")
+    async def handle_assistant_turn_stopped(aggregator, message):
+        append_transcript("assistant", message)
 
 
 async def delete_daily_recording(room_name: str):
@@ -112,13 +85,9 @@ async def save_transcript_to_db(pipeline):
         return
 
     try:
-        assembled_messages = assemble_transcript(pipeline.transcripts)
-
         transcript_data = {
-            "messages": assembled_messages,
-            "message_count": len(assembled_messages),
-            "raw_message_count": len(pipeline.transcripts),
-            "conversation_duration": None
+            "messages": pipeline.transcripts,
+            "message_count": len(pipeline.transcripts),
         }
 
         # Save to session (works even when patient_id is None for dial-in)
@@ -131,7 +100,7 @@ async def save_transcript_to_db(pipeline):
 
         if success:
             pipeline.transcript_saved = True
-            logger.info(f"Transcript saved to session ({len(assembled_messages)} messages)")
+            logger.info(f"Transcript saved to session ({len(pipeline.transcripts)} messages)")
 
             # Update patient's last_call reference if patient exists
             if pipeline.patient_id:

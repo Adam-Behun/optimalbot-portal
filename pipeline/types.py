@@ -13,7 +13,6 @@ class ConversationComponents:
     active_llm: Any
     context: Any
     context_aggregator: Any
-    transcript_processor: Any
     flow: Any
     call_type: str
 

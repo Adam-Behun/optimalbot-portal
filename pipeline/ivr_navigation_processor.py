@@ -16,7 +16,7 @@ from pipecat.frames.frames import (
     VADParamsUpdateFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.utils.text.pattern_pair_aggregator import PatternPairAggregator
+from pipecat.utils.text.pattern_pair_aggregator import MatchAction, PatternPairAggregator
 
 
 # =============================================================================
@@ -108,10 +108,10 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
 
     def _setup_xml_patterns(self):
         """Register DTMF and IVR status patterns."""
-        self._aggregator.add_pattern_pair("dtmf", "<dtmf>", "</dtmf>", remove_match=True)
+        self._aggregator.add_pattern("dtmf", "<dtmf>", "</dtmf>", action=MatchAction.REMOVE)
         self._aggregator.on_pattern_match("dtmf", self._handle_dtmf_action)
 
-        self._aggregator.add_pattern_pair("ivr", "<ivr>", "</ivr>", remove_match=True)
+        self._aggregator.add_pattern("ivr", "<ivr>", "</ivr>", action=MatchAction.REMOVE)
         self._aggregator.on_pattern_match("ivr", self._handle_ivr_action)
 
     async def activate(self, ivr_goal: str, conversation_history: list):

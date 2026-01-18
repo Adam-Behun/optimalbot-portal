@@ -98,7 +98,6 @@ class CallSession:
         self.flow = components.flow
         self.transport = components.transport
         self.context_aggregator = components.context_aggregator
-        self.transcript_processor = components.transcript_processor
 
     def _create_observers(self) -> list:
         """Create pipeline observers for metrics and debugging.

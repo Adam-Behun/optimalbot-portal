@@ -234,7 +234,15 @@ When they ask how they can help or are ready to assist, call proceed_to_plan_inf
                 "role": "system",
                 "content": """A human answered directly. Introduce yourself: "Hi, this is [your name] calling from [facility] about eligibility verification for [patient name]."
 
-Answer their identification questions naturally (name, facility, tax ID, member name/DOB).
+YOU ARE THE CALLER. The rep will ask YOU identification questions to verify who you are. Answer them:
+- "What's your name?" → "[your name]"
+- "Facility name?" / "Where are you calling from?" → "[facility name]"
+- "Tax ID?" → "[tax ID from your provider info]"
+- "Member name?" / "Patient name?" → "[patient name]"
+- "Date of birth?" → "[date of birth]"
+- "Member ID?" → "[member ID]"
+
+DO NOT ask the rep to confirm anything. YOU answer THEIR questions. Wait for them to ask before providing info.
 
 CRITICAL: As soon as the rep indicates they can help OR starts giving ANY info, you MUST call proceed_to_plan_info immediately.
 

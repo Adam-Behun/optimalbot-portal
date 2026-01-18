@@ -44,6 +44,9 @@ def load_pricing() -> dict:
 class UsageObserver(BaseObserver):
     """Tracks LLM, TTS, STT, and telephony usage per session for cost calculation."""
 
+    # Time window for content-based deduplication (seconds)
+    _DEDUP_WINDOW = 0.5
+
     def __init__(self, session_id: str):
         super().__init__()
         self._session_id = session_id
@@ -64,6 +67,13 @@ class UsageObserver(BaseObserver):
         self._telephony_seconds: float = 0.0
         self._call_connected_at: Optional[float] = None
 
+        # Deduplication: track processed frame IDs to avoid duplicate metrics
+        self._processed_frame_ids: set = set()
+
+        # Content-based deduplication for metrics (handles duplicate frames with different IDs)
+        # Maps content tuple -> timestamp of last occurrence
+        self._recent_metrics: dict = {}
+
     async def on_push_frame(self, data: FramePushed):
         """Process frames to track usage."""
         if data.direction != FrameDirection.DOWNSTREAM:
@@ -72,6 +82,10 @@ class UsageObserver(BaseObserver):
         frame = data.frame
 
         if isinstance(frame, MetricsFrame):
+            # Deduplicate: skip frames we've already processed
+            if frame.id in self._processed_frame_ids:
+                return
+            self._processed_frame_ids.add(frame.id)
             self._process_metrics(frame)
 
         elif isinstance(frame, UserStartedSpeakingFrame):
@@ -93,6 +107,15 @@ class UsageObserver(BaseObserver):
             elif isinstance(metric, TTSUsageMetricsData):
                 self._record_tts(metric)
 
+    def _is_duplicate_metric(self, content_key: tuple) -> bool:
+        """Check if this metric was seen recently (within DEDUP_WINDOW). Updates tracking."""
+        now = time.time()
+        if content_key in self._recent_metrics:
+            if now - self._recent_metrics[content_key] < self._DEDUP_WINDOW:
+                return True
+        self._recent_metrics[content_key] = now
+        return False
+
     def _record_llm(self, metric: LLMUsageMetricsData):
         """Record LLM token usage, aggregating by provider/model."""
         # Normalize provider: "GroqLLMService#0" -> "groq", "OpenAILLMService#0" -> "openai"
@@ -100,6 +123,11 @@ class UsageObserver(BaseObserver):
         provider = raw_provider.replace("llmservice", "").split("#")[0]
         model = metric.model or "unknown"
         tokens = metric.value
+
+        # Content-based deduplication: skip if we've seen identical metrics recently
+        content_key = ("llm", provider, model, tokens.prompt_tokens, tokens.completion_tokens)
+        if self._is_duplicate_metric(content_key):
+            return
 
         if provider not in self._llm_usage:
             self._llm_usage[provider] = {}
@@ -113,11 +141,18 @@ class UsageObserver(BaseObserver):
 
     def _record_tts(self, metric: TTSUsageMetricsData):
         """Record TTS character usage."""
-        self._tts_characters += metric.value
+        provider = "unknown"
         if metric.processor:
-            # Normalize: "CartesiaTTSService#1" -> "cartesia"
             raw = metric.processor.lower()
-            self._tts_provider = raw.replace("ttsservice", "").split("#")[0]
+            provider = raw.replace("ttsservice", "").split("#")[0]
+
+        # Content-based deduplication: skip if we've seen identical metrics recently
+        content_key = ("tts", provider, metric.value)
+        if self._is_duplicate_metric(content_key):
+            return
+
+        self._tts_characters += metric.value
+        self._tts_provider = provider
         logger.debug(f"TTS usage: +{metric.value} chars (total: {self._tts_characters})")
 
     def mark_call_connected(self):
@@ -138,17 +173,17 @@ class UsageObserver(BaseObserver):
         provider_rates = llm_rates.get(provider, {})
 
         # Try exact model match first
-        if model in provider_rates:
+        if model in provider_rates and isinstance(provider_rates[model], dict):
             return provider_rates[model].get(rate_type, 0)
 
         # Try base model match (strip date suffix like "-2024-07-18")
         base_model = model.split("-202")[0] if "-202" in model else model
-        if base_model in provider_rates:
+        if base_model in provider_rates and isinstance(provider_rates[base_model], dict):
             return provider_rates[base_model].get(rate_type, 0)
 
         # Try prefix match (model starts with a known rate_model)
         for rate_model, rates in provider_rates.items():
-            if model.startswith(rate_model):
+            if isinstance(rates, dict) and model.startswith(rate_model):
                 return rates.get(rate_type, 0)
 
         logger.warning(f"No LLM rate found for {provider}/{model}/{rate_type}")
@@ -158,9 +193,9 @@ class UsageObserver(BaseObserver):
         """Look up TTS rate from pricing config."""
         tts_rates = self._pricing.get("tts", {})
         provider_rates = tts_rates.get(provider, {})
-        # Use first available model rate
+        # Use first available model rate (skip metadata fields like last_verified)
         for model_rates in provider_rates.values():
-            if "per_1m_characters" in model_rates:
+            if isinstance(model_rates, dict) and "per_1m_characters" in model_rates:
                 return model_rates["per_1m_characters"]
         return 0
 
