@@ -571,7 +571,14 @@ scenarios:
 
   - id: "6"
     target_node: closing
-    expected_problem: "Bot may ask about copay/coinsurance/prior auth/telehealth after CPT is not covered (those are irrelevant). Accumulators and reference number are still relevant."
+    expected_db_state:
+      cpt_covered: false
+      reference_number: "UHC-NC-2025-5432"
+    forbidden_functions:
+      - record_copay
+      - record_coinsurance
+      - record_prior_auth_required
+      - record_telehealth_covered
     patient:
       patient_name: "Emily Johnson"
       date_of_birth: "02/28/1975"
@@ -1200,9 +1207,9 @@ scenarios:
       9. When they ask about CPT coverage: "What's the date of service?"
          After they answer: "Let me check ninety-nine two thirteen... Covered. Forty dollar copay, twenty percent coinsurance, deductible applies, no prior auth, telehealth is covered."
 
-      10. When they ask about deductible: "Family deductible is one thousand, five hundred has been met."
+      10. When they ask about deductible: "Family deductible is one thousand dollars, and five hundred has been met."
 
-      11. When they ask about OOP: "Family out of pocket max is five thousand, twelve hundred applied."
+      11. When they ask about OOP: "Family out of pocket max is five thousand dollars, twelve hundred applied."
 
       12. When they ask for reference: "Reference is ATN-IVR-2025-001."
 
@@ -1218,6 +1225,8 @@ scenarios:
   - id: "13"
     target_node: transfer_pending
     expected_db_state: {}
+    expected_functions:
+      - request_staff
     patient:
       patient_name: "Test Transfer"
       date_of_birth: "01/01/1980"

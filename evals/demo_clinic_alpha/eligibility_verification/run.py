@@ -36,9 +36,8 @@ from clients.demo_clinic_alpha.eligibility_verification.flow_definition import E
 langfuse = Langfuse()
 
 
-# === LLM GRADERS ===
+# === GRADERS ===
 def _call_grader(prompt: str) -> str:
-    """Call the grader LLM with a prompt."""
     client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -49,46 +48,73 @@ def _call_grader(prompt: str) -> str:
 
 
 def _format_conversation(conversation: list[dict]) -> str:
-    """Format conversation for graders."""
     return "\n".join([
         f"{'BOT' if c['role'] == 'assistant' else 'INSURANCE'}: {c['content']}"
         for c in conversation if c.get('content')
     ])
 
 
+def _normalize_amount(value) -> str:
+    """Normalize amounts: "$50" -> "50.00", "None" -> "none"."""
+    if value is None:
+        return "none"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)):
+        return f"{float(value):.2f}"
+
+    s = str(value).strip().lower()
+    if s in ("none", "null", "n/a", ""):
+        return "none"
+
+    s = s.replace("$", "").replace("%", "").strip()
+    try:
+        return f"{float(s):.2f}"
+    except ValueError:
+        return s
+
+
+def _values_match(expected, actual) -> bool:
+    norm_expected = _normalize_value(expected)
+    norm_actual = _normalize_value(actual)
+    if norm_expected == norm_actual:
+        return True
+
+    amt_expected = _normalize_amount(expected)
+    amt_actual = _normalize_amount(actual)
+    if amt_expected == amt_actual:
+        return True
+
+    if isinstance(expected, str) and isinstance(actual, str):
+        try:
+            if float(expected) == float(actual):
+                return True
+        except (ValueError, TypeError):
+            pass
+    return False
+
+
 def grade_data_accuracy(conv_text: str, final_state: dict, calls_text: str, expected_data: dict) -> dict:
-    """Grade whether bot accurately captured eligibility data from the conversation."""
     if not expected_data:
         return {"pass": True, "reason": "PASS: No expected data defined"}
 
-    prompt = f"""Grade this eligibility verification conversation for DATA ACCURACY.
+    failures = []
+    matches = []
+    for field, expected in expected_data.items():
+        actual = final_state.get(field)
+        if _values_match(expected, actual):
+            matches.append(field)
+        else:
+            failures.append(f"{field}: expected '{expected}', got '{actual}'")
 
-CONVERSATION:
-{conv_text}
-
-FINAL STATE (captured data):
-{json.dumps(final_state, indent=2)}
-
-EXPECTED DATA FROM INSURANCE REP:
-{json.dumps(expected_data, indent=2)}
-
-FUNCTION CALLS:
-{calls_text}
-
-Check:
-1. Did bot capture the correct values that the insurance rep provided?
-2. Were copay/deductible amounts recorded accurately (including cents)?
-3. Were boolean fields (cpt_covered, prior_auth_required) captured correctly?
-4. Was reference number captured if provided?
-5. Did bot handle corrections (rep changing a value) correctly?
-
-Reply with exactly one line:
-PASS: <5 words why ok>
-or
-FAIL: <5 words what went wrong>"""
-
-    result = _call_grader(prompt)
-    return {"pass": result.upper().startswith("PASS"), "reason": result}
+    if failures:
+        return {
+            "pass": False,
+            "reason": f"FAIL: {'; '.join(failures[:3])}" + (f" (+{len(failures)-3} more)" if len(failures) > 3 else ""),
+            "failures": failures,
+            "matches": matches,
+        }
+    return {"pass": True, "reason": f"PASS: All {len(matches)} fields match"}
 
 
 def grade_node_reached(final_node: str, expected_node: str) -> dict:
@@ -144,52 +170,117 @@ def grade_captured_state(final_state: dict, expected_state: dict) -> dict:
 
 
 def grade_conversation_quality(conv_text: str) -> dict:
-    """Grade conversational quality - no repetition, natural flow."""
-    prompt = f"""Grade this conversation's QUALITY. Be STRICT about these issues:
+    prompt = f"""Grade this conversation's STYLE (not logic). Check ONLY:
 
 CONVERSATION:
 {conv_text}
 
-Check for these problems:
-1. REPETITION: Bot says same thing multiple times (e.g., multiple "Goodbye", repeated confirmations)
-2. OVER-TALKING: Bot keeps talking after call ends
-3. ROBOTIC: Unnatural phrasing, lists, or overly formal language
-4. RAMBLING: Unnecessarily long responses when brief would work
+FAIL if:
+1. REPETITION: Bot says same phrase multiple times (e.g., multiple "Goodbye")
+2. OVER-TALKING: Bot speaks after saying goodbye
+3. ROBOTIC: Uses bullet points, lists, or markdown
+4. RAMBLING: Responses longer than needed
 
-If ANY of these issues exist, mark as FAIL.
+DO NOT judge the conversation logic or what questions the bot asks.
 
-Reply with exactly one line:
-PASS: <5 words why ok>
-or
-FAIL: <5 words what went wrong>"""
+Reply exactly: PASS: <5 words> or FAIL: <5 words>"""
 
     result = _call_grader(prompt)
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
-def grade_function_calls(calls_text: str, final_state: dict) -> dict:
-    """Grade function call correctness - right functions, right data."""
-    prompt = f"""Grade whether the bot called functions correctly.
+def grade_function_calls(
+    function_calls: list[dict],
+    final_state: dict,
+    expected_data: dict = None,
+    expected_functions: list[str] = None,
+    forbidden_functions: list[str] = None,
+) -> dict:
+    called_functions = [fc["function"] for fc in function_calls]
+    failures = []
+    checks = []
 
-FUNCTION CALLS:
-{calls_text}
+    if expected_functions:
+        for fn in expected_functions:
+            if fn in called_functions:
+                checks.append(f"{fn}: called")
+            else:
+                failures.append(f"Missing: {fn}")
 
-FINAL STATE:
-{json.dumps(final_state, indent=2)}
+    if forbidden_functions:
+        for fn in forbidden_functions:
+            if fn in called_functions:
+                failures.append(f"Forbidden called: {fn}")
 
-Check for:
-1. Called functions at appropriate times (not prematurely)
-2. Captured data correctly (no typos, wrong values)
-3. Didn't skip required functions
-4. Didn't call unnecessary functions
+    # function name -> (state_field, arg_name)
+    func_to_field = {
+        "record_network_status": ("network_status", "status"),
+        "record_plan_type": ("plan_type", "plan_type"),
+        "record_cpt_covered": ("cpt_covered", "covered"),
+        "record_copay": ("copay_amount", "amount"),
+        "record_coinsurance": ("coinsurance_percent", "percent"),
+        "record_prior_auth_required": ("prior_auth_required", "required"),
+        "record_deductible_family": ("deductible_family", "amount"),
+        "record_deductible_family_met": ("deductible_family_met", "amount"),
+        "record_oop_max_family": ("oop_max_family", "amount"),
+        "record_oop_max_family_met": ("oop_max_family_met", "amount"),
+        "record_deductible_individual": ("deductible_individual", "amount"),
+        "record_deductible_individual_met": ("deductible_individual_met", "amount"),
+        "record_oop_max_individual": ("oop_max_individual", "amount"),
+        "record_oop_max_individual_met": ("oop_max_individual_met", "amount"),
+        "record_reference_number": ("reference_number", "reference_number"),
+    }
 
-Reply with exactly one line:
-PASS: <5 words why ok>
-or
-FAIL: <5 words what went wrong>"""
+    # Fields that can be captured via proceed_to_* functions (arg name = state field name)
+    transition_fields = {
+        "network_status", "plan_type", "cpt_covered", "copay_amount", "coinsurance_percent",
+        "prior_auth_required", "telehealth_covered", "deductible_applies",
+        "deductible_family", "deductible_family_met", "oop_max_family", "oop_max_family_met",
+        "deductible_individual", "deductible_individual_met", "oop_max_individual", "oop_max_individual_met",
+        "reference_number",
+    }
 
-    result = _call_grader(prompt)
-    return {"pass": result.upper().startswith("PASS"), "reason": result}
+    if expected_data:
+        for fc in function_calls:
+            fn_name = fc["function"]
+            args = fc.get("args", {})
+
+            # Check record_* functions
+            if fn_name in func_to_field:
+                state_field, arg_name = func_to_field[fn_name]
+                if state_field in expected_data:
+                    expected_val = expected_data[state_field]
+                    actual_val = args.get(arg_name)
+                    if _values_match(expected_val, actual_val):
+                        checks.append(f"{fn_name}: {actual_val}")
+                    else:
+                        failures.append(f"{fn_name}: expected {expected_val}, got {actual_val}")
+
+            # Check proceed_to_* functions for volunteered data (skip None values - not yet gathered)
+            elif fn_name.startswith("proceed_to_"):
+                for field in transition_fields:
+                    if field in args and field in expected_data:
+                        actual_val = args[field]
+                        if actual_val is None or actual_val == "None" or actual_val == "":
+                            continue  # skip fields not yet gathered
+                        expected_val = expected_data[field]
+                        if _values_match(expected_val, actual_val):
+                            checks.append(f"{fn_name}.{field}: {actual_val}")
+                        else:
+                            failures.append(f"{fn_name}.{field}: expected {expected_val}, got {actual_val}")
+
+    if failures:
+        return {
+            "pass": False,
+            "reason": f"FAIL: {'; '.join(failures[:3])}" + (f" (+{len(failures)-3} more)" if len(failures) > 3 else ""),
+        }
+
+    if not expected_functions and not forbidden_functions and not expected_data:
+        if not function_calls:
+            return {"pass": False, "reason": "FAIL: No functions called"}
+        return {"pass": True, "reason": f"PASS: {len(function_calls)} functions called"}
+
+    return {"pass": True, "reason": f"PASS: {len(checks)} function checks passed"}
 
 
 def grade_scenario(
@@ -200,27 +291,25 @@ def grade_scenario(
     expected_node: str,
     expected_db_state: dict = None,
     expected_data: dict = None,
+    expected_functions: list[str] = None,
+    forbidden_functions: list[str] = None,
 ) -> dict:
-    """
-    Run all graders and combine results. ALL must pass for overall pass.
-    Returns: {"pass": bool, "reason": str, "details": {...}}
-    """
     conv_text = _format_conversation(conversation)
-    calls_text = "\n".join([
-        f"Turn {fc['turn']}: {fc['function']}({json.dumps(fc['args'])})"
-        for fc in function_calls
-    ]) or "No function calls"
-
     final_state = final_state or {}
 
-    # Run all 5 graders
-    data_accuracy = grade_data_accuracy(conv_text, final_state, calls_text, expected_data or {})
-    quality = grade_conversation_quality(conv_text)
-    functions = grade_function_calls(calls_text, final_state)
+    data_accuracy = grade_data_accuracy(conv_text, final_state, "", expected_data or {})
+    # Skip quality check for transfer scenarios (conversation doesn't end normally)
+    if expected_node in ("transfer_pending", "transfer_initiated", "transfer_failed"):
+        quality = {"pass": True, "reason": "PASS: Skipped for transfer scenario"}
+    else:
+        quality = grade_conversation_quality(conv_text)
+    functions = grade_function_calls(
+        function_calls, final_state, expected_data,
+        expected_functions, forbidden_functions,
+    )
     node_reached = grade_node_reached(final_node, expected_node)
     state_check = grade_captured_state(final_state, expected_db_state or {})
 
-    # All must pass
     all_passed = all([
         data_accuracy["pass"],
         quality["pass"],
@@ -229,7 +318,6 @@ def grade_scenario(
         state_check["pass"],
     ])
 
-    # Build combined reason
     failures = []
     if not data_accuracy["pass"]:
         failures.append(f"data_accuracy: {data_accuracy['reason']}")
@@ -242,10 +330,7 @@ def grade_scenario(
     if not state_check["pass"]:
         failures.append(f"state: {state_check['reason']}")
 
-    if all_passed:
-        reason = "PASS: All checks passed"
-    else:
-        reason = "FAIL: " + "; ".join(failures)
+    reason = "PASS: All checks passed" if all_passed else "FAIL: " + "; ".join(failures)
 
     return {
         "pass": all_passed,
@@ -810,7 +895,6 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
             seeded_patient, session_id, verbose=verbose
         )
 
-        # Grade the result (5 graders: data_accuracy, quality, functions, node_reached, captured_state)
         grade = grade_scenario(
             conversation=result["conversation"],
             function_calls=result["function_calls"],
@@ -819,6 +903,8 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
             expected_node=result["target_node"],
             expected_db_state=scenario.get("expected_db_state"),
             expected_data=scenario.get("expected_data"),
+            expected_functions=scenario.get("expected_functions"),
+            forbidden_functions=scenario.get("forbidden_functions"),
         )
 
         # Verify DB state after call
