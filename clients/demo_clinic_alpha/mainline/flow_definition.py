@@ -12,7 +12,6 @@ from loguru import logger
 
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
-from handlers.transcript import save_transcript_to_db
 
 class _MockFlowManager:
     def __init__(self):
@@ -423,9 +422,8 @@ If you don't understand the caller:
         session_db = get_async_session_db()
 
         try:
-            if self.pipeline:
-                await save_transcript_to_db(self.pipeline)
-                logger.info("Transcript saved to session")
+            # NOTE: Transcript is saved by transport event handlers (cleanup_and_cancel)
+            # after the call actually ends, ensuring all messages are captured.
 
             # Save call metadata to session (works even when patient_id is None)
             session_updates = {

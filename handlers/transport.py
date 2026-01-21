@@ -37,7 +37,7 @@ class DialoutManager:
         if self.attempt_count >= DIALOUT_MAX_RETRIES or self.is_connected:
             return False
         self.attempt_count += 1
-        logger.info(f"Dialout attempt {self.attempt_count}/{DIALOUT_MAX_RETRIES} to {self.phone_number}")
+        logger.info(f"[Call] Dialout attempt {self.attempt_count}/{DIALOUT_MAX_RETRIES} to {self.phone_number}")
         await self.transport.start_dialout({"phoneNumber": self.phone_number})
         return True
 
@@ -45,7 +45,7 @@ class DialoutManager:
         if not self.should_retry():
             return False
         delay = self._calculate_delay()
-        logger.info(f"Retrying dialout in {delay:.2f}s (attempt {self.attempt_count + 1}/{DIALOUT_MAX_RETRIES})")
+        logger.info(f"[Call] Retrying dialout in {delay:.2f}s (attempt {self.attempt_count + 1}/{DIALOUT_MAX_RETRIES})")
         await asyncio.sleep(delay)
         return await self.attempt()
 
@@ -119,7 +119,7 @@ def setup_dialin_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
-        logger.info(f"Caller connected: {participant['id']}")
+        logger.info(f"[Call] Connected: {participant['id']}")
         if hasattr(pipeline, 'usage_observer') and pipeline.usage_observer:
             pipeline.usage_observer.mark_call_connected()
         await transport.capture_participant_transcription(participant["id"])
@@ -130,7 +130,7 @@ def setup_dialin_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info("Caller disconnected")
+        logger.info("[Call] Disconnected")
         if hasattr(pipeline, 'usage_observer') and pipeline.usage_observer:
             pipeline.usage_observer.mark_call_ended()
         await update_status_if_not_terminal(pipeline, CallStatus.COMPLETED)
@@ -138,7 +138,7 @@ def setup_dialin_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_dialin_error")
     async def on_dialin_error(transport, data):
-        logger.error(f"Dial-in error: {data}")
+        logger.error(f"[Call] Dial-in error: {data}")
         if pipeline.patient_id:
             await get_async_patient_db().update_call_status(
                 pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id
@@ -149,7 +149,7 @@ def setup_dialin_handlers(pipeline):
     async def on_dialout_answered(transport, data):
         if not pipeline.transfer_in_progress:
             return
-        logger.info("Cold transfer completed - staff answered")
+        logger.info("[Call] Transfer completed - staff answered")
         pipeline.transcripts.append({
             "role": "system",
             "content": "Call transferred to staff",
@@ -167,7 +167,7 @@ def setup_dialin_handlers(pipeline):
     async def on_dialout_error(transport, data):
         if not pipeline.transfer_in_progress:
             return
-        logger.error(f"Cold transfer failed: {data}")
+        logger.error(f"[Call] Transfer failed: {data}")
         pipeline.transfer_in_progress = False
         pipeline.transcripts.append({
             "role": "system",
@@ -183,13 +183,13 @@ def setup_dialout_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_joined")
     async def on_joined(transport, data):
-        logger.info(f"Bot joined Daily room, dialing {pipeline.phone_number}")
+        logger.info(f"[Call] Bot joined room, dialing {pipeline.phone_number}")
         await dialout_manager.attempt()
 
     @pipeline.transport.event_handler("on_dialout_answered")
     async def on_dialout_answered(transport, data):
         if pipeline.transfer_in_progress:
-            logger.info("Supervisor transfer completed")
+            logger.info("[Call] Supervisor transfer completed")
             pipeline.transcripts.append({
                 "role": "system",
                 "content": "Call transferred to supervisor",
@@ -210,11 +210,11 @@ def setup_dialout_handlers(pipeline):
                 await get_async_patient_db().update_call_status(
                     pipeline.patient_id, CallStatus.IN_PROGRESS.value, pipeline.organization_id
                 )
-            logger.info(f"Call answered by {pipeline.phone_number}")
+            logger.info(f"[Call] Answered by {pipeline.phone_number}")
 
     @pipeline.transport.event_handler("on_dialout_stopped")
     async def on_dialout_stopped(transport, data):
-        logger.info("Dialout stopped")
+        logger.info("[Call] Dialout stopped")
         if hasattr(pipeline, 'usage_observer') and pipeline.usage_observer:
             pipeline.usage_observer.mark_call_ended()
         await update_status_if_not_terminal(pipeline, CallStatus.COMPLETED)
@@ -222,7 +222,7 @@ def setup_dialout_handlers(pipeline):
 
     @pipeline.transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant, data):
-        logger.info("Participant left")
+        logger.info("[Call] Participant left")
         if hasattr(pipeline, 'usage_observer') and pipeline.usage_observer:
             pipeline.usage_observer.mark_call_ended()
         await update_status_if_not_terminal(pipeline, CallStatus.COMPLETED)
@@ -231,7 +231,7 @@ def setup_dialout_handlers(pipeline):
     @pipeline.transport.event_handler("on_dialout_error")
     async def on_dialout_error(transport, data):
         if pipeline.transfer_in_progress:
-            logger.error("Supervisor transfer failed - continuing call")
+            logger.error("[Call] Supervisor transfer failed - continuing call")
             pipeline.transfer_in_progress = False
             pipeline.transcripts.append({
                 "role": "system",
@@ -241,11 +241,11 @@ def setup_dialout_handlers(pipeline):
             })
             return
 
-        logger.warning(f"Dialout error (attempt {dialout_manager.attempt_count}): {data}")
+        logger.warning(f"[Call] Dialout error (attempt {dialout_manager.attempt_count}): {data}")
         if await dialout_manager.retry():
             return
 
-        logger.error(f"All {DIALOUT_MAX_RETRIES} dialout attempts failed")
+        logger.error(f"[Call] All {DIALOUT_MAX_RETRIES} dialout attempts failed")
         if pipeline.patient_id:
             await get_async_patient_db().update_call_status(
                 pipeline.patient_id, CallStatus.FAILED.value, pipeline.organization_id

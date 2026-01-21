@@ -14,7 +14,6 @@ from loguru import logger
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 from backend.utils import parse_natural_date, parse_natural_time, normalize_sip_endpoint
-from handlers.transcript import save_transcript_to_db
 
 
 class _MockFlowManager:
@@ -627,8 +626,8 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
         logger.info("Call ended by flow - transitioning to end node")
 
         try:
-            if self.pipeline:
-                await save_transcript_to_db(self.pipeline)
+            # NOTE: Transcript is saved by transport event handlers (cleanup_and_cancel)
+            # after the call actually ends, ensuring all messages are captured.
 
             # Save session metadata
             session_updates = {

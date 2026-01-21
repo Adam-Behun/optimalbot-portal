@@ -7,7 +7,36 @@ from datetime import datetime, timezone
 from collections import OrderedDict
 from loguru import logger
 
-NOISY_LIBRARIES = ['pymongo', 'websockets', 'websockets.client', 'httpx', 'httpcore', 'urllib3']
+# TRACE level is built-in to loguru (level 5)
+
+# Verbose log patterns to suppress (we have better alternatives)
+SUPPRESSED_LOG_PATTERNS = [
+    "Generating chat from universal context",  # Replaced by LLMContextObserver
+    "Retrieving the tools using the adapter",  # No useful info
+]
+
+
+def _should_suppress(record) -> bool:
+    """Filter out verbose logs we've replaced with better alternatives."""
+    msg = str(record["message"])
+    return not any(pattern in msg for pattern in SUPPRESSED_LOG_PATTERNS)
+
+NOISY_LIBRARIES = [
+    # Third-party
+    'pymongo', 'websockets', 'websockets.client', 'httpx', 'httpcore', 'urllib3',
+    'uvicorn.access',  # HTTP request logs
+    # Pipecat internals (suppress frame-level noise)
+    # Keep: pipecat.services.deepgram (transcriptions), pipecat.services.cartesia (TTS text)
+    # Keep: pipecat_flows.manager (function calls)
+    'pipecat.processors.aggregators',
+    'pipecat.processors.metrics',
+    'pipecat.adapters',
+    'pipecat.services.openai.base_llm',  # Dumps full LLM context at DEBUG
+    'pipecat.services.llm_service',
+    'pipecat.pipeline.task',
+    'pipecat.transports',
+    'pipecat.utils.tracing',
+]
 
 # Rate limiting for email alerts: max 1 per error type per 5 minutes
 _error_timestamps: OrderedDict[str, datetime] = OrderedDict()
@@ -80,17 +109,31 @@ Environment: {env}
         pass  # Don't log email failures to avoid recursion
 
 
-def setup_logging(debug: bool = None):
+def setup_logging(debug: bool = None, trace: bool = None):
+    if trace is None:
+        trace = os.getenv("TRACE", "false").lower() in ["true", "1", "yes"]
     if debug is None:
-        debug = os.getenv("DEBUG", "false").lower() in ["true", "1", "yes"]
+        debug = trace or os.getenv("DEBUG", "false").lower() in ["true", "1", "yes"]
 
     env = os.getenv("ENV", "local")
-    level = "DEBUG" if debug else "INFO"
+
+    if trace:
+        level = "TRACE"
+    elif debug:
+        level = "DEBUG"
+    else:
+        level = "INFO"
 
     logger.remove()
 
     if env != "local":
-        logger.add(sys.stderr, level=level, format="{message}", serialize=True)
+        logger.add(
+            sys.stderr,
+            level=level,
+            format="{message}",
+            serialize=True,
+            filter=_should_suppress,
+        )
         # Email alerts for errors in deployed environments (not local)
         logger.add(_email_sink, level="ERROR")
     else:
@@ -98,10 +141,13 @@ def setup_logging(debug: bool = None):
             sys.stderr,
             level=level,
             format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+            filter=_should_suppress,
         )
 
     for lib in NOISY_LIBRARIES:
         logging.getLogger(lib).setLevel(logging.WARNING)
 
-    if debug:
+    if trace:
+        logger.info(f"Trace logging enabled (env={env})")
+    elif debug:
         logger.info(f"Debug logging enabled (env={env})")

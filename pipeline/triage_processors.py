@@ -94,12 +94,12 @@ class MainBranchGate(FrameProcessor):
     async def _wait_for_conversation(self):
         await self._conversation_notifier.wait()
         self._gate_open = True
-        logger.debug("MainBranchGate: opened by conversation_notifier")
+        logger.trace("[Triage] Gate opened (conversation)")
 
     async def _wait_for_ivr_completed(self):
         await self._ivr_completed_notifier.wait()
         self._gate_open = True
-        logger.debug("MainBranchGate: opened by ivr_completed_notifier")
+        logger.trace("[Triage] Gate opened (IVR completed)")
 
 
 class ClassifierGate(FrameProcessor):
@@ -147,12 +147,12 @@ class ClassifierGate(FrameProcessor):
     async def _wait_for_decision(self):
         await self._gate_notifier.wait()
         self._gate_open = False
-        logger.debug("ClassifierGate: closed after decision")
+        logger.trace("[Triage] ClassifierGate closed")
 
     async def _wait_for_conversation(self):
         await self._conversation_notifier.wait()
         self._conversation_detected = True
-        logger.debug("ClassifierGate: conversation detected")
+        logger.trace("[Triage] Conversation detected")
 
 
 class TriageProcessor(FrameProcessor):
@@ -245,20 +245,20 @@ class TriageProcessor(FrameProcessor):
             return
 
         response = full_response.upper()
-        logger.debug(f"TriageProcessor: classifying '{full_response}'")
+        logger.debug(f"[Triage] Classifying: '{full_response}'")
 
         conversation_history = self._get_conversation_history()
 
         if TriageClassification.CONVERSATION in response:
             self._decision_made = True
-            logger.info("TriageProcessor: CONVERSATION detected")
+            logger.info("[Triage] Classification: CONVERSATION")
             await self._gate_notifier.notify()
             await self._conversation_notifier.notify()
             await self._call_event_handler(TriageEvent.CONVERSATION_DETECTED, conversation_history)
 
         elif TriageClassification.IVR in response:
             self._decision_made = True
-            logger.info("TriageProcessor: IVR detected")
+            logger.info("[Triage] Classification: IVR")
             await self._gate_notifier.notify()
             await self._ivr_notifier.notify()
             await self._call_event_handler(TriageEvent.IVR_DETECTED, conversation_history)
@@ -266,14 +266,14 @@ class TriageProcessor(FrameProcessor):
         elif TriageClassification.VOICEMAIL in response:
             self._decision_made = True
             self._voicemail_detected = True
-            logger.info("TriageProcessor: VOICEMAIL detected")
+            logger.info("[Triage] Classification: VOICEMAIL")
             await self._gate_notifier.notify()
             await self._voicemail_notifier.notify()
             await self.push_interruption_task_frame_and_wait()
             self._voicemail_event.clear()
 
         else:
-            logger.debug(f"TriageProcessor: no classification in '{full_response}'")
+            logger.debug(f"[Triage] No classification in: '{full_response}'")
 
     async def _delayed_voicemail_handler(self):
         """Wait for voicemail delay, then emit event."""
@@ -341,16 +341,16 @@ class TTSGate(FrameProcessor):
         for frame, direction in self._frame_buffer:
             await self.push_frame(frame, direction)
         self._frame_buffer.clear()
-        logger.debug("TTSGate: released buffered frames for conversation")
+        logger.trace("[Triage] TTSGate released buffered frames")
 
     async def _wait_for_ivr(self):
         await self._ivr_notifier.wait()
         self._gating_active = False
         self._frame_buffer.clear()
-        logger.debug("TTSGate: cleared buffer for IVR")
+        logger.trace("[Triage] TTSGate cleared buffer (IVR)")
 
     async def _wait_for_voicemail(self):
         await self._voicemail_notifier.wait()
         self._gating_active = False
         self._frame_buffer.clear()
-        logger.debug("TTSGate: cleared buffer for voicemail")
+        logger.trace("[Triage] TTSGate cleared buffer (voicemail)")

@@ -773,15 +773,26 @@ Example:
 - If you do NOT have a reference number yet, ask: "May I have a reference number for this call?"
 - NEVER ask for a reference number if you already recorded one - check your function calls first
 
-# Reference Number Rules
+# Reference Number Rules - READ CAREFULLY
 - You MUST ask for a reference number: "May I have a reference number for this call?"
-- ONLY record a reference number AFTER the rep explicitly provides one
+- ONLY record a reference number AFTER the rep EXPLICITLY provides one IN THEIR MESSAGE
+- The reference number MUST appear in the rep's actual words - look for phrases like "reference number is..." or "confirmation number..."
 - NEVER use the member ID as a reference number - they are DIFFERENT things
 - NEVER guess, invent, or fabricate a reference number
 - If the rep says "anything else?" but you don't have a reference number yet, ask for one
 
+**HALLUCINATION WARNING**: You MUST NOT invent reference numbers. If the rep has not explicitly said a reference number in their message, you CANNOT record one. Check the rep's ACTUAL words - did they SAY a reference number? If not, ASK for one.
+
 WRONG: Recording member ID "CIG334455667" as reference number
-RIGHT: Ask "May I have a reference number?" and wait for rep to provide one like "CIG-2025-1234"
+WRONG: Making up "CIG-2025-1234" when rep never said it
+RIGHT: Ask "May I have a reference number?" and wait for rep to EXPLICITLY say one
+
+# WHEN TO CALL proceed_to_closing
+ONLY call proceed_to_closing when BOTH conditions are met:
+1. You have recorded a reference number that the rep ACTUALLY SAID
+2. You have captured all required accumulator info
+
+If the rep has NOT given you a reference number, you MUST ask for one before proceeding.
 
 # CRITICAL: Handling Corrections
 If the rep CORRECTS a value they gave earlier:
@@ -1043,10 +1054,11 @@ IMPORTANT: Only call this function ONCE per correction. Do not repeat.""",
                 ),
                 FlowsFunctionSchema(
                     name="proceed_to_closing",
-                    description="Move to closing. Include reference number if just provided.",
-                    properties={
-                        "reference_number": {"type": "string", "description": "Reference/confirmation number if just mentioned"}
-                    },
+                    description="""Move to closing node to end the call.
+
+ONLY call this AFTER you have recorded a reference number via record_reference_number.
+If you have not yet recorded a reference number, ASK for one first - do NOT call this function.""",
+                    properties={},
                     required=[],
                     handler=self._proceed_to_closing_handler
                 )
@@ -1151,7 +1163,7 @@ EXAMPLES:
         "oop_max_individual_met": "oop_max_individual_met",
         "oop_max_family": "oop_max_family",
         "oop_max_family_met": "oop_max_family_met",
-        "reference_number": "reference_number",
+        # NOTE: reference_number intentionally excluded - must use record_reference_number function
     }
 
     async def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
@@ -1174,7 +1186,7 @@ EXAMPLES:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         captured = await self._store_volunteered_info(args, flow_manager)
-        logger.info(f"Flow: greeting → plan_info (captured: {captured if captured else 'none'})")
+        logger.debug(f"[Flow] Node: greeting → plan_info (captured: {captured if captured else 'none'})")
         return None, self.create_plan_info_node()
 
     async def _record_network_status_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
@@ -1260,9 +1272,9 @@ EXAMPLES:
         """Record correction to any previously captured field."""
         field_name = args.get("field_name", "")
         if field_name not in self.CORRECTABLE_FIELDS:
-            logger.warning(f"Flow: Attempted to correct invalid field: {field_name}")
+            logger.warning(f"[Flow] Attempted to correct invalid field: {field_name}")
             return None, None
-        logger.info(f"Flow: CORRECTION - {field_name}")
+        logger.info(f"[Flow] Correction: {field_name}")
         return await self._record_field(field_name, args.get("corrected_value", ""), flow_manager)
 
     async def _record_additional_notes_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
@@ -1272,8 +1284,14 @@ EXAMPLES:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         """Transition from accumulators to closing node."""
+        # Guard: Only proceed if reference_number has been recorded
+        reference_number = flow_manager.state.get("reference_number")
+        if not reference_number:
+            logger.warning("[Flow] proceed_to_closing called but no reference_number recorded - staying on accumulators")
+            return None, None
+
         captured = await self._store_volunteered_info(args, flow_manager)
-        logger.info(f"Flow: accumulators → closing (captured: {captured if captured else 'none'})")
+        logger.debug(f"[Flow] Node: accumulators → closing (captured: {captured if captured else 'none'})")
         return None, self.create_closing_node()
 
     async def _proceed_to_accumulators_handler(
@@ -1281,7 +1299,7 @@ EXAMPLES:
     ) -> tuple[None, "NodeConfig"]:
         """Transition from cpt_coverage to accumulators node."""
         captured = await self._store_volunteered_info(args, flow_manager)
-        logger.info(f"Flow: cpt_coverage → accumulators (captured: {captured if captured else 'none'})")
+        logger.debug(f"[Flow] Node: cpt_coverage → accumulators (captured: {captured if captured else 'none'})")
         return None, self.create_accumulators_node()
 
     async def _proceed_to_cpt_coverage_handler(
@@ -1289,7 +1307,7 @@ EXAMPLES:
     ) -> tuple[None, "NodeConfig"]:
         """Transition from plan_info to cpt_coverage node."""
         captured = await self._store_volunteered_info(args, flow_manager)
-        logger.info(f"Flow: plan_info → cpt_coverage (captured: {captured if captured else 'none'})")
+        logger.debug(f"[Flow] Node: plan_info → cpt_coverage (captured: {captured if captured else 'none'})")
         return None, self.create_cpt_coverage_node()
 
     # Transfer handlers are inherited from DialoutBaseFlow:

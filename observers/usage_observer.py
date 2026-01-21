@@ -74,6 +74,9 @@ class UsageObserver(BaseObserver):
         # Maps content tuple -> timestamp of last occurrence
         self._recent_metrics: dict = {}
 
+        # Prevent duplicate summary logs (multiple EndFrames can trigger _log_summary)
+        self._summary_logged: bool = False
+
     async def on_push_frame(self, data: FramePushed):
         """Process frames to track usage."""
         if data.direction != FrameDirection.DOWNSTREAM:
@@ -137,7 +140,7 @@ class UsageObserver(BaseObserver):
         self._llm_usage[provider][model]["prompt"] += tokens.prompt_tokens
         self._llm_usage[provider][model]["completion"] += tokens.completion_tokens
 
-        logger.debug(f"LLM usage: {provider}/{model} +{tokens.prompt_tokens}/{tokens.completion_tokens}")
+        logger.debug(f"[Usage] LLM: {provider}/{model} +{tokens.prompt_tokens}/{tokens.completion_tokens}")
 
     def _record_tts(self, metric: TTSUsageMetricsData):
         """Record TTS character usage."""
@@ -153,19 +156,19 @@ class UsageObserver(BaseObserver):
 
         self._tts_characters += metric.value
         self._tts_provider = provider
-        logger.debug(f"TTS usage: +{metric.value} chars (total: {self._tts_characters})")
+        logger.debug(f"[Usage] TTS: +{metric.value} chars (total: {self._tts_characters})")
 
     def mark_call_connected(self):
         """Called by transport handler when call connects. Idempotent."""
         if self._call_connected_at is None:
             self._call_connected_at = time.time()
-            logger.debug("Usage tracking: call connected")
+            logger.debug("[Usage] Call connected")
 
     def mark_call_ended(self):
         """Called by transport handler when call ends. Idempotent."""
         if self._call_connected_at and self._telephony_seconds == 0.0:
             self._telephony_seconds = time.time() - self._call_connected_at
-            logger.debug(f"Usage tracking: call ended, duration={self._telephony_seconds:.1f}s")
+            logger.debug(f"[Usage] Call ended, duration={self._telephony_seconds:.1f}s")
 
     def _get_llm_rate(self, provider: str, model: str, rate_type: str) -> float:
         """Look up LLM rate from pricing config."""
@@ -285,11 +288,15 @@ class UsageObserver(BaseObserver):
 
     def _log_summary(self):
         """Log usage summary at end of session."""
+        if self._summary_logged:
+            return
+        self._summary_logged = True
+
         costs = self.calculate_costs()
         usage = costs["usage"]
 
         logger.info(
-            f"[Usage Summary] Session: {self._session_id} | "
+            f"[Usage] Session: {self._session_id} | "
             f"LLM: {usage['llm']['prompt_tokens']}/{usage['llm']['completion_tokens']} tokens | "
             f"TTS: {usage['tts']['characters']} chars | "
             f"STT: {usage['stt']['seconds']}s | "

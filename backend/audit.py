@@ -107,7 +107,7 @@ class AuditLogger:
                 "details": details or {}
             }
             await self.audit_logs.insert_one(log_entry)
-            logger.debug(f"PHI access log: {action} {resource_type}/{resource_id}")
+            logger.trace(f"PHI access log: {action} {resource_type}/{resource_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to write PHI access log: {e}")

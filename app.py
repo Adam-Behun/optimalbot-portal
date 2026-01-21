@@ -27,4 +27,11 @@ if __name__ == "__main__":
         exit(1)
 
     logger.info("Starting Healthcare AI Agent server...")
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    # Disable access logs in local mode to reduce noise when debugging calls
+    env = os.getenv("ENV", "local")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8000)),
+        access_log=(env != "local"),
+    )

@@ -15,7 +15,7 @@ from handlers import (
     setup_transport_handlers,
 )
 from handlers.triage import setup_triage_handlers
-from observers import LangfuseLatencyObserver, UsageObserver
+from observers import LangfuseLatencyObserver, LLMContextObserver, UsageObserver
 from pipeline.pipeline_factory import PipelineFactory
 
 try:
@@ -122,6 +122,13 @@ class CallSession:
             observers.append(self.usage_observer)
         except Exception as e:
             logger.warning(f"UsageObserver creation failed, continuing without usage tracking: {e}")
+
+        # LLM context observer - debug mode only
+        if self.debug_mode:
+            try:
+                observers.append(LLMContextObserver())
+            except Exception as e:
+                logger.warning(f"LLMContextObserver creation failed: {e}")
 
         # Whisker observer - already optional via env var
         whisker_enabled = os.getenv("ENABLE_WHISKER", "false").lower() in ["true", "1", "yes"]

@@ -19,6 +19,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from core.flow_loader import FlowLoader
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
 from pipeline.safety_processors import OutputValidator, SafetyMonitor
+from pipeline.transcript_logger import TranscriptLogger
 from pipeline.triage_detector import TriageDetector
 from pipeline.types import ConversationComponents
 from services.service_factory import ServiceFactory
@@ -214,7 +215,7 @@ class PipelineFactory:
 
     @staticmethod
     def _assemble_pipeline(components: ConversationComponents) -> tuple[Pipeline, PipelineParams]:
-        processors = [components.transport.input(), components.stt]
+        processors = [components.transport.input(), components.stt, TranscriptLogger()]
 
         if components.safety_monitor:
             processors.append(components.safety_monitor)

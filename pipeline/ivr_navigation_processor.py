@@ -138,12 +138,12 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
             FrameDirection.UPSTREAM
         )
 
-        logger.info("IVRNavigationProcessor: activated")
+        logger.info("[IVR] Activated")
 
     def deactivate(self):
         """Deactivate IVR navigation mode."""
         self._active = False
-        logger.info("IVRNavigationProcessor: deactivated")
+        logger.info("[IVR] Completed → human")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -170,7 +170,7 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
     async def _handle_dtmf_action(self, match):
         """Handle DTMF pattern - send keypad tone."""
         value = match.content
-        logger.debug(f"IVR DTMF: {value}")
+        logger.debug(f"[IVR] DTMF: {value}")
 
         try:
             keypad_entry = KeypadEntry(value)
@@ -187,7 +187,7 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
     async def _handle_ivr_action(self, match):
         """Handle IVR status pattern."""
         status = match.content.lower()
-        logger.debug(f"IVR status: {status}")
+        logger.debug(f"[IVR] Status: {status}")
 
         if status == IVRStatus.COMPLETED:
             self.deactivate()
@@ -198,7 +198,7 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
             await self._call_event_handler(IVREvent.STATUS_CHANGED, IVRStatus.STUCK)
 
         elif status == IVRStatus.WAIT:
-            logger.debug("IVR waiting for more input")
+            logger.trace("[IVR] Waiting")
 
         text_frame = TextFrame(text=f"<ivr>{status}</ivr>")
         text_frame.skip_tts = True

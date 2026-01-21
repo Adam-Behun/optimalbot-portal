@@ -58,11 +58,11 @@ async def bot(args: DailyRunnerArguments):
         if dialin_settings:
             call_type = "dial-in"
             phone_number = dialin_settings.get("from", "unknown")
-            logger.info(f"DIAL-IN call - call_id={dialin_settings.get('call_id')}, caller={mask_phone(phone_number)}")
+            logger.info(f"[Call] Dial-in started - call_id={dialin_settings.get('call_id')}, caller={mask_phone(phone_number)}")
         elif dialout_targets and len(dialout_targets) > 0:
             call_type = "dial-out"
             phone_number = dialout_targets[0].get("phoneNumber")
-            logger.info(f"DIAL-OUT call - dialing={mask_phone(phone_number)}")
+            logger.info(f"[Call] Dial-out started - dialing={mask_phone(phone_number)}")
         else:
             raise ValueError("Either dialin_settings or dialout_targets required")
 

@@ -111,11 +111,28 @@ export function EligibilityVerificationPatientList() {
       for (const patientId of activePatientIds) {
         try {
           const updatedPatient = await getPatient(patientId);
+          const previousStatus = patients.find(p => p.patient_id === patientId)?.call_status;
+
+          // Update patients list with new status and session ID
           setPatients(prev => prev.map(p =>
             p.patient_id === patientId
-              ? { ...p, call_status: updatedPatient.call_status }
+              ? { ...p, call_status: updatedPatient.call_status, last_call_session_id: updatedPatient.last_call_session_id }
               : p
           ));
+
+          // If viewing this patient and call just completed, refresh transcript
+          if (selectedPatient?.patient_id === patientId &&
+              previousStatus !== 'Completed' &&
+              updatedPatient.call_status === 'Completed' &&
+              updatedPatient.last_call_session_id) {
+            setSelectedPatient(prev => prev ? { ...prev, call_status: updatedPatient.call_status, last_call_session_id: updatedPatient.last_call_session_id } : prev);
+            try {
+              const transcriptData = await getCallTranscript(updatedPatient.last_call_session_id);
+              setTranscript(transcriptData.messages || []);
+            } catch {
+              // Transcript fetch failed
+            }
+          }
         } catch {
           // Patient fetch failed, skip this one
         }
@@ -123,7 +140,7 @@ export function EligibilityVerificationPatientList() {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [patients]);
+  }, [patients, selectedPatient]);
 
   const handleViewPatient = async (patient: Patient) => {
     try {
@@ -134,16 +151,20 @@ export function EligibilityVerificationPatientList() {
       if (patientData.last_call_session_id) {
         try {
           const transcriptData = await getCallTranscript(patientData.last_call_session_id);
+          console.log('Transcript response:', transcriptData);
           setTranscript(transcriptData.messages || []);
-        } catch {
+        } catch (err) {
+          console.error('Failed to fetch transcript:', err);
           setTranscript([]);
         }
       } else {
+        console.log('No last_call_session_id on patient:', patientData);
         setTranscript([]);
       }
 
       setDetailSheetOpen(true);
     } catch (err) {
+      console.error('Failed to load patient:', err);
       toast.error('Failed to load patient details');
     }
   };

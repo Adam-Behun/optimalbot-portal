@@ -115,7 +115,9 @@ export const deleteSession = async (sessionId: string): Promise<void> => {
 
 // GET /call/:sessionId/transcript - Get call transcript
 export const getCallTranscript = async (sessionId: string): Promise<{ messages: Array<{ role: string; content: string; timestamp?: string }> }> => {
+  console.log('Fetching transcript for session:', sessionId);
   const response = await api.get(`/call/${sessionId}/transcript`);
+  console.log('Transcript API response:', response.data);
   return { messages: response.data.transcripts || [] };
 };
 

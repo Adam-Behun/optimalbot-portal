@@ -9,7 +9,6 @@ from loguru import logger
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 from backend.utils import normalize_sip_endpoint
-from handlers.transcript import save_transcript_to_db
 
 
 class DialoutBaseFlow(ABC):
@@ -98,7 +97,7 @@ class DialoutBaseFlow(ABC):
         patient_id = flow_manager.state.get("patient_id")
         flow_manager.state[field_name] = value
         await self._try_db_update(patient_id, "update_field", field_name, value)
-        logger.info(f"Flow: Recorded {field_name} = {value}")
+        logger.debug(f"[Flow] Recorded: {field_name}={value}")
         return None, None
 
     # ==================== Shared Schemas ====================
@@ -235,7 +234,7 @@ class DialoutBaseFlow(ABC):
                 self.pipeline.transfer_in_progress = False
 
     async def _request_staff_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-        logger.info("Flow: Staff transfer requested")
+        logger.info("[Flow] Staff transfer requested")
         return None, self.create_staff_confirmation_node()
 
     async def _dial_staff_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
@@ -243,12 +242,12 @@ class DialoutBaseFlow(ABC):
         if not staff_number:
             logger.warning("Cold transfer requested but no staff_number configured")
             return None, self.create_transfer_failed_node()
-        logger.info(f"Cold transfer initiated to: {staff_number}")
+        logger.info(f"[Flow] Cold transfer initiated to: {staff_number}")
         return None, self.create_transfer_pending_node()
 
     async def _return_to_closing_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, NodeConfig]:
         """Return to closing node after transfer declined/failed. Override if needed."""
-        logger.info("Flow: returning to closing (transfer declined/failed)")
+        logger.info("[Flow] Returning to closing (transfer declined/failed)")
         return None, self.create_closing_node()
 
     @abstractmethod
@@ -262,13 +261,13 @@ class DialoutBaseFlow(ABC):
         from pipecat.frames.frames import EndTaskFrame
         from pipecat.processors.frame_processor import FrameDirection
 
-        logger.info("Call ended by flow")
+        logger.info("[Flow] Call ended")
         patient_id = flow_manager.state.get("patient_id")
         session_db = get_async_session_db()
 
         try:
-            if self.pipeline:
-                await save_transcript_to_db(self.pipeline)
+            # NOTE: Transcript is saved by transport event handlers (cleanup_and_cancel)
+            # after the call actually ends, ensuring all messages are captured.
 
             session_updates = {
                 "status": "completed",

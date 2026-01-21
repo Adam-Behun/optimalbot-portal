@@ -9,7 +9,6 @@ from loguru import logger
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 from backend.utils import parse_natural_date, normalize_sip_endpoint
-from handlers.transcript import save_transcript_to_db
 
 
 class DialinBaseFlow(ABC):
@@ -575,8 +574,8 @@ Do NOT ask clarifying questions - just handle their response."""
         patient_id = flow_manager.state.get("patient_id")
         session_db = get_async_session_db()
         try:
-            if self.pipeline:
-                await save_transcript_to_db(self.pipeline)
+            # NOTE: Transcript is saved by transport event handlers (cleanup_and_cancel)
+            # after the call actually ends, ensuring all messages are captured.
             session_updates = {
                 "status": "completed",
                 "completed_at": datetime.now(timezone.utc),

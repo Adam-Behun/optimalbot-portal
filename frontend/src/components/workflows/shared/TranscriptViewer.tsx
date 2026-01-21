@@ -21,7 +21,8 @@ export function TranscriptViewer({ messages, summary, callerLabel = 'Insurance R
   // Separate IVR messages from regular conversation
   const ivrMessages = messages.filter(m => m.type === 'ivr' || m.type === 'ivr_action');
   const ivrSummary = messages.find(m => m.type === 'ivr_summary' && (m.content.includes('ompleted') || m.content.includes('ailed')));
-  const conversationMessages = messages.filter(m => m.type === 'transcript' || m.type === 'transfer');
+  // Include messages without type (regular conversation) or with type 'transcript' or 'transfer'
+  const conversationMessages = messages.filter(m => !m.type || m.type === 'transcript' || m.type === 'transfer' || m.type === 'triage');
 
   return (
     <div className="space-y-4">

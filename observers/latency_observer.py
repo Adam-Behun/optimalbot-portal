@@ -90,6 +90,9 @@ class LangfuseLatencyObserver(BaseObserver):
         self._pending_llm_ttfb: float = 0
         self._pending_tts_ttfb: float = 0
 
+        # Prevent duplicate summary logs (multiple EndFrames can trigger _record_summary)
+        self._summary_logged: bool = False
+
         # OpenTelemetry tracer - graceful initialization
         self._tracer = None
         if OTEL_AVAILABLE:
@@ -225,6 +228,10 @@ class LangfuseLatencyObserver(BaseObserver):
 
     def _record_summary(self):
         """Log session summary statistics."""
+        if self._summary_logged:
+            return
+        self._summary_logged = True
+
         if not self._all_turns:
             logger.info(f"[Latency] Session {self._session_id} - No latency data")
             return
