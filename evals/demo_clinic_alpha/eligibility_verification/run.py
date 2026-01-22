@@ -403,7 +403,7 @@ class FlowRunner:
         session_id: str,
         organization_id: str,
         verbose: bool = False,
-        entry_node: str = "greeting_without_ivr",
+        entry_node: str = "greeting",
     ):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
@@ -426,11 +426,8 @@ class FlowRunner:
         # Initialize flow state with patient data
         self.flow._init_flow_state()
 
-        # Start with specified entry node
-        if entry_node == "greeting_after_ivr":
-            self.current_node = self.flow.create_greeting_node_after_ivr_completed()
-        else:
-            self.current_node = self.flow.create_greeting_node_without_ivr()
+        # Start with greeting node (unified for with/without IVR)
+        self.current_node = self.flow.create_greeting_node()
         self.current_node_name = self.current_node.get("name", "greeting")
         self.context = EvalContextManager()
         self.context.set_node(self.current_node)
@@ -683,8 +680,6 @@ async def run_simulation(
     """Run a single eligibility verification simulation for a scenario."""
     insurance_rep = scenario["insurance_rep"]
     persona = scenario["persona"]
-    entry_node = scenario.get("entry_node", "greeting_without_ivr")
-
     runner = FlowRunner(
         llm_config=llm_config,
         cold_transfer_config=cold_transfer_config,
@@ -692,10 +687,9 @@ async def run_simulation(
         session_id=session_id,
         organization_id=ORG_ID_STR,
         verbose=verbose,
-        entry_node=entry_node,
     )
 
-    # Bot greeting - only for greeting_without_ivr (IVR path waits for rep)
+    # Check for pre_actions (e.g., tts_say greeting)
     pre_actions = runner.current_node.get("pre_actions") or []
     greeting = ""
     if pre_actions and pre_actions[0].get("type") == "tts_say":
@@ -704,16 +698,15 @@ async def run_simulation(
     print(f"\n{'='*70}")
     print(f"SCENARIO: {scenario['id']}")
     print(f"TARGET: {scenario['target_node']}")
-    print(f"ENTRY NODE: {entry_node}")
     print(f"{'='*70}\n")
 
-    # Handle greeting based on entry node
+    # Handle greeting if present in pre_actions
     if greeting:
         runner.context.add_assistant_message(greeting)
         print(f"MONICA: {greeting}\n")
         conversation = [{"role": "assistant", "content": greeting, "turn": 0}]
     else:
-        # IVR path: bot waits for rep to speak first
+        # Bot waits for rep to speak first (respond_immediately=False)
         conversation = []
 
     # Conversation loop

@@ -193,46 +193,21 @@ You are on a phone call with an insurance representative. Your responses will be
 - NEVER record individual amounts as family amounts or vice versa.
 - After saying goodbye, do not speak again - end the call immediately."""
 
-    def create_greeting_node_after_ivr_completed(self) -> NodeConfig:
+    def create_greeting_node(self) -> NodeConfig:
+        """Create greeting node for when a human answers (with or without IVR).
+
+        For outbound calls, we always wait for the receiving party to speak first.
+        The transcription that triggered human detection is injected by the handler.
+        """
         return NodeConfig(
-            name="greeting_after_ivr",
+            name="greeting",
             role_messages=[{
                 "role": "system",
                 "content": self._get_global_instructions()
             }],
             task_messages=[{
                 "role": "system",
-                "content": """A representative answered after IVR navigation. They will likely ask identification questions.
-
-Answer their questions naturally using your identity and provider information. Common questions include your name, facility, tax ID, and the member's name.
-
-When they ask how they can help or are ready to assist, call proceed_to_plan_info."""
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="proceed_to_plan_info",
-                    description="Move to plan info questions after identification is complete.",
-                    properties={},
-                    required=[],
-                    handler=self._proceed_to_plan_info_handler
-                )
-            ],
-            respond_immediately=False,
-            context_strategy=ContextStrategyConfig(
-                strategy=ContextStrategy.RESET
-            )
-        )
-
-    def create_greeting_node_without_ivr(self) -> NodeConfig:
-        return NodeConfig(
-            name="greeting_without_ivr",
-            role_messages=[{
-                "role": "system",
-                "content": self._get_global_instructions()
-            }],
-            task_messages=[{
-                "role": "system",
-                "content": """A human answered directly. Introduce yourself: "Hi, this is [your name] calling from [facility] about eligibility verification for [patient name]."
+                "content": """A human answered. Introduce yourself: "Hi, this is [your name] calling from [facility] about eligibility verification for [patient name]."
 
 YOU ARE THE CALLER. The rep will ask YOU identification questions to verify who you are. Answer them:
 - "What's your name?" → "[your name]"
@@ -283,7 +258,10 @@ Example: If rep says "They're in network, POS plan, code is covered, $75 copay, 
                 ),
                 self._request_staff_schema(),
             ],
-            respond_immediately=True
+            respond_immediately=False,
+            context_strategy=ContextStrategyConfig(
+                strategy=ContextStrategy.RESET
+            )
         )
 
     def create_plan_info_node(self) -> NodeConfig:

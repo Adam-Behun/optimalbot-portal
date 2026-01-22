@@ -60,6 +60,7 @@ class TriageDetector(ParallelPipeline):
 
         self._main_branch_gate = MainBranchGate(
             conversation_notifier=self._conversation_notifier,
+            ivr_notifier=self._ivr_notifier,
             ivr_completed_notifier=self._ivr_completed_notifier,
         )
 

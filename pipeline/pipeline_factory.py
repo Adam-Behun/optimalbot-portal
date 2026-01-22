@@ -17,6 +17,7 @@ from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from core.flow_loader import FlowLoader
+from pipeline.ivr_human_detector import IVRHumanDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
 from pipeline.safety_processors import OutputValidator, SafetyMonitor
 from pipeline.transcript_logger import TranscriptLogger
@@ -151,6 +152,7 @@ class PipelineFactory:
 
         triage_detector = None
         ivr_processor = None
+        ivr_human_detector = None
 
         if call_type == "dial-out":
             triage_config = services_config.get('triage', {})
@@ -167,6 +169,16 @@ class PipelineFactory:
                 ivr_processor = IVRNavigationProcessor(
                     ivr_vad_params=VADParams(stop_secs=2.0)
                 )
+
+                # IVR human detection uses direct Groq API calls
+                classifier_config = services_config['services'].get('classifier_llm', {})
+                if classifier_config.get('provider') == 'groq':
+                    ivr_human_detector = IVRHumanDetector(
+                        api_key=classifier_config['api_key'],
+                        model=classifier_config.get('model', 'llama-3.3-70b-versatile')
+                    )
+                else:
+                    logger.info("IVR human detection disabled (requires Groq classifier)")
 
         safety_config = services_config.get('safety_monitors', {})
         safety_llm_config = safety_config.get('safety_llm')
@@ -208,6 +220,7 @@ class PipelineFactory:
             classifier_llm=classifier_llm,
             triage_detector=triage_detector,
             ivr_processor=ivr_processor,
+            ivr_human_detector=ivr_human_detector,
             safety_monitor=safety_monitor,
             output_validator=output_validator,
             safety_config=safety_config,
@@ -221,15 +234,20 @@ class PipelineFactory:
             processors.append(components.safety_monitor)
 
         if components.triage_detector:
-            processors.extend([
-                components.triage_detector.detector(),
-                components.ivr_processor,
-            ])
+            processors.append(components.triage_detector.detector())
+
+        if components.ivr_human_detector:
+            processors.append(components.ivr_human_detector)
 
         processors.extend([
             components.context_aggregator.user(),
             components.active_llm,
         ])
+
+        # IVRNavigationProcessor must be AFTER LLM to intercept LLM responses
+        # and parse DTMF/IVR tags before they reach TTS
+        if components.ivr_processor:
+            processors.append(components.ivr_processor)
 
         if components.output_validator:
             processors.append(components.output_validator)

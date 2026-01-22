@@ -63,6 +63,7 @@ class CallSession:
         # Commonly-accessed component shortcuts
         self.flow = None
         self.transport = None
+        self.context = None
         self.context_aggregator = None
 
         self.transcripts = []
@@ -97,6 +98,7 @@ class CallSession:
         self.components = components
         self.flow = components.flow
         self.transport = components.transport
+        self.context = components.context
         self.context_aggregator = components.context_aggregator
 
     def _create_observers(self) -> list:
@@ -192,6 +194,7 @@ class CallSession:
                 self,
                 self.components.triage_detector,
                 self.components.ivr_processor,
+                self.components.ivr_human_detector,
                 self.flow,
                 self.flow_manager,
             )

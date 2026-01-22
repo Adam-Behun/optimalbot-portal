@@ -128,11 +128,13 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
         if conversation_history:
             messages.extend(conversation_history)
 
+        # Push context update UPSTREAM to OpenAI (processor is now after LLM)
         await self.push_frame(
             LLMMessagesUpdateFrame(messages=messages, run_llm=True),
             FrameDirection.UPSTREAM
         )
 
+        # VAD params go UPSTREAM to the input/STT side
         await self.push_frame(
             VADParamsUpdateFrame(params=self._ivr_vad_params),
             FrameDirection.UPSTREAM
@@ -145,6 +147,10 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
         self._active = False
         logger.info("[IVR] Completed → human")
 
+    def is_active(self) -> bool:
+        """Check if IVR navigation is active."""
+        return self._active
+
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
 
@@ -153,15 +159,17 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
             return
 
         if isinstance(frame, LLMTextFrame):
-            result = await self._aggregator.aggregate(frame.text)
-            if result:
-                await self.push_frame(LLMTextFrame(result), direction)
+            # aggregate() is an async iterator that yields PatternMatch objects
+            async for result in self._aggregator.aggregate(frame.text):
+                # result.text contains the non-pattern text to pass through
+                await self.push_frame(LLMTextFrame(result.text), direction)
 
         elif isinstance(frame, (LLMFullResponseEndFrame, EndFrame)):
-            remaining = self._aggregator.text
-            if remaining:
-                await self.push_frame(LLMTextFrame(remaining), direction)
-            self._aggregator.reset()
+            # Flush any remaining text from the aggregator
+            remaining = self._aggregator.text  # Returns Aggregation object
+            if remaining and remaining.text:
+                await self.push_frame(LLMTextFrame(remaining.text), direction)
+            await self._aggregator.reset()
             await self.push_frame(frame, direction)
 
         else:
@@ -169,7 +177,7 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
 
     async def _handle_dtmf_action(self, match):
         """Handle DTMF pattern - send keypad tone."""
-        value = match.content
+        value = match.text
         logger.debug(f"[IVR] DTMF: {value}")
 
         try:
@@ -186,7 +194,7 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
 
     async def _handle_ivr_action(self, match):
         """Handle IVR status pattern."""
-        status = match.content.lower()
+        status = match.text.lower()
         logger.debug(f"[IVR] Status: {status}")
 
         if status == IVRStatus.COMPLETED:

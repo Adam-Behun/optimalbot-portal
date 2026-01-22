@@ -48,10 +48,11 @@ from pipecat.utils.sync.base_notifier import BaseNotifier
 
 
 class MainBranchGate(FrameProcessor):
-    """Blocks main pipeline until CONVERSATION detected or IVR navigation completed.
+    """Blocks main pipeline until CONVERSATION detected, IVR detected, or IVR navigation completed.
 
-    Starts closed. Opens when either:
+    Starts closed. Opens when any of:
     - conversation_notifier signals (human answered)
+    - ivr_notifier signals (IVR detected - need to pass transcriptions to IVR navigator)
     - ivr_completed_notifier signals (IVR navigation finished)
 
     When closed, only SystemFrame, EndFrame, StopFrame pass through.
@@ -60,18 +61,22 @@ class MainBranchGate(FrameProcessor):
     def __init__(
         self,
         conversation_notifier: BaseNotifier,
+        ivr_notifier: BaseNotifier,
         ivr_completed_notifier: BaseNotifier,
     ):
         super().__init__()
         self._conversation_notifier = conversation_notifier
+        self._ivr_notifier = ivr_notifier
         self._ivr_completed_notifier = ivr_completed_notifier
         self._gate_open = False
         self._conversation_task: Optional[asyncio.Task] = None
+        self._ivr_task: Optional[asyncio.Task] = None
         self._ivr_completed_task: Optional[asyncio.Task] = None
 
     async def setup(self, setup: FrameProcessorSetup):
         await super().setup(setup)
         self._conversation_task = self.create_task(self._wait_for_conversation())
+        self._ivr_task = self.create_task(self._wait_for_ivr())
         self._ivr_completed_task = self.create_task(self._wait_for_ivr_completed())
 
     async def cleanup(self):
@@ -79,6 +84,9 @@ class MainBranchGate(FrameProcessor):
         if self._conversation_task:
             await self.cancel_task(self._conversation_task)
             self._conversation_task = None
+        if self._ivr_task:
+            await self.cancel_task(self._ivr_task)
+            self._ivr_task = None
         if self._ivr_completed_task:
             await self.cancel_task(self._ivr_completed_task)
             self._ivr_completed_task = None
@@ -95,6 +103,11 @@ class MainBranchGate(FrameProcessor):
         await self._conversation_notifier.wait()
         self._gate_open = True
         logger.trace("[Triage] Gate opened (conversation)")
+
+    async def _wait_for_ivr(self):
+        await self._ivr_notifier.wait()
+        self._gate_open = True
+        logger.trace("[Triage] Gate opened (IVR)")
 
     async def _wait_for_ivr_completed(self):
         await self._ivr_completed_notifier.wait()

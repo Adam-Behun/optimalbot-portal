@@ -20,6 +20,7 @@ class ConversationComponents:
     classifier_llm: Optional[Any] = None
     triage_detector: Optional[Any] = None
     ivr_processor: Optional[Any] = None
+    ivr_human_detector: Optional[Any] = None
     safety_monitor: Optional[Any] = None
     output_validator: Optional[Any] = None
     safety_config: dict = field(default_factory=dict)
