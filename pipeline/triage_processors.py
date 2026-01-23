@@ -168,6 +168,48 @@ class ClassifierGate(FrameProcessor):
         logger.trace("[Triage] Conversation detected")
 
 
+class ClassifierUpstreamGate(FrameProcessor):
+    """Blocks upstream frames from polluting classifier branch after decision.
+
+    Placed at the END of the classifier branch to intercept upstream frames
+    (like FunctionCallResultFrame) before they reach the context aggregator.
+    """
+
+    def __init__(self, gate_notifier: BaseNotifier):
+        super().__init__()
+        self._gate_notifier = gate_notifier
+        self._gate_open = True
+        self._gate_task: Optional[asyncio.Task] = None
+
+    async def setup(self, setup: FrameProcessorSetup):
+        await super().setup(setup)
+        self._gate_task = self.create_task(self._wait_for_decision())
+
+    async def cleanup(self):
+        await super().cleanup()
+        if self._gate_task:
+            await self.cancel_task(self._gate_task)
+            self._gate_task = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # Downstream frames always pass (classifier output)
+        if direction == FrameDirection.DOWNSTREAM:
+            await self.push_frame(frame, direction)
+            return
+
+        # Upstream: pass if gate open OR system frames
+        if self._gate_open or isinstance(frame, (SystemFrame, EndFrame, StopFrame)):
+            await self.push_frame(frame, direction)
+        # All other upstream frames blocked after decision
+
+    async def _wait_for_decision(self):
+        await self._gate_notifier.wait()
+        self._gate_open = False
+        logger.trace("[Triage] ClassifierUpstreamGate closed")
+
+
 class TriageProcessor(FrameProcessor):
     """Processes classifier LLM output and emits triage events.
 

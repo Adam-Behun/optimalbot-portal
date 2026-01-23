@@ -13,6 +13,7 @@ from pipecat.utils.sync.event_notifier import EventNotifier
 from pipeline.triage_processors import (
     MainBranchGate,
     ClassifierGate,
+    ClassifierUpstreamGate,
     TriageProcessor,
     TTSGate,
 )
@@ -84,6 +85,10 @@ class TriageDetector(ParallelPipeline):
             voicemail_notifier=self._voicemail_notifier,
         )
 
+        self._classifier_upstream_gate = ClassifierUpstreamGate(
+            gate_notifier=self._gate_notifier,
+        )
+
         super().__init__(
             [self._main_branch_gate],
             [
@@ -92,6 +97,7 @@ class TriageDetector(ParallelPipeline):
                 self._classifier_llm,
                 self._triage_processor,
                 self._context_aggregator.assistant(),
+                self._classifier_upstream_gate,  # blocks upstream frames after decision
             ],
         )
 
