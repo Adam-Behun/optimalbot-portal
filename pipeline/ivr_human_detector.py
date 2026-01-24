@@ -11,13 +11,23 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipeline.triage_processors import TriageClassification
 
 
-CLASSIFIER_PROMPT = """Classify this phone call transcription.
+CLASSIFIER_PROMPT = """Classify this phone call transcription as IVR or human.
 
-Output EXACTLY one word:
-- CONVERSATION: A human speaking conversationally (greetings, introductions, questions)
-- IVR: Automated system (press 1 for..., please hold, transferring)
+IVR (automated system) examples:
+- "Press 1 for...", "For X, press Y"
+- "Please hold", "Thank you for holding", "Thank you for your patience"
+- "Your estimated wait time is...", "You are next in queue"
+- "A representative will be with you shortly"
+- "Transferring your call", "Please wait while we connect you"
 
-Output only: CONVERSATION or IVR"""
+CONVERSATION (human) indicators:
+- Person introduces themselves: "This is [Name]", "My name is [Name]", "[Name] speaking"
+- Asks how to help: "How can I help you?", "How may I assist you?"
+- Mentions their department: "This is [Name] with [department]"
+
+CRITICAL: Generic hold messages like "Thank you for your patience" or "A representative will be with you shortly" are IVR, NOT human. Humans identify themselves by name.
+
+Output EXACTLY one word: CONVERSATION or IVR"""
 
 
 class IVRHumanDetector(FrameProcessor):

@@ -78,6 +78,9 @@ async def update_status_if_not_terminal(pipeline, new_status: CallStatus):
 
 async def save_usage_costs(pipeline):
     """Save usage and cost data to session."""
+    if hasattr(pipeline, 'usage_saved') and pipeline.usage_saved:
+        logger.debug("Usage already saved, skipping")
+        return
     if not hasattr(pipeline, 'usage_observer') or not pipeline.usage_observer:
         logger.warning(f"No usage observer for session {pipeline.session_id}, costs not tracked")
         return
@@ -93,6 +96,7 @@ async def save_usage_costs(pipeline):
             pipeline.organization_id
         )
         if success:
+            pipeline.usage_saved = True
             logger.info(f"Usage costs saved: ${costs.get('total_cost_usd', 0):.4f}")
         else:
             logger.error(f"Failed to save usage costs for session {pipeline.session_id}")

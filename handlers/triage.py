@@ -133,6 +133,12 @@ def setup_triage_handlers(
                 VADParamsUpdateFrame(VADParams(stop_secs=0.8))
             ])
 
+            # Clear IVR context before starting human conversation.
+            # Without this, IVR responses (like <ivr>wait</ivr>) remain in context
+            # and the LLM mimics these patterns during human conversation.
+            flow.context_aggregator.user().set_messages([])
+            logger.debug("TRIAGE: Cleared IVR context")
+
             greeting_node = flow.create_greeting_node()
 
             # Inject the transcription that detected human (like handle_conversation does)

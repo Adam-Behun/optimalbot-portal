@@ -14,6 +14,8 @@ from handlers import (
     setup_transcript_handler,
     setup_transport_handlers,
 )
+from handlers.transcript import save_transcript_to_db
+from handlers.transport import save_usage_costs
 from handlers.triage import setup_triage_handlers
 from observers import LangfuseLatencyObserver, LLMContextObserver, UsageObserver
 from pipeline.pipeline_factory import PipelineFactory
@@ -69,6 +71,7 @@ class CallSession:
         self.transcripts = []
         self.transfer_in_progress = False
         self.transcript_saved = False
+        self.usage_saved = False
 
     def _build_session_data(self) -> dict:
         """Build session data dict for pipeline factory."""
@@ -209,6 +212,17 @@ class CallSession:
                 self, self.components.output_validator, self.components.safety_config
             )
 
+    async def _save_session_data(self) -> None:
+        """Save transcript and usage after pipeline completes."""
+        try:
+            await save_transcript_to_db(self)
+        except Exception:
+            logger.exception("Error saving transcript")
+        try:
+            await save_usage_costs(self)
+        except Exception:
+            logger.exception("Error saving usage costs")
+
     async def _execute_pipeline(self) -> None:
         """Run the pipeline and handle completion."""
         self.runner = PipelineRunner()
@@ -218,6 +232,8 @@ class CallSession:
         except Exception:
             logger.exception("Pipeline error")
             raise
+        finally:
+            await self._save_session_data()
 
     async def run(self, room_url: str, room_token: str, room_name: str):
         """Main entry point - builds and runs the conversation pipeline."""
