@@ -207,7 +207,12 @@ You are on a phone call with an insurance representative. Your responses will be
             }],
             task_messages=[{
                 "role": "system",
-                "content": """A human answered. Introduce yourself: "Hi, this is [your name] calling from [facility] about eligibility verification for [patient name]."
+                "content": """A human answered. Introduce yourself naturally. If they gave their name, use it: "Hi [their name], this is [your name] calling from [facility] about eligibility verification for [patient name]."
+
+CAPTURE REP NAME:
+- If the rep introduces themselves (e.g., "This is Michael S."), capture using record_rep_name
+- If they DON'T give their name, ask: "May I have your first name and last initial for my records?"
+- Examples: "Sarah B." → first_name="Sarah", last_initial="B"
 
 YOU ARE THE CALLER. The rep will ask YOU identification questions to verify who you are. Answer them:
 - "What's your name?" → "[your name]"
@@ -231,6 +236,16 @@ Example: If rep says "They're in network, POS plan, code is covered, $75 copay, 
             }],
             functions=[
                 FlowsFunctionSchema(
+                    name="record_rep_name",
+                    description="Record rep's first name and last initial when they introduce themselves or when asked.",
+                    properties={
+                        "first_name": {"type": "string", "description": "Representative's first name"},
+                        "last_initial": {"type": "string", "description": "Last initial (single letter, empty if not provided)"}
+                    },
+                    required=["first_name"],
+                    handler=self._record_rep_name_handler
+                ),
+                FlowsFunctionSchema(
                     name="proceed_to_plan_info",
                     description="Move to plan info. Include ANY info the rep already volunteered - plan info, CPT coverage, accumulators, or reference number.",
                     properties={
@@ -247,11 +262,14 @@ Example: If rep says "They're in network, POS plan, code is covered, $75 copay, 
                         "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If PA/prior auth mentioned"},
                         "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
                         # Accumulators
+                        "deductible_individual": {"type": "string", "description": "Individual deductible amount if mentioned"},
+                        "deductible_individual_met": {"type": "string", "description": "Amount met if mentioned"},
                         "deductible_family": {"type": "string", "description": "Family deductible amount if mentioned"},
                         "deductible_family_met": {"type": "string", "description": "Amount met if mentioned"},
+                        "oop_max_individual": {"type": "string", "description": "Individual OOP max if mentioned"},
+                        "oop_max_individual_met": {"type": "string", "description": "Amount met if mentioned"},
                         "oop_max_family": {"type": "string", "description": "Family OOP max if mentioned"},
                         "oop_max_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "reference_number": {"type": "string", "description": "Reference/confirmation number if mentioned"}
                     },
                     required=[],
                     handler=self._proceed_to_plan_info_handler
@@ -430,11 +448,14 @@ EXAMPLES:
                         "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If PA/prior auth mentioned"},
                         "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
                         # Accumulators
+                        "deductible_individual": {"type": "string", "description": "Individual deductible amount if mentioned"},
+                        "deductible_individual_met": {"type": "string", "description": "Amount met if mentioned"},
                         "deductible_family": {"type": "string", "description": "Family deductible amount if mentioned"},
                         "deductible_family_met": {"type": "string", "description": "Amount met if mentioned"},
+                        "oop_max_individual": {"type": "string", "description": "Individual OOP max if mentioned"},
+                        "oop_max_individual_met": {"type": "string", "description": "Amount met if mentioned"},
                         "oop_max_family": {"type": "string", "description": "Family OOP max if mentioned"},
                         "oop_max_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "reference_number": {"type": "string", "description": "Reference/confirmation number if mentioned"}
                     },
                     required=[],
                     handler=self._proceed_to_cpt_coverage_handler
@@ -670,7 +691,6 @@ EXAMPLES:
                         "oop_max_individual_met": {"type": "string", "description": "Amount met if mentioned"},
                         "oop_max_family": {"type": "string", "description": "Family OOP max if mentioned"},
                         "oop_max_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "reference_number": {"type": "string", "description": "Reference/confirmation number if mentioned"}
                     },
                     required=[],
                     handler=self._proceed_to_accumulators_handler
@@ -683,12 +703,16 @@ EXAMPLES:
         """Gather deductible and out-of-pocket maximum information, then get a reference number."""
         state = self.flow_manager.state
 
-        # Check what's already captured - focus on family accumulators + reference
+        # Check what's already captured - both individual and family accumulators + reference
         acc_fields = {
+            "deductible_individual": ("Individual deductible", '"What is the individual deductible amount?"'),
+            "deductible_individual_met": ("Individual deductible met", '"How much of the individual deductible has been met?"'),
             "deductible_family": ("Family deductible", '"What is the family deductible amount?"'),
             "deductible_family_met": ("Family deductible met", '"How much of the family deductible has been met?"'),
+            "oop_max_individual": ("Individual OOP max", '"What is the individual out-of-pocket maximum?"'),
+            "oop_max_individual_met": ("Individual OOP met", '"How much of the individual out-of-pocket maximum has been met?"'),
             "oop_max_family": ("Family OOP max", '"What is the family out-of-pocket maximum?"'),
-            "oop_max_family_met": ("Family OOP met", '"How much of the out-of-pocket maximum has been met?"'),
+            "oop_max_family_met": ("Family OOP met", '"How much of the family out-of-pocket maximum has been met?"'),
             "reference_number": ("Reference number", '"May I have a reference number for this call?"'),
         }
 
@@ -712,7 +736,10 @@ EXAMPLES:
             }],
             task_messages=[{
                 "role": "system",
-                "content": f"""# Goal
+                "content": f"""# Context
+You are MID-CALL with an insurance rep who has already verified your identity. Continue the conversation naturally - do NOT re-introduce yourself or say hello.
+
+# Goal
 Gather deductible and out-of-pocket maximum information, then get a reference number.
 
 # Already Captured
@@ -987,21 +1014,25 @@ EXAMPLES:
                 ),
                 FlowsFunctionSchema(
                     name="record_rep_name",
-                    description="""Record representative's name.
+                    description="""Record representative's first name and last initial.
 
 WHEN TO USE: If you learn the rep's name during the call.
 NOTE: May already be known from greeting.
 
 EXAMPLES:
-- "This is Eliza" → "Eliza"
-- "My name is Sarah" → "Sarah" """,
+- "This is Eliza M." → first_name="Eliza", last_initial="M"
+- "My name is Sarah" → first_name="Sarah", last_initial="" """,
                     properties={
-                        "name": {
+                        "first_name": {
                             "type": "string",
-                            "description": "Representative's name"
+                            "description": "Representative's first name"
+                        },
+                        "last_initial": {
+                            "type": "string",
+                            "description": "Last initial (single letter, empty if not provided)"
                         }
                     },
-                    required=["name"],
+                    required=["first_name"],
                     handler=self._record_rep_name_handler
                 ),
                 FlowsFunctionSchema(
@@ -1236,7 +1267,27 @@ EXAMPLES:
         return await self._record_field("reference_number", args.get("reference_number", ""), flow_manager)
 
     async def _record_rep_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("rep_name", args.get("name", ""), flow_manager)
+        """Record rep's first name and last initial as separate fields."""
+        first_name = args.get("first_name", "").strip()
+        last_initial = args.get("last_initial", "").strip().upper()
+
+        # Normalize to single character
+        if len(last_initial) > 1:
+            last_initial = last_initial[0]
+
+        patient_id = flow_manager.state.get("patient_id")
+
+        if first_name:
+            flow_manager.state["rep_first_name"] = first_name
+            await self._try_db_update(patient_id, "update_field", "rep_first_name", first_name)
+            logger.debug(f"[Flow] Recorded: rep_first_name={first_name}")
+
+        if last_initial:
+            flow_manager.state["rep_last_initial"] = last_initial
+            await self._try_db_update(patient_id, "update_field", "rep_last_initial", last_initial)
+            logger.debug(f"[Flow] Recorded: rep_last_initial={last_initial}")
+
+        return None, None
 
     CORRECTABLE_FIELDS = {
         "copay_amount", "coinsurance_percent", "deductible_applies",

@@ -48,7 +48,8 @@ FLOW_STATE = {
     "allowed_amount": None,
 
     # Call outcome (collected during call)
-    "rep_name": None,
+    "rep_first_name": None,
+    "rep_last_initial": None,
     "reference_number": None,
     "additional_notes": None,
 }
@@ -96,9 +97,10 @@ WORKFLOW_SCHEMA = {
             {"key": "oop_max_family", "label": "Family OOP Max", "type": "string", "required": False, "display_in_list": False, "display_order": 63, "computed": True},
             {"key": "oop_max_family_met", "label": "Family OOP Met", "type": "string", "required": False, "display_in_list": False, "display_order": 64, "computed": True},
             {"key": "allowed_amount", "label": "Allowed Amount", "type": "string", "required": False, "display_in_list": False, "display_order": 65, "computed": True},
-            {"key": "rep_name", "label": "Rep Name", "type": "string", "required": False, "display_in_list": False, "display_order": 71, "computed": True},
-            {"key": "reference_number", "label": "Reference #", "type": "string", "required": False, "display_in_list": True, "display_order": 72, "display_priority": "desktop", "computed": True},
-            {"key": "additional_notes", "label": "Additional Notes", "type": "string", "required": False, "display_in_list": False, "display_order": 73, "computed": True},
+            {"key": "rep_first_name", "label": "Rep First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 71, "computed": True},
+            {"key": "rep_last_initial", "label": "Rep Last Initial", "type": "string", "required": False, "display_in_list": False, "display_order": 72, "computed": True},
+            {"key": "reference_number", "label": "Reference #", "type": "string", "required": False, "display_in_list": True, "display_order": 73, "display_priority": "desktop", "computed": True},
+            {"key": "additional_notes", "label": "Additional Notes", "type": "string", "required": False, "display_in_list": False, "display_order": 74, "computed": True},
         ]
     }
 }
