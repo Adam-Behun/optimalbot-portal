@@ -8,6 +8,7 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.daily.transport import DailyDialinSettings, DailyParams, DailyTransport
 
 from utils.function_call_text_filter import FunctionCallTextFilter
+from utils.spelling_text_filter import SpellingTextFilter
 
 
 class ServiceFactory:
@@ -114,5 +115,5 @@ class ServiceFactory:
             model=config['model'],
             params=params,
             aggregate_sentences=config.get('aggregate_sentences', True),
-            text_filters=[FunctionCallTextFilter()]
+            text_filters=[FunctionCallTextFilter(), SpellingTextFilter()]
         )
