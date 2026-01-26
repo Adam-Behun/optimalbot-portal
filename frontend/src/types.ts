@@ -151,4 +151,5 @@ export interface AuthResponse {
   user_id: string;
   email: string;
   organization: Organization;
+  is_super_admin?: boolean;
 }

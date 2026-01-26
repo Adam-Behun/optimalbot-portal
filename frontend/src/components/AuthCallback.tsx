@@ -32,7 +32,11 @@ export function AuthCallback() {
         const response = await exchangeToken(token, subdomain);
 
         setAuthToken(response.access_token);
-        setAuthUser({ user_id: response.user_id, email: response.email });
+        setAuthUser({
+          user_id: response.user_id,
+          email: response.email,
+          is_super_admin: response.is_super_admin
+        });
         updateOrganization(response.organization);
 
         navigate('/home');

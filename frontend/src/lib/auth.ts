@@ -11,6 +11,7 @@ export interface AuthUser {
   user_id: string;
   email: string;
   role?: string;
+  is_super_admin?: boolean;
 }
 
 export const setAuthToken = (token: string): void => {
