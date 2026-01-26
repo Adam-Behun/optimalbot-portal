@@ -3,7 +3,7 @@
 from datetime import datetime
 from loguru import logger
 
-from pipecat.frames.frames import EndFrame, TTSSpeakFrame, VADParamsUpdateFrame
+from pipecat.frames.frames import EndFrame, TTSSpeakFrame, UserStoppedSpeakingFrame, VADParamsUpdateFrame
 from pipecat.audio.vad.vad_analyzer import VADParams
 
 from backend.models.patient import get_async_patient_db
@@ -51,6 +51,10 @@ def setup_triage_handlers(
                 logger.info(f"Injected utterance: {last_utterance[:50]}...")
 
         await flow_manager.initialize(greeting_node)
+
+        # Push UserStoppedSpeakingFrame to close the user turn.
+        # The original frame was blocked by MainBranchGate during classification.
+        await processor.push_frame(UserStoppedSpeakingFrame())
 
         pipeline.transcripts.append({
             "role": "system",
@@ -141,12 +145,11 @@ def setup_triage_handlers(
 
             greeting_node = flow.create_greeting_node()
 
-            # Inject the transcription that detected human (like handle_conversation does)
-            # This ensures tools are set before the LLM runs
-            if transcription:
-                user_msg = {"role": "user", "content": transcription}
-                greeting_node["task_messages"].append(user_msg)
-                logger.info(f"Injected utterance: {transcription[:50]}...")
+            # NOTE: Unlike handle_conversation, we do NOT inject the transcription here.
+            # During IVR, the MainBranchGate is OPEN (for IVR navigation), so transcriptions
+            # flow through the main pipeline. The transcription will be added by
+            # LLMUserAggregator when _on_user_turn_stopped fires.
+            # Injecting here would cause duplicate user messages in the LLM context.
 
             await flow_manager.initialize(greeting_node)
             # FlowManager registers tools and sets context together

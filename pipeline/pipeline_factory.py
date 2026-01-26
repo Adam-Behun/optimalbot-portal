@@ -13,8 +13,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.turns.mute import FirstSpeechUserMuteStrategy
-from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy
-from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 
 from core.flow_loader import FlowLoader
 from pipeline.ivr_human_detector import IVRHumanDetector
@@ -119,12 +118,13 @@ class PipelineFactory:
     ) -> ConversationComponents:
         """Create flow and conversation components."""
         context = LLMContext()
+        # ExternalUserTurnStrategies is designed for STT services like Deepgram Flux
+        # that handle turn detection and interruptions themselves via
+        # UserStartedSpeakingFrame / UserStoppedSpeakingFrame
         context_aggregator = LLMContextAggregatorPair(
             context,
             user_params=LLMUserAggregatorParams(
-                user_turn_strategies=UserTurnStrategies(
-                    start=[TranscriptionUserTurnStartStrategy(enable_interruptions=True)],
-                ),
+                user_turn_strategies=ExternalUserTurnStrategies(),
                 user_mute_strategies=[FirstSpeechUserMuteStrategy()],
             )
         )
