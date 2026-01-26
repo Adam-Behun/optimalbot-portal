@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Dict, Any
 
+from pipecat.frames.frames import EndTaskFrame
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from pipecat_flows.types import ActionConfig
 from loguru import logger
@@ -258,8 +260,12 @@ class DialoutBaseFlow(ABC):
     # ==================== End Call Handler ====================
 
     async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:
-        from pipecat.frames.frames import EndTaskFrame
-        from pipecat.processors.frame_processor import FrameDirection
+        # Guard: Prevent multiple EndTaskFrame calls
+        if flow_manager.state.get("_call_ended"):
+            logger.debug("[Flow] end_call already called, ignoring duplicate")
+            return None, None
+
+        flow_manager.state["_call_ended"] = True
 
         logger.info("[Flow] Call ended")
         patient_id = flow_manager.state.get("patient_id")
