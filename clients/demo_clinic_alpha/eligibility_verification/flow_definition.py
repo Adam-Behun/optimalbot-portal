@@ -48,7 +48,7 @@ Output exactly one classification word: CONVERSATION, IVR, or VOICEMAIL."""
     IVR_NAVIGATION_GOAL = """Navigate to speak with a representative who can verify eligibility and benefits.
 
 CALLER INFORMATION (provide exactly as shown when asked):
-- Caller Name: {caller_name}
+- Caller Name: {provider_agent_first_name}
 - Facility Name: {facility_name}
 - Tax ID: {tax_id}
 - Provider Name: {provider_name}
@@ -78,7 +78,7 @@ NAVIGATION INSTRUCTIONS:
 
 Goal: Reach a human representative who can verify coverage details."""
 
-    VOICEMAIL_MESSAGE_TEMPLATE = """Hi, this is {caller_name}, calling from {facility_name} regarding eligibility verification for a patient. Please call us back at your earliest convenience. Thank you."""
+    VOICEMAIL_MESSAGE_TEMPLATE = """Hi, this is {provider_agent_first_name}, calling from {facility_name} regarding eligibility verification for a patient. Please call us back at your earliest convenience. Thank you."""
 
     def __init__(self, patient_data: Dict[str, Any], session_id: str = None, flow_manager: FlowManager = None,
                  main_llm=None, classifier_llm=None, context_aggregator=None, transport=None, pipeline=None,
@@ -106,7 +106,7 @@ Goal: Reach a human representative who can verify coverage details."""
             "classifier_prompt": self.TRIAGE_CLASSIFIER_PROMPT,
             "ivr_navigation_goal": self.IVR_NAVIGATION_GOAL.format(
                 # Caller/Provider info
-                caller_name=self._patient_data.get("caller_name", ""),
+                provider_agent_first_name=self._patient_data.get("provider_agent_first_name", ""),
                 facility_name=self._patient_data.get("facility_name", ""),
                 tax_id=self._patient_data.get("tax_id", ""),
                 provider_name=self._patient_data.get("provider_name", ""),
@@ -118,7 +118,7 @@ Goal: Reach a human representative who can verify coverage details."""
                 date_of_birth=self._patient_data.get("date_of_birth", ""),
             ),
             "voicemail_message": self.VOICEMAIL_MESSAGE_TEMPLATE.format(
-                caller_name=self._patient_data.get("caller_name", "a representative"),
+                provider_agent_first_name=self._patient_data.get("provider_agent_first_name", "a representative"),
                 facility_name=self._patient_data.get("facility_name", "our facility"),
             ),
         }
@@ -131,8 +131,8 @@ Goal: Reach a human representative who can verify coverage details."""
         self.flow_manager.state["insurance_phone"] = self._patient_data.get("insurance_phone", "")
 
         # Caller/Provider information (7 fields)
-        self.flow_manager.state["caller_name"] = self._patient_data.get("caller_name", "")
-        self.flow_manager.state["caller_last_initial"] = self._patient_data.get("caller_last_initial", "")
+        self.flow_manager.state["provider_agent_first_name"] = self._patient_data.get("provider_agent_first_name", "")
+        self.flow_manager.state["provider_agent_last_initial"] = self._patient_data.get("provider_agent_last_initial", "")
         self.flow_manager.state["facility_name"] = self._patient_data.get("facility_name", "")
         self.flow_manager.state["tax_id"] = self._patient_data.get("tax_id", "")
         self.flow_manager.state["provider_name"] = self._patient_data.get("provider_name", "")
@@ -147,8 +147,8 @@ Goal: Reach a human representative who can verify coverage details."""
     def _get_global_instructions(self) -> str:
         state = self.flow_manager.state
         facility = state.get("facility_name", "")
-        caller_name = state.get("caller_name", "")
-        caller_initial = state.get("caller_last_initial", "")
+        provider_agent_first_name = state.get("provider_agent_first_name", "")
+        provider_agent_last_initial = state.get("provider_agent_last_initial", "")
 
         return f"""You are a Virtual Assistant from {facility}, calling to verify insurance eligibility and benefits.
 
@@ -162,7 +162,7 @@ You are on a phone call with an insurance representative. Your responses will be
 
 # Your Identity
 - Calling on behalf of: {facility}
-- Caller name: {caller_name} {caller_initial}.
+- Caller name: {provider_agent_first_name} {provider_agent_last_initial}.
 - If asked for your full last name, say you can only provide the initial
 
 # Patient & Insurance Information (use ONLY this data - never invent details)
@@ -207,32 +207,42 @@ You are on a phone call with an insurance representative. Your responses will be
             }],
             task_messages=[{
                 "role": "system",
-                "content": """A human answered. Introduce yourself naturally. If they gave their name, use it: "Hi [their name], this is [your name] calling from [facility] about eligibility verification for [patient name]."
+                "content": """A human answered. Give your FULL greeting (with patient name) and collect the rep's name.
 
-CAPTURE REP NAME:
-- If the rep introduces themselves (e.g., "This is Michael S."), capture using record_rep_name
-- If they DON'T give their name, ask: "May I have your first name and last initial for my records?"
-- Examples: "Sarah B." → first_name="Sarah", last_initial="B"
+# Your First Response - ALWAYS Do Both Steps Together
 
-YOU ARE THE CALLER. The rep will ask YOU identification questions to verify who you are. Answer them:
-- "What's your name?" → "[your name]"
-- "Facility name?" / "Where are you calling from?" → "[facility name]"
-- "Tax ID?" → "[tax ID from your provider info]"
-- "Member name?" / "Patient name?" → "[patient name]"
-- "Date of birth?" → "[date of birth]"
-- "Member ID?" → "[member ID]"
+STEP 1 - PARSE THEIR NAME (if stated):
+- "This is Diana" → first_name="Diana", last_initial=""
+- "Marcus B. speaking" → first_name="Marcus", last_initial="B"
+- "Provider services" → no name
 
-DO NOT ask the rep to confirm anything. YOU answer THEIR questions. Wait for them to ask before providing info.
+Call record_rep_name with ONLY the info spoken. Leave last_initial empty if not stated.
 
-CRITICAL: As soon as the rep indicates they can help OR starts giving ANY info, you MUST call proceed_to_plan_info immediately.
+STEP 2 - SAY YOUR FULL GREETING:
+Your greeting MUST include the patient name. This step is important.
 
-CAPTURE ALL VOLUNTEERED INFO in the function call:
-- Plan info: network status, plan type, effective/term dates
-- CPT coverage: covered status, copay, coinsurance, deductible applies, prior auth (PA), telehealth
-- Accumulators: deductible amounts, OOP max amounts
-- Reference number
+If they gave a name: "Hi [their name], this is [your name] calling from [facility] about eligibility verification for [patient name]. May I have your last initial for my records?"
 
-Example: If rep says "They're in network, POS plan, code is covered, $75 copay, 20% coinsurance, PA required" - capture ALL of that in proceed_to_plan_info."""
+If no name given: "Hi, this is [your name] calling from [facility] about eligibility verification for [patient name]. May I have your first name and last initial?"
+
+CRITICAL: Even if the rep asks "What's your name?" or "What facility?" - you still give the FULL greeting above. Do NOT just answer their question. The patient name MUST be in your first response.
+
+# Example
+Rep: "Thank you for holding. This is Diana. May I have your name and the facility you are calling from?"
+You: [call record_rep_name(first_name="Diana", last_initial="")]
+You say: "Hi Diana, this is Jennifer calling from Specialty Surgery Associates about eligibility verification for Robert Williams. May I have your last initial for my records?"
+
+# After Rep Gives Last Initial
+Say "Perfect, thank you." and WAIT. Do not ask questions - the rep will ask you for member info.
+
+# Answering Rep's Questions (After Greeting)
+- Member name → "[patient name]"
+- Date of birth → "[date of birth]"
+- Member ID → "[member ID]"
+- Tax ID → "[tax ID]"
+
+# When to Proceed
+When rep indicates they can help OR gives any eligibility info → call proceed_to_plan_info."""
             }],
             functions=[
                 FlowsFunctionSchema(
@@ -1278,14 +1288,14 @@ EXAMPLES:
         patient_id = flow_manager.state.get("patient_id")
 
         if first_name:
-            flow_manager.state["rep_first_name"] = first_name
-            await self._try_db_update(patient_id, "update_field", "rep_first_name", first_name)
-            logger.debug(f"[Flow] Recorded: rep_first_name={first_name}")
+            flow_manager.state["insurance_rep_first_name"] = first_name
+            await self._try_db_update(patient_id, "update_field", "insurance_rep_first_name", first_name)
+            logger.debug(f"[Flow] Recorded: insurance_rep_first_name={first_name}")
 
         if last_initial:
-            flow_manager.state["rep_last_initial"] = last_initial
-            await self._try_db_update(patient_id, "update_field", "rep_last_initial", last_initial)
-            logger.debug(f"[Flow] Recorded: rep_last_initial={last_initial}")
+            flow_manager.state["insurance_rep_last_initial"] = last_initial
+            await self._try_db_update(patient_id, "update_field", "insurance_rep_last_initial", last_initial)
+            logger.debug(f"[Flow] Recorded: insurance_rep_last_initial={last_initial}")
 
         return None, None
 
@@ -1313,7 +1323,12 @@ EXAMPLES:
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
         """Transition from accumulators to closing node."""
-        # Guard: Only proceed if reference_number has been recorded
+        # Guard 1: Check if already on closing node (prevents duplicate transitions)
+        if flow_manager.current_node == "closing":
+            logger.debug("[Flow] Already on closing node, ignoring duplicate proceed_to_closing call")
+            return None, None
+
+        # Guard 2: Only proceed if reference_number has been recorded
         reference_number = flow_manager.state.get("reference_number")
         if not reference_number:
             logger.warning("[Flow] proceed_to_closing called but no reference_number recorded - staying on accumulators")

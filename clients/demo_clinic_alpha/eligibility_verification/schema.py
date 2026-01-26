@@ -9,8 +9,8 @@ FLOW_STATE = {
     "insurance_phone": None,
 
     # Caller/Provider information (from patient_data)
-    "caller_name": None,
-    "caller_last_initial": None,
+    "provider_agent_first_name": None,
+    "provider_agent_last_initial": None,
     "facility_name": None,
     "tax_id": None,
     "provider_name": None,
@@ -48,8 +48,8 @@ FLOW_STATE = {
     "allowed_amount": None,
 
     # Call outcome (collected during call)
-    "rep_first_name": None,
-    "rep_last_initial": None,
+    "insurance_rep_first_name": None,
+    "insurance_rep_last_initial": None,
     "reference_number": None,
     "additional_notes": None,
 }
@@ -68,8 +68,8 @@ WORKFLOW_SCHEMA = {
             {"key": "insurance_member_id", "label": "Member ID", "type": "string", "required": True, "display_in_list": True, "display_order": 3, "display_priority": "mobile"},
             {"key": "insurance_company_name", "label": "Insurance Company", "type": "string", "required": True, "display_in_list": False, "display_order": 4},
             {"key": "insurance_phone", "label": "Insurance Phone", "type": "phone", "required": True, "display_in_list": False, "display_order": 5},
-            {"key": "caller_name", "label": "Caller First Name", "type": "string", "required": True, "display_in_list": False, "display_order": 11},
-            {"key": "caller_last_initial", "label": "Caller Last Initial", "type": "string", "required": True, "display_in_list": False, "display_order": 12},
+            {"key": "provider_agent_first_name", "label": "Provider Agent First Name", "type": "string", "required": True, "display_in_list": False, "display_order": 11},
+            {"key": "provider_agent_last_initial", "label": "Provider Agent Last Initial", "type": "string", "required": True, "display_in_list": False, "display_order": 12},
             {"key": "facility_name", "label": "Facility Name", "type": "string", "required": True, "display_in_list": False, "display_order": 13},
             {"key": "tax_id", "label": "Tax ID", "type": "string", "required": True, "display_in_list": False, "display_order": 14},
             {"key": "provider_name", "label": "Provider Name", "type": "string", "required": True, "display_in_list": False, "display_order": 15},
@@ -97,8 +97,8 @@ WORKFLOW_SCHEMA = {
             {"key": "oop_max_family", "label": "Family OOP Max", "type": "string", "required": False, "display_in_list": False, "display_order": 63, "computed": True},
             {"key": "oop_max_family_met", "label": "Family OOP Met", "type": "string", "required": False, "display_in_list": False, "display_order": 64, "computed": True},
             {"key": "allowed_amount", "label": "Allowed Amount", "type": "string", "required": False, "display_in_list": False, "display_order": 65, "computed": True},
-            {"key": "rep_first_name", "label": "Rep First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 71, "computed": True},
-            {"key": "rep_last_initial", "label": "Rep Last Initial", "type": "string", "required": False, "display_in_list": False, "display_order": 72, "computed": True},
+            {"key": "insurance_rep_first_name", "label": "Insurance Rep First Name", "type": "string", "required": False, "display_in_list": False, "display_order": 71, "computed": True},
+            {"key": "insurance_rep_last_initial", "label": "Insurance Rep Last Initial", "type": "string", "required": False, "display_in_list": False, "display_order": 72, "computed": True},
             {"key": "reference_number", "label": "Reference #", "type": "string", "required": False, "display_in_list": True, "display_order": 73, "display_priority": "desktop", "computed": True},
             {"key": "additional_notes", "label": "Additional Notes", "type": "string", "required": False, "display_in_list": False, "display_order": 74, "computed": True},
         ]
