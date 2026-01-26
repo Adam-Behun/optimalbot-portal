@@ -50,6 +50,7 @@ class AuthResponse(BaseModel):
     user_id: str
     email: str
     organization: OrganizationResponse
+    is_super_admin: bool = False
 
 class RequestResetRequest(BaseModel):
     email: str
@@ -302,7 +303,8 @@ async def login(
                 "email": login_data.email,
                 "role": user.get("role", "admin"),
                 "organization_id": organization_id,
-                "organization_slug": organization_slug
+                "organization_slug": organization_slug,
+                "is_super_admin": user.get("is_super_admin", False)
             }
         )
 
@@ -320,7 +322,8 @@ async def login(
                 subdomain=org.get("subdomain", organization_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
-            )
+            ),
+            is_super_admin=user.get("is_super_admin", False)
         )
 
     except HTTPException:
@@ -623,7 +626,8 @@ async def exchange_token(
                 "email": user.get("email"),
                 "role": user.get("role", "admin"),
                 "organization_id": org_id,
-                "organization_slug": org.get("slug", "")
+                "organization_slug": org.get("slug", ""),
+                "is_super_admin": user.get("is_super_admin", False)
             }
         )
 
@@ -652,7 +656,8 @@ async def exchange_token(
                 subdomain=org.get("subdomain", org.get("slug", "").replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
-            )
+            ),
+            is_super_admin=user.get("is_super_admin", False)
         )
 
     except HTTPException:
@@ -731,7 +736,8 @@ async def login_mfa(
                 "email": email,
                 "role": user.get("role", "admin"),
                 "organization_id": organization_id,
-                "organization_slug": organization_slug
+                "organization_slug": organization_slug,
+                "is_super_admin": user.get("is_super_admin", False)
             }
         )
 
@@ -749,7 +755,8 @@ async def login_mfa(
                 subdomain=org.get("subdomain", organization_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
-            )
+            ),
+            is_super_admin=user.get("is_super_admin", False)
         )
 
     except HTTPException:

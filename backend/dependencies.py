@@ -161,3 +161,15 @@ def get_user_id_from_request(request: Request) -> str:
 
     ip_address = get_client_info(request)[0]
     return f"ip:{ip_address}"
+
+
+async def require_super_admin(
+    current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Require super admin access for admin-only endpoints."""
+    if not current_user.get("is_super_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required"
+        )
+    return current_user
