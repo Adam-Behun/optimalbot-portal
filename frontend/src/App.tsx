@@ -8,6 +8,7 @@ import { AuthCallback } from './components/AuthCallback';
 import { Status } from './components/Status';
 import { Settings } from './components/Settings';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { SuperAdminRoute } from './components/SuperAdminRoute';
 import { CustomReports } from './components/CustomReports';
 import { SessionTimeoutModal } from './components/SessionTimeoutModal';
 import { Home } from './components/Home';
@@ -35,6 +36,12 @@ import {
   PrescriptionStatusDashboard,
   PrescriptionStatusCallList,
 } from './components/workflows/prescription_status';
+import {
+  AdminDashboard,
+  AdminCalls,
+  AdminCallDetail,
+  AdminCosts,
+} from './components/admin';
 
 function SessionCleanup() {
   const { clearOrganization } = useOrganization();
@@ -189,6 +196,36 @@ const App = () => {
                     <PrescriptionStatusCallList />
                   </SidebarLayout>
                 </ProtectedRoute>
+              } />
+
+              {/* Admin Routes (Super Admin Only) */}
+              <Route path="/admin" element={
+                <SuperAdminRoute>
+                  <SidebarLayout>
+                    <AdminDashboard />
+                  </SidebarLayout>
+                </SuperAdminRoute>
+              } />
+              <Route path="/admin/calls" element={
+                <SuperAdminRoute>
+                  <SidebarLayout>
+                    <AdminCalls />
+                  </SidebarLayout>
+                </SuperAdminRoute>
+              } />
+              <Route path="/admin/calls/:sessionId" element={
+                <SuperAdminRoute>
+                  <SidebarLayout>
+                    <AdminCallDetail />
+                  </SidebarLayout>
+                </SuperAdminRoute>
+              } />
+              <Route path="/admin/costs" element={
+                <SuperAdminRoute>
+                  <SidebarLayout>
+                    <AdminCosts />
+                  </SidebarLayout>
+                </SuperAdminRoute>
               } />
               </Routes>
               </main>

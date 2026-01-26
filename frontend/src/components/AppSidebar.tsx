@@ -14,6 +14,7 @@ import {
   Phone,
   Microscope,
   Pill,
+  ShieldCheck,
   LucideIcon,
 } from "lucide-react";
 
@@ -185,6 +186,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              {user?.is_super_admin && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname.startsWith('/admin')} tooltip="Admin">
+                    <Link to="/admin">
+                      <ShieldCheck />
+                      <span>Admin</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

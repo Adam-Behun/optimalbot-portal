@@ -238,4 +238,133 @@ export const exchangeToken = async (
   return response.data;
 };
 
+// =============================================================================
+// Admin API Types and Functions (Super Admin Only)
+// =============================================================================
+
+export interface AdminDashboard {
+  calls_today: number;
+  success_rate: number;
+  cost_today_usd: number;
+  recent_failures: Array<{
+    session_id: string;
+    organization_name: string;
+    workflow: string;
+    created_at: string;
+    error: string;
+  }>;
+}
+
+export interface AdminCall {
+  session_id: string;
+  organization_id: string;
+  organization_name: string;
+  workflow: string;
+  status: string;
+  caller_phone?: string;
+  called_phone?: string;
+  total_cost_usd?: number;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface AdminCallsResponse {
+  calls: AdminCall[];
+  total_count: number;
+  total_pages: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CostBreakdown {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface AdminCallDetail {
+  session_id: string;
+  organization_id: string;
+  organization_name: string;
+  workflow: string;
+  status: string;
+  caller_phone?: string;
+  called_phone?: string;
+  patient_id?: string;
+  identity_verified?: boolean;
+  caller_name?: string;
+  call_type?: string;
+  call_reason?: string;
+  routed_to?: string;
+  total_cost_usd?: number;
+  costs_breakdown: CostBreakdown[];
+  call_transcript?: {
+    messages: Array<{
+      role: string;
+      content: string;
+      timestamp?: string;
+    }>;
+    message_count: number;
+  };
+  error_message?: string;
+  langfuse_url: string;
+  created_at: string;
+  completed_at?: string;
+  updated_at?: string;
+}
+
+export interface PeriodCost {
+  cost_usd: number;
+  call_count: number;
+}
+
+export interface OrgCost {
+  organization_id: string;
+  organization_name: string;
+  cost_usd: number;
+  call_count: number;
+}
+
+export interface AdminCosts {
+  today: PeriodCost;
+  this_week: PeriodCost;
+  this_month: PeriodCost;
+  by_organization?: OrgCost[];
+}
+
+// GET /admin/dashboard - Admin dashboard metrics
+export const getAdminDashboard = async (): Promise<AdminDashboard> => {
+  const response = await api.get<AdminDashboard>('/admin/dashboard');
+  return response.data;
+};
+
+// GET /admin/calls - Paginated calls list with filters
+export const getAdminCalls = async (params: {
+  page?: number;
+  page_size?: number;
+  organization_id?: string;
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+} = {}): Promise<AdminCallsResponse> => {
+  const response = await api.get<AdminCallsResponse>('/admin/calls', { params });
+  return response.data;
+};
+
+// GET /admin/calls/:session_id - Single call detail
+export const getAdminCallDetail = async (sessionId: string): Promise<AdminCallDetail> => {
+  const response = await api.get<AdminCallDetail>(`/admin/calls/${sessionId}`);
+  return response.data;
+};
+
+// GET /admin/costs - Cost summary
+export const getAdminCosts = async (breakdownByOrg: boolean = false): Promise<AdminCosts> => {
+  const response = await api.get<AdminCosts>('/admin/costs', {
+    params: { breakdown_by_org: breakdownByOrg }
+  });
+  return response.data;
+};
+
 export default api;
