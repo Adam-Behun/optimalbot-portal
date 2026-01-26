@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { DetailRow } from '@/components/ui/detail-row';
 import { TranscriptViewer } from '../shared/TranscriptViewer';
 import { WorkflowLayout } from '../shared/WorkflowLayout';
 import { Session, TranscriptMessage } from '@/types';
@@ -23,41 +25,6 @@ import {
 import { RefreshCw } from 'lucide-react';
 
 const WORKFLOW = 'mainline';
-
-function getStatusStyle(status: string): string {
-  switch (status) {
-    case 'completed':
-      return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-    case 'running':
-    case 'starting':
-      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-    case 'failed':
-      return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-    case 'transferred':
-      return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
-    default:
-      return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
-  }
-}
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium capitalize ${getStatusStyle(status)}`}>
-      {status}
-    </span>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex py-1.5 border-b last:border-b-0">
-      <div className="font-semibold text-muted-foreground w-48 shrink-0">
-        {label}:
-      </div>
-      <div className="flex-1 text-foreground">{value || '-'}</div>
-    </div>
-  );
-}
 
 export function MainlineCallList() {
   const { data: sessions = [], isLoading, error, refetch } = useSessions(WORKFLOW);
