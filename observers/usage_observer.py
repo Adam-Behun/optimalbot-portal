@@ -223,21 +223,28 @@ class UsageObserver(BaseObserver):
         # Finalize any in-progress speech
         self._finalize_in_progress_speech()
 
-        # LLM costs
+        # LLM costs with per-model breakdown
         llm_cost = 0.0
         total_prompt = 0
         total_completion = 0
-        llm_models = []
+        models_breakdown = {}
 
         for provider, models in self._llm_usage.items():
             for model, tokens in models.items():
                 input_rate = self._get_llm_rate(provider, model, "input_per_1m_tokens")
                 output_rate = self._get_llm_rate(provider, model, "output_per_1m_tokens")
-                llm_cost += (tokens["prompt"] / 1_000_000) * input_rate
-                llm_cost += (tokens["completion"] / 1_000_000) * output_rate
+                model_input_cost = (tokens["prompt"] / 1_000_000) * input_rate
+                model_output_cost = (tokens["completion"] / 1_000_000) * output_rate
+                model_cost = model_input_cost + model_output_cost
+                llm_cost += model_cost
                 total_prompt += tokens["prompt"]
                 total_completion += tokens["completion"]
-                llm_models.append(model)
+                models_breakdown[model] = {
+                    "provider": provider,
+                    "prompt_tokens": tokens["prompt"],
+                    "completion_tokens": tokens["completion"],
+                    "cost_usd": round(model_cost, 6),
+                }
 
         # TTS costs
         tts_provider = self._tts_provider
@@ -262,7 +269,7 @@ class UsageObserver(BaseObserver):
                 "llm": {
                     "prompt_tokens": total_prompt,
                     "completion_tokens": total_completion,
-                    "models": llm_models,
+                    "models": models_breakdown,
                 },
                 "tts": {
                     "characters": self._tts_characters,

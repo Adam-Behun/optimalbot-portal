@@ -1,5 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
+
+from bson import ObjectId
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -30,7 +32,7 @@ class AuditLogger:
                 "event_type": event_type,
                 "user_id": user_id,
                 "email": email,
-                "organization_id": organization_id,
+                "organization_id": ObjectId(organization_id) if organization_id else None,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
                 "timestamp": datetime.utcnow().isoformat(),
@@ -54,7 +56,6 @@ class AuditLogger:
 
     async def get_failed_login_attempts(self, email: str, time_window_minutes: int = 30) -> int:
         try:
-            from datetime import timedelta
             cutoff_time = datetime.utcnow() - timedelta(minutes=time_window_minutes)
             count = await self.audit_logs.count_documents({
                 "email": email,
@@ -95,7 +96,7 @@ class AuditLogger:
             log_entry = {
                 "event_type": "phi_access",
                 "user_id": user_id,
-                "organization_id": organization_id,
+                "organization_id": ObjectId(organization_id) if organization_id else None,
                 "action": action,
                 "resource_type": resource_type,
                 "resource_id": resource_id,
@@ -122,13 +123,15 @@ class AuditLogger:
         ip_address: str,
         user_agent: str,
         success: bool = True,
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
+        organization_id: Optional[str] = None
     ) -> bool:
         try:
             log_entry = {
                 "event_type": "api_access",
                 "user_id": user_id,
                 "email": email,
+                "organization_id": ObjectId(organization_id) if organization_id else None,
                 "endpoint": endpoint,
                 "method": method,
                 "ip_address": ip_address,

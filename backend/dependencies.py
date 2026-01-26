@@ -99,7 +99,8 @@ async def get_current_user(
             method=request.method,
             ip_address=ip_address,
             user_agent=user_agent,
-            success=True
+            success=True,
+            organization_id=payload.get("organization_id")
         )
 
         return payload
