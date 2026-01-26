@@ -189,6 +189,33 @@ Reply exactly: PASS: <5 words> or FAIL: <5 words>"""
     return {"pass": result.upper().startswith("PASS"), "reason": result}
 
 
+def grade_forbidden_phrases(conversation: list[dict], forbidden_phrases: list[str]) -> dict:
+    """Check that bot never said any of the forbidden phrases."""
+    if not forbidden_phrases:
+        return {"pass": True, "reason": "PASS: No forbidden phrases defined"}
+
+    # Get all bot messages
+    bot_messages = [
+        msg["content"].lower()
+        for msg in conversation
+        if msg.get("role") == "assistant" and msg.get("content")
+    ]
+    bot_text = " ".join(bot_messages)
+
+    violations = []
+    for phrase in forbidden_phrases:
+        if phrase.lower() in bot_text:
+            violations.append(phrase)
+
+    if violations:
+        return {
+            "pass": False,
+            "reason": f"FAIL: Bot said forbidden phrase(s): {', '.join(violations[:3])}",
+            "violations": violations,
+        }
+    return {"pass": True, "reason": f"PASS: None of {len(forbidden_phrases)} forbidden phrases used"}
+
+
 def grade_function_calls(
     function_calls: list[dict],
     final_state: dict,
@@ -293,6 +320,7 @@ def grade_scenario(
     expected_data: dict = None,
     expected_functions: list[str] = None,
     forbidden_functions: list[str] = None,
+    forbidden_phrases: list[str] = None,
 ) -> dict:
     conv_text = _format_conversation(conversation)
     final_state = final_state or {}
@@ -309,6 +337,7 @@ def grade_scenario(
     )
     node_reached = grade_node_reached(final_node, expected_node)
     state_check = grade_captured_state(final_state, expected_db_state or {})
+    phrases_check = grade_forbidden_phrases(conversation, forbidden_phrases or [])
 
     all_passed = all([
         data_accuracy["pass"],
@@ -316,6 +345,7 @@ def grade_scenario(
         functions["pass"],
         node_reached["pass"],
         state_check["pass"],
+        phrases_check["pass"],
     ])
 
     failures = []
@@ -329,6 +359,8 @@ def grade_scenario(
         failures.append(f"node: {node_reached['reason']}")
     if not state_check["pass"]:
         failures.append(f"state: {state_check['reason']}")
+    if not phrases_check["pass"]:
+        failures.append(f"phrases: {phrases_check['reason']}")
 
     reason = "PASS: All checks passed" if all_passed else "FAIL: " + "; ".join(failures)
 
@@ -341,6 +373,7 @@ def grade_scenario(
             "functions": functions,
             "node_reached": node_reached,
             "captured_state": state_check,
+            "forbidden_phrases": phrases_check,
         }
     }
 
@@ -898,6 +931,7 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
             expected_data=scenario.get("expected_data"),
             expected_functions=scenario.get("expected_functions"),
             forbidden_functions=scenario.get("forbidden_functions"),
+            forbidden_phrases=scenario.get("forbidden_phrases"),
         )
 
         # Verify DB state after call

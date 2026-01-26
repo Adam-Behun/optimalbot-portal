@@ -57,7 +57,7 @@ SCENARIOS_PATH = Path(__file__).parent / "scenarios.yaml"
 
 # Test patient data for IVR navigation evals
 TEST_PATIENT_DATA = {
-    "caller_name": "Maria Chen",
+    "provider_agent_first_name": "Maria Chen",
     "facility_name": "Westbrook Family Medicine",
     "tax_id": "84-7291035",
     "provider_name": "Dr. Sarah Okonkwo",
