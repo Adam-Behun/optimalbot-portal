@@ -124,21 +124,32 @@ export function AdminCallDetail() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Model</TableHead>
-                      <TableHead className="text-right">Input</TableHead>
-                      <TableHead className="text-right">Output</TableHead>
+                      <TableHead>Service</TableHead>
+                      <TableHead className="text-right">Usage</TableHead>
                       <TableHead className="text-right">Cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.costs_breakdown.map((cost, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-mono text-sm">{cost.model}</TableCell>
-                        <TableCell className="text-right">{cost.input_tokens.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">{cost.output_tokens.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">${cost.cost_usd.toFixed(4)}</TableCell>
-                      </TableRow>
-                    ))}
+                    {data.costs_breakdown.map((cost, idx) => {
+                      // Format usage based on service type
+                      let usageDisplay = '';
+                      const model = cost.model.toLowerCase();
+                      if (model.includes('tts')) {
+                        usageDisplay = `${cost.input_tokens.toLocaleString()} chars`;
+                      } else if (model.includes('stt') || model.includes('telephony')) {
+                        usageDisplay = `${cost.input_tokens}s`;
+                      } else {
+                        // LLM tokens
+                        usageDisplay = `${cost.input_tokens.toLocaleString()} / ${cost.output_tokens.toLocaleString()} tokens`;
+                      }
+                      return (
+                        <TableRow key={idx}>
+                          <TableCell className="font-mono text-sm">{cost.model}</TableCell>
+                          <TableCell className="text-right text-muted-foreground">{usageDisplay}</TableCell>
+                          <TableCell className="text-right">${cost.cost_usd.toFixed(4)}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

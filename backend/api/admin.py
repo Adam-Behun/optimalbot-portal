@@ -1,9 +1,14 @@
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
+
+# Langfuse configuration for trace links
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
+LANGFUSE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID", "")
 
 from backend.dependencies import (
     require_super_admin,
@@ -179,17 +184,59 @@ async def get_admin_call_detail(
         usage = session.get("usage", {})
         costs = session.get("costs", {})
 
-        for model_name, model_usage in usage.items():
-            model_cost = costs.get(model_name, 0)
+        # LLM breakdown (may have per-model details)
+        llm_usage = usage.get("llm", {})
+        llm_models = llm_usage.get("models", {})
+        if llm_models:
+            # Per-model breakdown available
+            for model_name, model_data in llm_models.items():
+                costs_breakdown.append({
+                    "model": model_name,
+                    "input_tokens": model_data.get("prompt_tokens", 0),
+                    "output_tokens": model_data.get("completion_tokens", 0),
+                    "cost_usd": model_data.get("cost_usd", 0),
+                })
+        else:
+            # Fallback to aggregate LLM totals
             costs_breakdown.append({
-                "model": model_name,
-                "input_tokens": model_usage.get("input_tokens", 0),
-                "output_tokens": model_usage.get("output_tokens", 0),
-                "cost_usd": model_cost,
+                "model": "llm",
+                "input_tokens": llm_usage.get("prompt_tokens", 0),
+                "output_tokens": llm_usage.get("completion_tokens", 0),
+                "cost_usd": costs.get("llm_usd", 0),
             })
 
-        # Build Langfuse URL
-        langfuse_url = f"https://cloud.langfuse.com/sessions/{session_id}"
+        # TTS breakdown
+        tts_usage = usage.get("tts", {})
+        costs_breakdown.append({
+            "model": f"tts ({tts_usage.get('provider', 'unknown')})",
+            "input_tokens": tts_usage.get("characters", 0),
+            "output_tokens": 0,
+            "cost_usd": costs.get("tts_usd", 0),
+        })
+
+        # STT breakdown
+        stt_usage = usage.get("stt", {})
+        costs_breakdown.append({
+            "model": f"stt ({stt_usage.get('provider', 'unknown')})",
+            "input_tokens": int(stt_usage.get("seconds", 0)),
+            "output_tokens": 0,
+            "cost_usd": costs.get("stt_usd", 0),
+        })
+
+        # Telephony breakdown
+        telephony_usage = usage.get("telephony", {})
+        costs_breakdown.append({
+            "model": f"telephony ({telephony_usage.get('provider', 'unknown')})",
+            "input_tokens": int(telephony_usage.get("seconds", 0)),
+            "output_tokens": 0,
+            "cost_usd": costs.get("telephony_usd", 0),
+        })
+
+        # Build Langfuse URL (links to session view which shows all traces for this call)
+        if LANGFUSE_PROJECT_ID:
+            langfuse_url = f"{LANGFUSE_HOST}/project/{LANGFUSE_PROJECT_ID}/sessions/{session_id}"
+        else:
+            langfuse_url = None
 
         return {
             "session_id": session_id,
