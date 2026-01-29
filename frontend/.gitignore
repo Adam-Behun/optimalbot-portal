@@ -27,10 +27,9 @@ dist
 dist-ssr
 *.local
 
-# Environment - keep .development and .production, ignore .local and custom .env
-.env
-.env.local
-.env.*.local
+# Environment - ignore all .env files except .env.example
+.env*
+!.env.example
 
 # Node modules (if not already there)
 node_modules
