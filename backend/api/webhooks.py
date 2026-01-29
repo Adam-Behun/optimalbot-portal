@@ -225,10 +225,10 @@ async def test_webhook(
             "status_code": result.get("status_code")
         }
     else:
+        # Don't expose internal error details to client
         return {
             "success": False,
             "message": "Test webhook failed",
-            "error": result.get("error"),
             "status_code": result.get("status_code")
         }
 
