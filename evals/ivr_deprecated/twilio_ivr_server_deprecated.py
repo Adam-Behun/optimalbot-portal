@@ -242,4 +242,4 @@ if __name__ == "__main__":
     logger.info("2. Copy ngrok URL (e.g., https://abc123.ngrok.io)")
     logger.info("3. Configure Twilio number to point to: https://abc123.ngrok.io/voice")
     logger.info("")
-    app.run(debug=True, port=port, host='0.0.0.0')
+    app.run(debug=False, port=port, host='0.0.0.0')

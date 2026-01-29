@@ -155,7 +155,8 @@ async def health_ready():
     if is_connected:
         return {"ready": True, "database": db_status}
     else:
-        raise HTTPException(status_code=503, detail=f"Database not ready: {db_status}")
+        # Don't expose internal database details in error response
+        raise HTTPException(status_code=503, detail="Database not ready")
 
 
 @router.get("/health/detailed")
