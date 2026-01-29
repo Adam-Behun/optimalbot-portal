@@ -2,6 +2,20 @@
 .env*
 **/.env*
 
+# Secrets and credentials (never commit these)
+*.pem
+*.key
+*.pfx
+*.p12
+*.cert
+*.crt
+id_rsa*
+credentials.json
+secrets.yaml
+secrets.yml
+**/secrets/
+service-account*.json
+
 # Python
 __pycache__/
 *.py[cod]

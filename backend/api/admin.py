@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bson import ObjectId
@@ -11,13 +11,12 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
 LANGFUSE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID", "")
 
 from backend.dependencies import (
-    require_super_admin,
     get_organization_db,
     get_session_db,
+    require_super_admin,
 )
 from backend.models.organization import AsyncOrganizationRecord
 from backend.sessions import AsyncSessionRecord
-from backend.utils import convert_objectid
 
 router = APIRouter()
 
@@ -83,7 +82,7 @@ async def get_admin_dashboard(
             "recent_failures": failures_with_org,
         }
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error fetching admin dashboard")
         raise
 
@@ -157,7 +156,7 @@ async def get_admin_calls(
             "page_size": page_size,
         }
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error fetching admin calls")
         raise
 
@@ -262,7 +261,7 @@ async def get_admin_call_detail(
             "updated_at": session.get("updated_at").isoformat() if session.get("updated_at") else None,
         }
 
-    except Exception as e:
+    except Exception:
         logger.exception(f"Error fetching admin call detail for {session_id}")
         raise
 
@@ -340,6 +339,6 @@ async def get_admin_costs(
 
         return response
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error fetching admin costs")
         raise

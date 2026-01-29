@@ -1,10 +1,11 @@
-import os
-import sys
 import logging
+import os
 import smtplib
-from email.mime.text import MIMEText
-from datetime import datetime, timezone
+import sys
 from collections import OrderedDict
+from datetime import datetime, timezone
+from email.mime.text import MIMEText
+
 from loguru import logger
 
 # TRACE level is built-in to loguru (level 5)

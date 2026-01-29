@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
 import re
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class PatientCreate(BaseModel):

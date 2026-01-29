@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
-from typing import Optional, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
+
 from loguru import logger
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorClient
 
-from backend.database import get_mongo_client, MONGO_DB_NAME
 from backend.constants import SessionStatus
+from backend.database import MONGO_DB_NAME, get_mongo_client
 
 
 class AsyncSessionRecord:

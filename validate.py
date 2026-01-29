@@ -10,12 +10,12 @@ Usage:
     python validate.py --quick  # Skip API connectivity checks
 """
 
-import os
-import sys
 import asyncio
+import os
 import re
+import sys
 from pathlib import Path
-from typing import Tuple, List, Dict, Any
+from typing import Any, Dict, List, Tuple
 
 import yaml
 from dotenv import load_dotenv
@@ -319,6 +319,7 @@ async def validate_bot_startup(check_api_keys: bool = True) -> None:
     Raises RuntimeError if validation fails.
     """
     from loguru import logger
+
     from backend.database import check_connection, close_mongo_client
 
     logger.info("=" * 60)

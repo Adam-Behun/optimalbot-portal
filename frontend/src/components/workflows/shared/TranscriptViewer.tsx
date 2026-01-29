@@ -107,9 +107,11 @@ export function TranscriptViewer({ messages, summary, callerLabel = 'Insurance R
                       {message.content}
                     </span>
                   </div>
-                  <div className="text-xs text-purple-600 dark:text-purple-400 mt-1">
-                    {new Date(message.timestamp).toLocaleTimeString()}
-                  </div>
+                  {message.timestamp && (
+                    <div className="text-xs text-purple-600 dark:text-purple-400 mt-1">
+                      {new Date(message.timestamp).toLocaleTimeString()}
+                    </div>
+                  )}
                 </div>
               );
             }

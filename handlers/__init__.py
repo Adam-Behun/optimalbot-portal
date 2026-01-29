@@ -1,6 +1,6 @@
+from .safety import setup_output_validator_handlers, setup_safety_handlers
 from .transcript import setup_transcript_handler
-from .transport import setup_dialout_handlers, setup_dialin_handlers, setup_transport_handlers
-from .safety import setup_safety_handlers, setup_output_validator_handlers
+from .transport import setup_dialin_handlers, setup_dialout_handlers, setup_transport_handlers
 
 __all__ = [
     "setup_transcript_handler",

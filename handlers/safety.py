@@ -3,8 +3,8 @@ import asyncio
 from loguru import logger
 from pipecat.frames.frames import TTSSpeakFrame
 
-from backend.utils import normalize_sip_endpoint
 from backend.sessions import get_async_session_db
+from backend.utils import normalize_sip_endpoint
 
 
 def _estimate_tts_duration(text: str) -> float:

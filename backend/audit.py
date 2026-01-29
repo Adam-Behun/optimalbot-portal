@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from bson import ObjectId
 from loguru import logger
@@ -7,7 +7,7 @@ from loguru import logger
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorClient
 
-from backend.database import get_mongo_client, MONGO_DB_NAME
+from backend.database import MONGO_DB_NAME, get_mongo_client
 
 
 class AuditLogger:

@@ -2,16 +2,17 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from loguru import logger
 from openai import AsyncOpenAI
 from pipecat_flows import (
     FlowManager,
     FlowsFunctionSchema,
     NodeConfig,
 )
-from loguru import logger
 
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
+
 
 class _MockFlowManager:
     def __init__(self):
@@ -448,7 +449,7 @@ If you don't understand the caller:
                     "last_call_session_id": self.session_id,
                 }, self.organization_id)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in end_call_handler")
             try:
                 await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)

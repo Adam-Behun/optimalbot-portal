@@ -1,8 +1,8 @@
 """IVR Navigation Processor - handles DTMF menu navigation without classification."""
 
 from typing import Optional
-from loguru import logger
 
+from loguru import logger
 from pipecat.audio.dtmf.types import KeypadEntry
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -17,7 +17,6 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.utils.text.pattern_pair_aggregator import MatchAction, PatternPairAggregator
-
 
 # =============================================================================
 # CONSTANTS - Used by evals to ensure sync with production

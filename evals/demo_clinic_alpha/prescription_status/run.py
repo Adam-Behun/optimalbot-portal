@@ -24,18 +24,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from evals.db import ORG_ID_STR
-from evals.fixtures import TestDB
-from evals.context import EvalContextManager
-
 import yaml
 from anthropic import Anthropic
-from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
+from openai import AsyncOpenAI
 
 from clients.demo_clinic_alpha.prescription_status.flow_definition import PrescriptionStatusFlow
+from evals.context import EvalContextManager
+from evals.db import ORG_ID_STR
+from evals.fixtures import TestDB
 from pipeline.safety_processors import SAFETY_CLASSIFICATION_PROMPT
-
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
@@ -243,7 +241,7 @@ def grade_node_reached(final_node: str, expected_node: str) -> dict:
         return {"pass": True, "reason": f"PASS: Reached {final_node} (verification attempted)"}
 
     if expected_node == "transfer_initiated" and final_node in {"transfer_initiated", "transfer_failed", "transfer_pending", "patient_not_found_final"}:
-        return {"pass": True, "reason": f"PASS: Transfer was initiated"}
+        return {"pass": True, "reason": "PASS: Transfer was initiated"}
 
     # Status node can lead to transfer if caller asks to expedite or needs staff help
     if expected_node == "status" and final_node in status_equivalents:
@@ -751,12 +749,12 @@ async def run_simulation(
         # Safety classification (simulates parallel safety pipeline)
         safety_result = await check_safety_classification(patient_msg)
         if safety_result == "EMERGENCY":
-            print(f"  [SAFETY] 🚨 EMERGENCY detected!")
+            print("  [SAFETY] 🚨 EMERGENCY detected!")
             print(f"  [SAFETY] Bot would say: \"{EMERGENCY_MESSAGE}\"")
-            print(f"  [SAFETY] Then transfer to staff\n")
+            print("  [SAFETY] Then transfer to staff\n")
             safety_events.append({"turn": turn, "type": "EMERGENCY", "text": patient_msg})
         elif safety_result == "STAFF_REQUEST":
-            print(f"  [SAFETY] Staff request detected\n")
+            print("  [SAFETY] Staff request detected\n")
             safety_events.append({"turn": turn, "type": "STAFF_REQUEST", "text": patient_msg})
 
         # Bot responds
@@ -898,7 +896,7 @@ def sync_dataset_to_langfuse() -> None:
 
     langfuse.flush()
     print(f"\nDataset synced to Langfuse: {dataset_name}")
-    print(f"View at: https://cloud.langfuse.com/datasets")
+    print("View at: https://cloud.langfuse.com/datasets")
 
 
 
@@ -967,7 +965,7 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
     finally:
         # Cleanup seeded patient from test DB
         await test_db.cleanup()
-        print(f"  [CLEANUP] Removed test patient and session")
+        print("  [CLEANUP] Removed test patient and session")
 
 
 async def run_all_scenarios(verbose: bool = False) -> list[dict]:
@@ -1032,7 +1030,7 @@ async def main():
         return
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
-    print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
+    print("Use --list to see all scenarios, --scenario <id> to run specific one\n")
     await run_scenario(first_scenario, verbose=args.verbose)
 
 

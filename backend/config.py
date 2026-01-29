@@ -1,5 +1,6 @@
 import os
 from typing import List, Tuple
+
 from loguru import logger
 
 ENV = os.getenv("ENV", "local")

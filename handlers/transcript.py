@@ -1,7 +1,9 @@
 import os
-import aiohttp
 from datetime import datetime, timezone
+
+import aiohttp
 from loguru import logger
+
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
 
@@ -43,7 +45,7 @@ async def delete_daily_recording(room_name: str):
 
             # Get recordings for this room
             async with session.get(
-                f"https://api.daily.co/v1/recordings",
+                "https://api.daily.co/v1/recordings",
                 headers=headers,
                 params={"room_name": room_name}
             ) as response:
@@ -65,7 +67,7 @@ async def delete_daily_recording(room_name: str):
                             headers=headers
                         ) as del_response:
                             if del_response.status in [200, 204]:
-                                logger.info(f"✅ Daily recording deleted (HIPAA compliance)")
+                                logger.info("✅ Daily recording deleted (HIPAA compliance)")
                             else:
                                 logger.error(f"❌ Failed to delete recording {recording_id}")
 

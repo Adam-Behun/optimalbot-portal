@@ -3,8 +3,8 @@ Test IVR system to validate voicemail/IVR detection and navigation
 Simulates real insurance company phone system
 """
 from flask import Flask, request
-from twilio.twiml.voice_response import VoiceResponse
 from loguru import logger
+from twilio.twiml.voice_response import VoiceResponse
 
 app = Flask(__name__)
 

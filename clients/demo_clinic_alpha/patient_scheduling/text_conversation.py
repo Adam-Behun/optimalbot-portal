@@ -5,10 +5,11 @@ Minimal implementation to continue voice conversations over SMS.
 Uses the same LLM but with text-optimized prompts.
 """
 
-from typing import Any, Dict, List, Optional
-from openai import AsyncOpenAI
-from loguru import logger
 import os
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
+from openai import AsyncOpenAI
 
 
 class TextConversation:

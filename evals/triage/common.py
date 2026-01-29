@@ -12,10 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from pipecat.frames.frames import Frame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-
 
 # =============================================================================
 # EVENT COLLECTION

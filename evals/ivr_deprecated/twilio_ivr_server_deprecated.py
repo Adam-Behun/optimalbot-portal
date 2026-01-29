@@ -1,7 +1,8 @@
 import os
+
 from flask import Flask, request
-from twilio.twiml.voice_response import VoiceResponse
 from loguru import logger
+from twilio.twiml.voice_response import VoiceResponse
 
 app = Flask(__name__)
 
@@ -176,7 +177,7 @@ def human_rep():
 
     # Dial your actual phone number
     # Twilio will bridge the bot call with your phone
-    dial = response.dial(TRANSFER_NUMBER, timeout=30, caller_id="+15165853321", action="/dial-status")
+    _dial = response.dial(TRANSFER_NUMBER, timeout=30, caller_id="+15165853321", action="/dial-status")
 
     return str(response)
 

@@ -24,29 +24,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
-from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
+from openai import AsyncOpenAI
 
-from pipeline.ivr_navigation_processor import (
-    IVRNavigationProcessor,
-    IVRStatus,
-    IVREvent,
-    DTMF_PATTERN,
-    IVR_STATUS_PATTERN,
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import (
+    EligibilityVerificationFlow,
 )
-from pipeline.pipeline_factory import PipelineFactory
-from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
 from evals.triage import (
-    load_scenarios,
     get_scenario,
-    grade_single_dtmf,
     grade_dtmf_sequence,
+    grade_single_dtmf,
     grade_spoken_text,
     grade_status,
+    load_scenarios,
 )
-
+from pipeline.ivr_navigation_processor import (
+    DTMF_PATTERN,
+    IVR_STATUS_PATTERN,
+    IVREvent,
+    IVRNavigationProcessor,
+    IVRStatus,
+)
+from pipeline.pipeline_factory import PipelineFactory
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
@@ -458,7 +460,7 @@ async def main():
     config = load_scenarios(SCENARIOS_PATH)
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
-    print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
+    print("Use --list to see all scenarios, --scenario <id> to run specific one\n")
     await run_scenario(first_scenario)
 
 
