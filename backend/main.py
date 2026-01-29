@@ -1,16 +1,29 @@
 import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from loguru import logger
 
-from logging_config import setup_logging
-from backend.lifespan import lifespan
-from backend.middleware import SecurityHeadersMiddleware, RequestIDMiddleware
-from backend.exceptions import register_exception_handlers
+from backend.api import (
+    admin,
+    auth,
+    dialin,
+    dialout,
+    health,
+    metrics,
+    patients,
+    sessions,
+    sms,
+    webhooks,
+)
 from backend.dependencies import get_user_id_from_request
-from backend.api import health, auth, patients, dialout, dialin, sms, sessions, metrics, webhooks, admin
+from backend.exceptions import register_exception_handlers
+from backend.lifespan import lifespan
+from backend.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
+from logging_config import setup_logging
+
 setup_logging()
 
 # Use defaults for import-time (allows syntax checking), validate at startup via lifespan

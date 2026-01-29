@@ -1,19 +1,19 @@
-from fastapi import APIRouter, HTTPException, Request, Depends
-from slowapi import Limiter
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
+from slowapi import Limiter
 
+from backend.audit import AuditLogger
 from backend.dependencies import (
-    get_current_user,
-    get_patient_db,
     get_audit_logger_dep,
     get_client_info,
-    log_phi_access,
+    get_current_user,
+    get_current_user_organization_id,
+    get_patient_db,
     get_user_id_from_request,
-    get_current_user_organization_id
+    log_phi_access,
 )
 from backend.models import AsyncPatientRecord
-from backend.audit import AuditLogger
-from backend.schemas import PatientCreate, PatientResponse, BulkPatientRequest, BulkUploadResponse
+from backend.schemas import BulkPatientRequest, BulkUploadResponse, PatientCreate, PatientResponse
 from backend.utils import convert_objectid, mask_id
 
 router = APIRouter()

@@ -1,14 +1,14 @@
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
+from backend.audit import AuditLogger
 from backend.dependencies import (
-    get_current_user,
     get_audit_logger_dep,
     get_client_info,
-    get_current_user_organization_id
+    get_current_user,
+    get_current_user_organization_id,
 )
-from backend.sessions import get_async_session_db, AsyncSessionRecord
-from backend.audit import AuditLogger
+from backend.sessions import AsyncSessionRecord, get_async_session_db
 from backend.utils import convert_objectid
 
 router = APIRouter()

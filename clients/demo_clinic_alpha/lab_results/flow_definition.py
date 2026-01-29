@@ -1,9 +1,9 @@
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
-from openai import AsyncOpenAI
-from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from loguru import logger
+from openai import AsyncOpenAI
+from pipecat_flows import FlowManager, FlowsFunctionSchema, NodeConfig
 
 from backend.models.patient import get_async_patient_db
 from clients.demo_clinic_alpha.dialin_base_flow import DialinBaseFlow

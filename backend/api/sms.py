@@ -4,9 +4,10 @@ SMS webhook handler for text conversations.
 Minimal implementation to receive SMS replies and process through TextConversation.
 """
 
-from fastapi import APIRouter, Request, HTTPException, Form
-from loguru import logger
 from typing import Optional
+
+from fastapi import APIRouter, Form, HTTPException, Request
+from loguru import logger
 
 from backend.models import get_async_patient_db
 
@@ -98,8 +99,9 @@ async def handle_inbound_sms(
 
 def _twiml_response(message: str):
     """Generate TwiML XML response for Twilio."""
-    from fastapi.responses import Response
     import html
+
+    from fastapi.responses import Response
 
     # Escape message for XML
     safe_message = html.escape(message)

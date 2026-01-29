@@ -102,8 +102,8 @@ export interface BulkAddResponse {
 export interface TranscriptMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
-  timestamp: string;
-  type: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary' | 'transfer';
+  timestamp?: string;
+  type?: 'transcript' | 'ivr' | 'ivr_action' | 'ivr_summary' | 'transfer' | 'triage';
 }
 
 // Session - unified call record (every call has a session)

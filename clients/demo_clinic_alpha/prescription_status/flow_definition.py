@@ -1,12 +1,13 @@
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
-from openai import AsyncOpenAI
-from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema
 from loguru import logger
+from openai import AsyncOpenAI
+from pipecat_flows import FlowManager, FlowsFunctionSchema, NodeConfig
 
 from backend.models.patient import get_async_patient_db
 from clients.demo_clinic_alpha.dialin_base_flow import DialinBaseFlow
+
 from .schema import MEDICATIONS, PRESCRIPTION_STATUS
 
 
@@ -739,7 +740,7 @@ If patient confirms, submit renewal request to {prescribing_physician}.""",
 
     def create_completion_node(self) -> NodeConfig:
         state = self.flow_manager.state
-        first_name = state.get("first_name", "")
+        _first_name = state.get("first_name", "")
         medication_name = state.get("medication_name", "")
         refill_status = state.get("refill_status", "")
         pharmacy_name = state.get("pharmacy_name", "")

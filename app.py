@@ -1,5 +1,6 @@
-import os
 import asyncio
+import os
+
 import uvicorn
 from dotenv import load_dotenv
 from loguru import logger

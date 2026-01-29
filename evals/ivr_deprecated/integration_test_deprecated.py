@@ -1,14 +1,14 @@
 import asyncio
-import sys
 import os
+import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 load_dotenv(Path(__file__).parent / ".env.test")
 
 from pipeline.runner import ConversationPipeline
-
 
 TEST_PATIENT = {
     "patient_id": "test_001",
@@ -39,18 +39,18 @@ async def run_test():
     print("="*70)
     print("🧪 E2E INTEGRATION TEST: IVR Navigation → Human Conversation")
     print("="*70)
-    print(f"\n📞 Test Configuration:")
+    print("\n📞 Test Configuration:")
     print(f"   Twilio IVR Number: {twilio_phone}")
     print(f"   Your Phone: {your_phone}")
     print(f"   Patient: {TEST_PATIENT['patient_name']}")
-    print(f"\n📋 Test Instructions:")
-    print(f"   1. Ensure twilio_ivr_server.py is running (port 5001)")
-    print(f"   2. Ensure ngrok is exposing port 5001")
+    print("\n📋 Test Instructions:")
+    print("   1. Ensure twilio_ivr_server.py is running (port 5001)")
+    print("   2. Ensure ngrok is exposing port 5001")
     print(f"   3. Your phone ({your_phone}) will ring after IVR navigation")
-    print(f"   4. Answer and say: 'Hello, this is [your name] from Blue Cross'")
-    print(f"   5. Bot will greet you and state purpose")
-    print(f"   6. Continue conversation to test verification flow")
-    print(f"\n⏳ Starting test in 5 seconds...\n")
+    print("   4. Answer and say: 'Hello, this is [your name] from Blue Cross'")
+    print("   5. Bot will greet you and state purpose")
+    print("   6. Continue conversation to test verification flow")
+    print("\n⏳ Starting test in 5 seconds...\n")
 
     await asyncio.sleep(5)
 
@@ -76,7 +76,7 @@ async def run_test():
         dtmf_actions = [t for t in pipeline.transcripts if t.get("type") == "ivr_action"]
         ivr_summary = [t for t in pipeline.transcripts if t.get("type") == "ivr_summary"]
 
-        print(f"\n🔢 IVR Navigation:")
+        print("\n🔢 IVR Navigation:")
         expected_path = ["2", "1"]  # Provider Services → Eligibility
         actual_path = [t["content"].replace("Pressed ", "") for t in dtmf_actions]
         print(f"   Expected: {expected_path}")
@@ -89,7 +89,7 @@ async def run_test():
         print(f"   Status: {'✅ PASS' if ivr_success else '❌ FAIL'}")
 
         # Check conversation states
-        print(f"\n💬 Conversation Flow:")
+        print("\n💬 Conversation Flow:")
         user_messages = [t for t in pipeline.transcripts if t.get("role") == "user"]
         assistant_messages = [t for t in pipeline.transcripts if t.get("role") == "assistant"]
 
@@ -103,7 +103,7 @@ async def run_test():
         print(f"   Conversation occurred: {'✅ Yes' if has_conversation else '❌ No'}")
 
         # Print transcript
-        print(f"\n📝 Full Transcript:")
+        print("\n📝 Full Transcript:")
         print("-"*70)
         for entry in pipeline.transcripts:
             role = entry.get("role", "system")

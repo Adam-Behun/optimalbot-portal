@@ -1,6 +1,13 @@
-from typing import Dict, Any
-from pipecat_flows import FlowManager, NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
+from typing import Any, Dict
+
 from loguru import logger
+from pipecat_flows import (
+    ContextStrategy,
+    ContextStrategyConfig,
+    FlowManager,
+    FlowsFunctionSchema,
+    NodeConfig,
+)
 
 from clients.demo_clinic_alpha.dialout_base_flow import DialoutBaseFlow
 

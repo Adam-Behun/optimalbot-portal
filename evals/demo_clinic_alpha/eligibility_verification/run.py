@@ -20,17 +20,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from evals.db import ORG_ID_STR
-from evals.fixtures import TestDB
-from evals.context import EvalContextManager
-
 import yaml
 from anthropic import Anthropic
-from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
+from openai import AsyncOpenAI
 
-from clients.demo_clinic_alpha.eligibility_verification.flow_definition import EligibilityVerificationFlow
-
+from clients.demo_clinic_alpha.eligibility_verification.flow_definition import (
+    EligibilityVerificationFlow,
+)
+from evals.context import EvalContextManager
+from evals.db import ORG_ID_STR
+from evals.fixtures import TestDB
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
@@ -770,7 +770,7 @@ async def run_simulation(
             # Bot called functions but didn't speak - let her keep processing
             # without advancing the insurance turn
         if inner_iterations >= MAX_INNER and not runner.done:
-            print(f"    [WARN] Inner loop max iterations reached without bot speaking")
+            print("    [WARN] Inner loop max iterations reached without bot speaking")
 
     final_state = runner.mock_flow_manager.state
     final_node = runner.current_node_name
@@ -888,7 +888,7 @@ def sync_dataset_to_langfuse() -> None:
 
     langfuse.flush()
     print(f"\nDataset synced to Langfuse: {dataset_name}")
-    print(f"View at: https://cloud.langfuse.com/datasets")
+    print("View at: https://cloud.langfuse.com/datasets")
 
 
 async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
@@ -967,7 +967,7 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
     finally:
         # Cleanup seeded patient from test DB
         await test_db.cleanup()
-        print(f"  [CLEANUP] Removed test patient and session")
+        print("  [CLEANUP] Removed test patient and session")
 
 
 async def run_all_scenarios(verbose: bool = False) -> list[dict]:
@@ -1029,7 +1029,7 @@ async def main():
     config = load_scenarios()
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
-    print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
+    print("Use --list to see all scenarios, --scenario <id> to run specific one\n")
     await run_scenario(first_scenario, verbose=args.verbose)
 
 

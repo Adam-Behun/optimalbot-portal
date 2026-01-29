@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 os.environ["MONGO_DB_NAME"] = "alfons_test"
 
-from backend.database import get_mongo_client, MONGO_DB_NAME
+from backend.database import get_mongo_client
 from backend.models.patient import AsyncPatientRecord
 
 ORG_OBJECT_ID = ObjectId("507f1f77bcf86cd799439011")

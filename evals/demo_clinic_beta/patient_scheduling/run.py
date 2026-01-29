@@ -10,11 +10,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 import yaml
 from anthropic import Anthropic
-from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
+from openai import AsyncOpenAI
 
 from clients.demo_clinic_beta.patient_scheduling.flow_definition import PatientSchedulingFlow
-
 
 langfuse = Langfuse()
 

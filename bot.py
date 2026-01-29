@@ -1,14 +1,16 @@
 import os
 import sys
 from datetime import datetime, timezone
+
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.runner.types import DailyRunnerArguments
-from pipeline.session import CallSession
-from backend.sessions import get_async_session_db
+
 from backend.models.patient import get_async_patient_db
+from backend.sessions import get_async_session_db
 from backend.utils import mask_id, mask_phone
 from logging_config import setup_logging
+from pipeline.session import CallSession
 
 try:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -110,7 +112,7 @@ async def bot(args: DailyRunnerArguments):
                 patient_db = get_async_patient_db()
                 await patient_db.update_call_status(patient_id, "Failed", organization_id)
                 logger.info(f"Updated patient {mask_id(patient_id)} call_status to Failed")
-        except Exception as cleanup_error:
+        except Exception:
             logger.exception("Failed to update status on error")
 
         raise
@@ -123,10 +125,12 @@ async def bot(args: DailyRunnerArguments):
 
 # Local development mode - runs FastAPI server with /start endpoint
 if __name__ == "__main__":
-    import uvicorn
     import asyncio
+
+    import uvicorn
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel
+
     from validate import validate_bot_startup
 
     # Check if running in Pipecat runner mode (e.g., uv run bot.py -t daily)

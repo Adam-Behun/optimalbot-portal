@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
-from fastapi import Request, HTTPException, FastAPI
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
 from loguru import logger
+from pydantic import ValidationError
 
 
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:

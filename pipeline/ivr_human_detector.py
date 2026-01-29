@@ -4,12 +4,10 @@ import asyncio
 from typing import Optional
 
 from loguru import logger
-
 from pipecat.frames.frames import Frame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from pipeline.triage_processors import TriageClassification
-
 
 CLASSIFIER_PROMPT = """Classify this phone call transcription as IVR or human.
 

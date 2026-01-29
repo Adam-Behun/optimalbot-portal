@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from loguru import logger
 from openai import AsyncOpenAI
 from pipecat_flows import (
     FlowManager,
@@ -9,11 +10,10 @@ from pipecat_flows import (
     NodeConfig,
 )
 from pipecat_flows.types import ActionConfig
-from loguru import logger
 
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
-from backend.utils import parse_natural_date, parse_natural_time, normalize_sip_endpoint
+from backend.utils import normalize_sip_endpoint, parse_natural_date, parse_natural_time
 
 
 class _MockFlowManager:
@@ -189,7 +189,7 @@ Once they explain, call save_visit_reason with brief summary.""",
 
     def create_scheduling_node(self) -> NodeConfig:
         """Collect appointment date and time."""
-        appointment_type = self.flow_manager.state.get("appointment_type", "appointment")
+        _appointment_type = self.flow_manager.state.get("appointment_type", "appointment")
 
         # Demo: hardcoded slots for next week (Dec 2-6, 2025)
         available_slots = [
@@ -651,7 +651,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
                 patient_updates = {k: v for k, v in patient_updates.items() if v is not None}
                 await patient_db.update_patient(patient_id, patient_updates, self.organization_id)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in end_call_handler")
             try:
                 await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)

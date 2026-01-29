@@ -2,9 +2,9 @@ import os
 from datetime import date, timedelta
 from typing import Any, Dict
 
+from loguru import logger
 from openai import AsyncOpenAI
 from pipecat_flows import FlowManager, FlowsFunctionSchema, NodeConfig
-from loguru import logger
 
 from backend.models.patient import get_async_patient_db
 from backend.sessions import get_async_session_db
@@ -612,7 +612,7 @@ If they seem done but you want to offer text: "Would you like me to send you a t
 
     async def _offer_text_continuation_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[str, NodeConfig]:
         state = flow_manager.state
-        if not (phone_number := state.get("phone_number", "")):
+        if not (_phone_number := state.get("phone_number", "")):
             logger.warning("Text continuation requested but no phone number")
             self._reset_anything_else_count()
             return "I don't have a phone number on file.", self.create_confirmation_node()

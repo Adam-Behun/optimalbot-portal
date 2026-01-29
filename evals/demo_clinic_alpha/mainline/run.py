@@ -20,17 +20,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from evals.context import EvalContextManager
-from evals.db import get_patient_db, ORG_ID_STR
-
 import yaml
 from anthropic import Anthropic
-from openai import AsyncOpenAI
 from langfuse import Langfuse, observe
+from openai import AsyncOpenAI
 
 from clients.demo_clinic_alpha.mainline.flow_definition import MainlineFlow
 from clients.demo_clinic_alpha.mainline.schema import WORKFLOW_SCHEMA
-
+from evals.context import EvalContextManager
+from evals.db import ORG_ID_STR, get_patient_db
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
@@ -679,7 +677,7 @@ def sync_dataset_to_langfuse() -> None:
 
     langfuse.flush()
     print(f"\nDataset synced to Langfuse: {dataset_name}")
-    print(f"View at: https://cloud.langfuse.com/datasets")
+    print("View at: https://cloud.langfuse.com/datasets")
 
 
 async def run_scenario(scenario_id: str) -> dict:
@@ -787,7 +785,7 @@ async def main():
         return
     first_scenario = config["scenarios"][0]["id"]
     print(f"No scenario specified, running default: {first_scenario}")
-    print(f"Use --list to see all scenarios, --scenario <id> to run specific one\n")
+    print("Use --list to see all scenarios, --scenario <id> to run specific one\n")
     await run_scenario(first_scenario)
 
 

@@ -7,7 +7,8 @@ import {
   BulkAddResponse,
   AuthResponse,
   Session,
-  SessionsResponse
+  SessionsResponse,
+  TranscriptMessage
 } from './types';
 import { removeAuthToken, getAuthToken, emitLogoutEvent } from './lib/auth';
 
@@ -114,11 +115,11 @@ export const deleteSession = async (sessionId: string): Promise<void> => {
 };
 
 // GET /call/:sessionId/transcript - Get call transcript
-export const getCallTranscript = async (sessionId: string): Promise<{ messages: Array<{ role: string; content: string; timestamp?: string }> }> => {
+export const getCallTranscript = async (sessionId: string): Promise<{ messages: TranscriptMessage[] }> => {
   console.log('Fetching transcript for session:', sessionId);
   const response = await api.get(`/call/${sessionId}/transcript`);
   console.log('Transcript API response:', response.data);
-  return { messages: response.data.transcripts || [] };
+  return { messages: (response.data.transcripts || []) as TranscriptMessage[] };
 };
 
 // Get call history for a patient
