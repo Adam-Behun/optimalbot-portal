@@ -64,6 +64,7 @@ Thumbs.db
 
 # Excluded directories
 docs/
+finances/
 pipecat_src/
 evals-course-voice/
 openai-realtime-s2s-example/
