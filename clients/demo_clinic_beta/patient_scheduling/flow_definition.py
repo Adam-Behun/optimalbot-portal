@@ -546,7 +546,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
 
         # Save to database
         try:
-            patient_id = self.patient_data.get("patient_id")
+            patient_id = self.call_data.get("patient_id")
             if patient_id:
                 db = get_async_patient_db()
                 update_fields = {
@@ -592,7 +592,7 @@ If unclear or incomplete, ask to repeat. Don't guess.""",
 
         try:
             db = get_async_patient_db()
-            patient_id = self.patient_data.get("patient_id")
+            patient_id = self.call_data.get("patient_id")
 
             if patient_id:
                 update_fields = {
