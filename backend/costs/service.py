@@ -6,8 +6,8 @@ Handles cost queries and builds transparent breakdowns for sessions.
 from dataclasses import dataclass
 from typing import Optional
 
-from costs.calculator import CostCalculator
 from backend.models.organization import AsyncOrganizationRecord
+from costs.calculator import CostCalculator
 
 
 async def build_org_map(org_db: AsyncOrganizationRecord) -> dict[str, str]:

@@ -8,6 +8,7 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat_flows import FlowManager
 
 from core.flow_loader import discover_warmup_functions
+from costs.calculator import get_provider_name
 from handlers import (
     setup_output_validator_handlers,
     setup_safety_handlers,
@@ -17,7 +18,6 @@ from handlers import (
 from handlers.transcript import save_transcript_to_db
 from handlers.transport import save_usage_costs
 from handlers.triage import setup_triage_handlers
-from costs.calculator import get_provider_name
 from observers import LangfuseLatencyObserver, LLMContextObserver, UsageObserver
 from pipeline.pipeline_factory import PipelineFactory
 

@@ -1,10 +1,10 @@
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
-from typing import Optional
 
 # Langfuse configuration for trace links
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
