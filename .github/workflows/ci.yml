@@ -31,6 +31,9 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Type check
+        run: uv run pyright
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

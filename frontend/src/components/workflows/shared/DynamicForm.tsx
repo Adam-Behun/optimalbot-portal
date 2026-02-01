@@ -13,7 +13,7 @@ import {
 import { Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 interface DynamicFormProps {
   schema: WorkflowConfig;
@@ -194,39 +194,47 @@ export function DynamicForm({
   };
 
   // Excel/CSV Upload handlers
-  const handleDownloadSample = () => {
+  const handleDownloadSample = async () => {
+    // Create workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Patients');
+
+    // Add header row
+    const headers = fields.map(f => f.key);
+    worksheet.addRow(headers);
+
     // Create example data row
-    const exampleRow: Record<string, string> = {};
-    fields.forEach(f => {
+    const exampleRow = fields.map(f => {
       switch (f.type) {
         case 'date':
-          exampleRow[f.key] = '1990-01-15';
-          break;
+          return '1990-01-15';
         case 'datetime':
-          exampleRow[f.key] = '2025-01-15T10:00';
-          break;
+          return '2025-01-15T10:00';
         case 'phone':
-          exampleRow[f.key] = '+11234567890';
-          break;
+          return '+11234567890';
         case 'select':
-          exampleRow[f.key] = f.options?.[0] || `Example ${f.label}`;
-          break;
+          return f.options?.[0] || `Example ${f.label}`;
         default:
-          exampleRow[f.key] = `Example ${f.label}`;
+          return `Example ${f.label}`;
       }
     });
-
-    // Create worksheet with headers and example row
-    const worksheet = XLSX.utils.json_to_sheet([exampleRow]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Patients');
+    worksheet.addRow(exampleRow);
 
     // Set column widths for better readability
-    const colWidths = fields.map(f => ({ wch: Math.max(f.label.length, 20) }));
-    worksheet['!cols'] = colWidths;
+    worksheet.columns = fields.map(f => ({ width: Math.max(f.label.length, 20) }));
 
-    // Download as Excel file
-    XLSX.writeFile(workbook, 'patient_upload_example.xlsx');
+    // Generate buffer and download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'patient_upload_example.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleUploadClick = () => {
@@ -243,12 +251,41 @@ export function DynamicForm({
     if (fileExtension === 'xlsx' || fileExtension === 'xls') {
       try {
         const arrayBuffer = await file.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(arrayBuffer);
 
         // Read first sheet
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const patients = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
+        const worksheet = workbook.worksheets[0];
+        if (!worksheet) {
+          toast.error('Excel file has no worksheets');
+          return;
+        }
+
+        // Get headers from first row
+        const headerRow = worksheet.getRow(1);
+        const headers: string[] = [];
+        headerRow.eachCell((cell, colNumber) => {
+          headers[colNumber - 1] = String(cell.value || '');
+        });
+
+        // Convert rows to objects
+        const patients: Record<string, unknown>[] = [];
+        worksheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return; // Skip header row
+
+          const patient: Record<string, unknown> = {};
+          row.eachCell((cell, colNumber) => {
+            const header = headers[colNumber - 1];
+            if (header) {
+              patient[header] = cell.value;
+            }
+          });
+
+          // Only add if row has data
+          if (Object.keys(patient).length > 0) {
+            patients.push(patient);
+          }
+        });
 
         if (patients.length === 0) {
           toast.error('Excel file is empty');
@@ -262,9 +299,9 @@ export function DynamicForm({
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Error uploading Excel:', error);
-        const errorMsg = error.response?.data?.detail || error.message || 'Failed to upload Excel file';
+        const errorMsg = error instanceof Error ? error.message : 'Failed to upload Excel file';
         toast.error(errorMsg);
       }
       return;
@@ -290,9 +327,9 @@ export function DynamicForm({
           if (fileInputRef.current) {
             fileInputRef.current.value = '';
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error('Error uploading CSV:', error);
-          const errorMsg = error.response?.data?.detail || error.message || 'Failed to upload CSV file';
+          const errorMsg = error instanceof Error ? error.message : 'Failed to upload CSV file';
           toast.error(errorMsg);
         }
       },
