@@ -3,13 +3,12 @@ Usage observer for tracking per-session costs.
 
 Tracks LLM tokens, TTS characters, STT duration, and telephony duration.
 Auto-detects provider/model from Pipecat's MetricsFrame.
+Uses CostCalculator for all cost calculations.
 """
 
 import time
-from pathlib import Path
 from typing import Optional
 
-import yaml
 from loguru import logger
 from pipecat.frames.frames import (
     CancelFrame,
@@ -22,23 +21,7 @@ from pipecat.metrics.metrics import LLMUsageMetricsData, TTSUsageMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.frame_processor import FrameDirection
 
-_PRICING_CACHE: Optional[dict] = None
-
-
-def load_pricing() -> dict:
-    """Load pricing config from costs/variable_costs.yaml (cached)."""
-    global _PRICING_CACHE
-    if _PRICING_CACHE is not None:
-        return _PRICING_CACHE
-
-    pricing_path = Path(__file__).parent.parent / "costs" / "variable_costs.yaml"
-    try:
-        with open(pricing_path) as f:
-            _PRICING_CACHE = yaml.safe_load(f)
-            return _PRICING_CACHE
-    except FileNotFoundError:
-        logger.warning(f"Pricing config not found at {pricing_path}, using empty rates")
-        return {}
+from costs.calculator import SERVICE_CLASS_TO_PROVIDER, CostCalculator
 
 
 class UsageObserver(BaseObserver):
@@ -47,24 +30,30 @@ class UsageObserver(BaseObserver):
     # Time window for content-based deduplication (seconds)
     _DEDUP_WINDOW = 0.5
 
-    def __init__(self, session_id: str):
+    def __init__(
+        self,
+        session_id: str,
+        tts_provider: str,
+        stt_provider: str,
+        telephony_provider: str,
+    ):
         super().__init__()
         self._session_id = session_id
-        self._pricing = load_pricing()
+        self._calculator = CostCalculator()
 
-        # LLM usage (aggregated by provider)
+        # LLM usage - dynamic from metrics (supports multiple providers per session)
         self._llm_usage: dict = {}  # {provider: {model: {prompt: N, completion: N}}}
 
-        # TTS usage (aggregated by provider)
+        # TTS/STT/Telephony - single provider per session, passed at init
         self._tts_characters: int = 0
-        self._tts_provider: Optional[str] = None
+        self._tts_provider: str = tts_provider
 
-        # STT duration (from user speaking frames)
         self._stt_seconds: float = 0.0
+        self._stt_provider: str = stt_provider
         self._user_speaking_start: Optional[float] = None
 
-        # Telephony duration (from transport events)
         self._telephony_seconds: float = 0.0
+        self._telephony_provider: str = telephony_provider
         self._call_connected_at: Optional[float] = None
 
         # Deduplication: track processed frame IDs to avoid duplicate metrics
@@ -121,9 +110,10 @@ class UsageObserver(BaseObserver):
 
     def _record_llm(self, metric: LLMUsageMetricsData):
         """Record LLM token usage, aggregating by provider/model."""
-        # Normalize provider: "GroqLLMService#0" -> "groq", "OpenAILLMService#0" -> "openai"
-        raw_provider = metric.processor.lower() if metric.processor else "unknown"
-        provider = raw_provider.replace("llmservice", "").split("#")[0]
+        # Extract provider from processor name (e.g., "GroqLLMService#0" -> "groq")
+        processor = metric.processor or "unknown"
+        class_name = processor.split("#")[0]  # Remove instance suffix like "#0"
+        provider = SERVICE_CLASS_TO_PROVIDER.get(class_name, class_name.lower())
         model = metric.model or "unknown"
         tokens = metric.value
 
@@ -144,18 +134,12 @@ class UsageObserver(BaseObserver):
 
     def _record_tts(self, metric: TTSUsageMetricsData):
         """Record TTS character usage."""
-        provider = "unknown"
-        if metric.processor:
-            raw = metric.processor.lower()
-            provider = raw.replace("ttsservice", "").split("#")[0]
-
         # Content-based deduplication: skip if we've seen identical metrics recently
-        content_key = ("tts", provider, metric.value)
+        content_key = ("tts", metric.value)
         if self._is_duplicate_metric(content_key):
             return
 
         self._tts_characters += metric.value
-        self._tts_provider = provider
         logger.debug(f"[Usage] TTS: +{metric.value} chars (total: {self._tts_characters})")
 
     def mark_call_connected(self):
@@ -170,48 +154,6 @@ class UsageObserver(BaseObserver):
             self._telephony_seconds = time.time() - self._call_connected_at
             logger.debug(f"[Usage] Call ended, duration={self._telephony_seconds:.1f}s")
 
-    def _get_llm_rate(self, provider: str, model: str, rate_type: str) -> float:
-        """Look up LLM rate from pricing config."""
-        llm_rates = self._pricing.get("llm", {})
-        provider_rates = llm_rates.get(provider, {})
-
-        # Try exact model match first
-        if model in provider_rates and isinstance(provider_rates[model], dict):
-            return provider_rates[model].get(rate_type, 0)
-
-        # Try base model match (strip date suffix like "-2024-07-18")
-        base_model = model.split("-202")[0] if "-202" in model else model
-        if base_model in provider_rates and isinstance(provider_rates[base_model], dict):
-            return provider_rates[base_model].get(rate_type, 0)
-
-        # Try prefix match (model starts with a known rate_model)
-        for rate_model, rates in provider_rates.items():
-            if isinstance(rates, dict) and model.startswith(rate_model):
-                return rates.get(rate_type, 0)
-
-        logger.warning(f"No LLM rate found for {provider}/{model}/{rate_type}")
-        return 0
-
-    def _get_tts_rate(self, provider: str) -> float:
-        """Look up TTS rate from pricing config."""
-        tts_rates = self._pricing.get("tts", {})
-        provider_rates = tts_rates.get(provider, {})
-        # Use first available model rate (skip metadata fields like last_verified)
-        for model_rates in provider_rates.values():
-            if isinstance(model_rates, dict) and "per_1m_characters" in model_rates:
-                return model_rates["per_1m_characters"]
-        return 0
-
-    def _get_stt_rate(self) -> float:
-        """Look up STT rate from pricing config (assumes Deepgram Flux)."""
-        stt_rates = self._pricing.get("stt", {}).get("deepgram", {})
-        return stt_rates.get("flux", {}).get("per_minute", 0)
-
-    def _get_telephony_rate(self) -> float:
-        """Look up telephony rate from pricing config."""
-        telephony = self._pricing.get("telephony", {}).get("daily", {})
-        return telephony.get("sip", {}).get("per_minute", 0)
-
     def _finalize_in_progress_speech(self):
         """Finalize any in-progress speech duration (call ended while speaking)."""
         if self._user_speaking_start:
@@ -219,79 +161,20 @@ class UsageObserver(BaseObserver):
             self._user_speaking_start = None
 
     def calculate_costs(self) -> dict:
-        """Calculate costs from usage and pricing config."""
+        """Calculate costs from usage using CostCalculator."""
         # Finalize any in-progress speech
         self._finalize_in_progress_speech()
 
-        # LLM costs with per-model breakdown
-        llm_cost = 0.0
-        total_prompt = 0
-        total_completion = 0
-        models_breakdown = {}
-
-        for provider, models in self._llm_usage.items():
-            for model, tokens in models.items():
-                input_rate = self._get_llm_rate(provider, model, "input_per_1m_tokens")
-                output_rate = self._get_llm_rate(provider, model, "output_per_1m_tokens")
-                model_input_cost = (tokens["prompt"] / 1_000_000) * input_rate
-                model_output_cost = (tokens["completion"] / 1_000_000) * output_rate
-                model_cost = model_input_cost + model_output_cost
-                llm_cost += model_cost
-                total_prompt += tokens["prompt"]
-                total_completion += tokens["completion"]
-                models_breakdown[model] = {
-                    "provider": provider,
-                    "prompt_tokens": tokens["prompt"],
-                    "completion_tokens": tokens["completion"],
-                    "cost_usd": round(model_cost, 6),
-                }
-
-        # TTS costs
-        tts_provider = self._tts_provider
-        if not tts_provider:
-            logger.debug("TTS provider unknown, defaulting to cartesia for cost calc")
-            tts_provider = "cartesia"
-        tts_rate = self._get_tts_rate(tts_provider)
-        tts_cost = (self._tts_characters / 1_000_000) * tts_rate
-
-        # STT costs
-        stt_rate = self._get_stt_rate()
-        stt_cost = (self._stt_seconds / 60) * stt_rate
-
-        # Telephony costs
-        telephony_rate = self._get_telephony_rate()
-        telephony_cost = (self._telephony_seconds / 60) * telephony_rate
-
-        total_cost = llm_cost + tts_cost + stt_cost + telephony_cost
-
-        return {
-            "usage": {
-                "llm": {
-                    "prompt_tokens": total_prompt,
-                    "completion_tokens": total_completion,
-                    "models": models_breakdown,
-                },
-                "tts": {
-                    "characters": self._tts_characters,
-                    "provider": tts_provider,
-                },
-                "stt": {
-                    "seconds": round(self._stt_seconds, 2),
-                    "provider": "deepgram",
-                },
-                "telephony": {
-                    "seconds": round(self._telephony_seconds, 2),
-                    "provider": "daily",
-                },
-            },
-            "costs": {
-                "llm_usd": round(llm_cost, 6),
-                "tts_usd": round(tts_cost, 6),
-                "stt_usd": round(stt_cost, 6),
-                "telephony_usd": round(telephony_cost, 6),
-            },
-            "total_cost_usd": round(total_cost, 4),
-        }
+        # Delegate to CostCalculator for all calculations
+        return self._calculator.calculate_session_costs(
+            llm_usage=self._llm_usage,
+            tts_provider=self._tts_provider,
+            tts_characters=self._tts_characters,
+            stt_provider=self._stt_provider,
+            stt_seconds=self._stt_seconds,
+            telephony_provider=self._telephony_provider,
+            telephony_seconds=self._telephony_seconds,
+        )
 
     def _log_summary(self):
         """Log usage summary at end of session."""

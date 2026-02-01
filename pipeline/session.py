@@ -17,6 +17,7 @@ from handlers import (
 from handlers.transcript import save_transcript_to_db
 from handlers.transport import save_usage_costs
 from handlers.triage import setup_triage_handlers
+from costs.calculator import get_provider_name
 from observers import LangfuseLatencyObserver, LLMContextObserver, UsageObserver
 from pipeline.pipeline_factory import PipelineFactory
 
@@ -123,7 +124,17 @@ class CallSession:
         # Usage observer - graceful degradation
         self.usage_observer = None
         try:
-            self.usage_observer = UsageObserver(session_id=self.session_id)
+            # Get provider names from explicit mapping (avoids fragile string parsing)
+            tts_provider = get_provider_name(type(self.components.tts).__name__)
+            stt_provider = get_provider_name(type(self.components.stt).__name__)
+            telephony_provider = get_provider_name(type(self.components.transport).__name__)
+
+            self.usage_observer = UsageObserver(
+                session_id=self.session_id,
+                tts_provider=tts_provider,
+                stt_provider=stt_provider,
+                telephony_provider=telephony_provider,
+            )
             observers.append(self.usage_observer)
         except Exception as e:
             logger.warning(f"UsageObserver creation failed, continuing without usage tracking: {e}")
@@ -160,6 +171,9 @@ class CallSession:
             enable_tracing=True,
             enable_turn_tracking=True,
             conversation_id=self.session_id,
+            # IVR hold queues can be 30+ minutes with no bot/user speech activity.
+            # Extend idle timeout to 45 minutes to handle long hold times.
+            idle_timeout_secs=2700,
             additional_span_attributes={
                 "langfuse.session.id": self.session_id,
                 "langfuse.trace.metadata.organization_id": self.organization_id,
