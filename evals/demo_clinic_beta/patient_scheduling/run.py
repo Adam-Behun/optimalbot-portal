@@ -183,7 +183,7 @@ class FlowRunner:
         self.llm_config = llm_config
 
         self.flow = PatientSchedulingFlow(
-            patient_data={"organization_name": "Demo Clinic Beta"},
+            call_data={"organization_name": "Demo Clinic Beta"},
             flow_manager=self.mock_flow_manager,
             main_llm=None,
             context_aggregator=None,

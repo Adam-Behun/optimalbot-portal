@@ -445,7 +445,7 @@ class FlowRunner:
         self.verbose = verbose
 
         self.flow = EligibilityVerificationFlow(
-            patient_data=patient_data,
+            call_data=patient_data,
             session_id=session_id,
             flow_manager=self.mock_flow_manager,
             main_llm=None,
