@@ -87,11 +87,11 @@ Goal: Reach a human representative who can verify coverage details."""
 
     VOICEMAIL_MESSAGE_TEMPLATE = """Hi, this is {provider_agent_first_name}, calling from {facility_name} regarding eligibility verification for a patient. Please call us back at your earliest convenience. Thank you."""
 
-    def __init__(self, patient_data: Dict[str, Any], session_id: str = None, flow_manager: FlowManager = None,
+    def __init__(self, call_data: Dict[str, Any], session_id: str = None, flow_manager: FlowManager = None,
                  main_llm=None, classifier_llm=None, context_aggregator=None, transport=None, pipeline=None,
                  organization_id: str = None, cold_transfer_config: Dict[str, Any] = None):
         super().__init__(
-            patient_data=patient_data,
+            call_data=call_data,
             session_id=session_id,
             flow_manager=flow_manager,
             main_llm=main_llm,
@@ -107,49 +107,49 @@ Goal: Reach a human representative who can verify coverage details."""
         """Return triage configuration for this flow.
 
         Called by PipelineFactory to configure TriageDetector and IVRNavigationProcessor.
-        Uses patient_data directly since flow_manager may not be set yet.
+        Uses call_data directly since flow_manager may not be set yet.
         """
         return {
             "classifier_prompt": self.TRIAGE_CLASSIFIER_PROMPT,
             "ivr_navigation_goal": self.IVR_NAVIGATION_GOAL.format(
                 # Caller/Provider info
-                provider_agent_first_name=self._patient_data.get("provider_agent_first_name", ""),
-                facility_name=self._patient_data.get("facility_name", ""),
-                tax_id=self._patient_data.get("tax_id", ""),
-                provider_name=self._patient_data.get("provider_name", ""),
-                provider_npi=self._patient_data.get("provider_npi", ""),
-                provider_call_back_phone=self._patient_data.get("provider_call_back_phone", ""),
+                provider_agent_first_name=self.call_data.get("provider_agent_first_name", ""),
+                facility_name=self.call_data.get("facility_name", ""),
+                tax_id=self.call_data.get("tax_id", ""),
+                provider_name=self.call_data.get("provider_name", ""),
+                provider_npi=self.call_data.get("provider_npi", ""),
+                provider_call_back_phone=self.call_data.get("provider_call_back_phone", ""),
                 # Member info
-                insurance_member_id=self._patient_data.get("insurance_member_id", ""),
-                patient_name=self._patient_data.get("patient_name", ""),
-                date_of_birth=self._patient_data.get("date_of_birth", ""),
+                insurance_member_id=self.call_data.get("insurance_member_id", ""),
+                patient_name=self.call_data.get("patient_name", ""),
+                date_of_birth=self.call_data.get("date_of_birth", ""),
             ),
             "voicemail_message": self.VOICEMAIL_MESSAGE_TEMPLATE.format(
-                provider_agent_first_name=self._patient_data.get("provider_agent_first_name", "a representative"),
-                facility_name=self._patient_data.get("facility_name", "our facility"),
+                provider_agent_first_name=self.call_data.get("provider_agent_first_name", "a representative"),
+                facility_name=self.call_data.get("facility_name", "our facility"),
             ),
         }
 
     def _init_domain_state(self):
         """Initialize eligibility verification specific state fields."""
         # Insurance identification (3 fields - patient_id, patient_name, date_of_birth handled by base)
-        self.flow_manager.state["insurance_member_id"] = self._patient_data.get("insurance_member_id", "")
-        self.flow_manager.state["insurance_company_name"] = self._patient_data.get("insurance_company_name", "")
-        self.flow_manager.state["insurance_phone"] = self._patient_data.get("insurance_phone", "")
+        self.flow_manager.state["insurance_member_id"] = self.call_data.get("insurance_member_id", "")
+        self.flow_manager.state["insurance_company_name"] = self.call_data.get("insurance_company_name", "")
+        self.flow_manager.state["insurance_phone"] = self.call_data.get("insurance_phone", "")
 
         # Caller/Provider information (7 fields)
-        self.flow_manager.state["provider_agent_first_name"] = self._patient_data.get("provider_agent_first_name", "")
-        self.flow_manager.state["provider_agent_last_initial"] = self._patient_data.get("provider_agent_last_initial", "")
-        self.flow_manager.state["facility_name"] = self._patient_data.get("facility_name", "")
-        self.flow_manager.state["tax_id"] = self._patient_data.get("tax_id", "")
-        self.flow_manager.state["provider_name"] = self._patient_data.get("provider_name", "")
-        self.flow_manager.state["provider_npi"] = self._patient_data.get("provider_npi", "")
-        self.flow_manager.state["provider_call_back_phone"] = self._patient_data.get("provider_call_back_phone", "")
+        self.flow_manager.state["provider_agent_first_name"] = self.call_data.get("provider_agent_first_name", "")
+        self.flow_manager.state["provider_agent_last_initial"] = self.call_data.get("provider_agent_last_initial", "")
+        self.flow_manager.state["facility_name"] = self.call_data.get("facility_name", "")
+        self.flow_manager.state["tax_id"] = self.call_data.get("tax_id", "")
+        self.flow_manager.state["provider_name"] = self.call_data.get("provider_name", "")
+        self.flow_manager.state["provider_npi"] = self.call_data.get("provider_npi", "")
+        self.flow_manager.state["provider_call_back_phone"] = self.call_data.get("provider_call_back_phone", "")
 
         # Service information (3 fields)
-        self.flow_manager.state["cpt_code"] = self._patient_data.get("cpt_code", "")
-        self.flow_manager.state["place_of_service"] = self._patient_data.get("place_of_service", "")
-        self.flow_manager.state["date_of_service"] = self._patient_data.get("date_of_service", "")
+        self.flow_manager.state["cpt_code"] = self.call_data.get("cpt_code", "")
+        self.flow_manager.state["place_of_service"] = self.call_data.get("place_of_service", "")
+        self.flow_manager.state["date_of_service"] = self.call_data.get("date_of_service", "")
 
     def _get_global_instructions(self) -> str:
         state = self.flow_manager.state

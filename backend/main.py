@@ -18,6 +18,7 @@ from backend.api import (
     sms,
     webhooks,
 )
+from backend.costs import router as costs_router
 from backend.dependencies import get_user_id_from_request
 from backend.exceptions import register_exception_handlers
 from backend.lifespan import lifespan
@@ -66,3 +67,4 @@ app.include_router(dialout.router, tags=["Dial-Out"])
 app.include_router(dialin.router, tags=["Dial-In"])
 app.include_router(sms.router, tags=["SMS"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
+app.include_router(costs_router, prefix="/admin", tags=["Admin Costs"])

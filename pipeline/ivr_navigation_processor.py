@@ -75,8 +75,18 @@ NAVIGATION RULES:
 1. For menu options ("Press 1 for..."), respond: <dtmf>NUMBER</dtmf>
 2. For sequences, enter digits separately: <dtmf>1</dtmf><dtmf>2</dtmf>
 3. For verbal responses, respond with natural language text
-4. If NO options are relevant, respond with <ivr>wait</ivr>
-5. If transcription is incomplete, respond with <ivr>wait</ivr>
+4. If unsure, respond with <ivr>wait</ivr> - waiting is always safe
+
+WAIT - Respond with <ivr>wait</ivr> when:
+- NONE of the presented options are relevant to your navigation goal
+- The transcription appears to be cut off mid-sentence
+- You see partial menu options (e.g., "for claims status" without "press X")
+- The transcription seems incomplete or you suspect more options are coming
+- You just pressed a button and hear a menu fragment (system is still announcing)
+- The text doesn't start with a greeting or clear menu structure
+
+IMPORTANT: When in doubt, WAIT. IVR menus often arrive in fragments. A single
+menu item like "for claims status" usually means more options are coming.
 
 COMPLETION - Respond with <ivr>completed</ivr> when:
 - A HUMAN answers: "Hello, this is [Name]", "How can I help you?"
@@ -84,11 +94,14 @@ COMPLETION - Respond with <ivr>completed</ivr> when:
 - You reach the department: "You've reached [target department]"
 - DO NOT mark completed for queue updates like "You are next", "shortly", "please hold"
 
-STUCK - Respond with <ivr>stuck</ivr> when:
+STUCK - Respond with <ivr>stuck</ivr> ONLY when:
 - Same menu repeated 3+ times (loop detected)
-- Wrong department with NO relevant options AND no way back (e.g., pharmacy-only menu, dental-only menu)
-- "Invalid selection", "Please try again" after valid input
-- Dead end: fax-only, website-only, or system error
+- You encounter "Invalid selection" or "Please try again" after valid input
+- The system explicitly says there's no path forward (fax-only, website-only)
+- You've waited through multiple complete menus with NO relevant options
+
+NEVER mark stuck after receiving just one partial fragment. If you're unsure
+whether you're stuck or just waiting for more menu options, choose WAIT.
 
 Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>, or text."""
 

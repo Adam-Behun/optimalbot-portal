@@ -120,36 +120,33 @@ export function AdminCallDetail() {
           </CardHeader>
           <CardContent>
             {data.costs_breakdown && data.costs_breakdown.length > 0 ? (
-              <div className="rounded-md border">
+              <div className="rounded-md border overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Service</TableHead>
                       <TableHead className="text-right">Usage</TableHead>
+                      <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">Calculation</TableHead>
                       <TableHead className="text-right">Cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.costs_breakdown.map((cost, idx) => {
-                      // Format usage based on service type
-                      let usageDisplay = '';
-                      const model = cost.model.toLowerCase();
-                      if (model.includes('tts')) {
-                        usageDisplay = `${cost.input_tokens.toLocaleString()} chars`;
-                      } else if (model.includes('stt') || model.includes('telephony')) {
-                        usageDisplay = `${cost.input_tokens}s`;
-                      } else {
-                        // LLM tokens
-                        usageDisplay = `${cost.input_tokens.toLocaleString()} / ${cost.output_tokens.toLocaleString()} tokens`;
-                      }
-                      return (
-                        <TableRow key={idx}>
-                          <TableCell className="font-mono text-sm">{cost.model}</TableCell>
-                          <TableCell className="text-right text-muted-foreground">{usageDisplay}</TableCell>
-                          <TableCell className="text-right">${cost.cost_usd.toFixed(4)}</TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {data.costs_breakdown.map((cost, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-mono text-sm">{cost.service}</TableCell>
+                        <TableCell className="text-right text-muted-foreground whitespace-nowrap">
+                          {cost.usage}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground whitespace-nowrap">
+                          {cost.rate}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-muted-foreground hidden md:table-cell">
+                          {cost.formula}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">${cost.cost_usd.toFixed(4)}</TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </div>

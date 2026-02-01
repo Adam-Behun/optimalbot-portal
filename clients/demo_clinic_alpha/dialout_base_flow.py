@@ -25,7 +25,7 @@ class DialoutBaseFlow(ABC):
 
     def __init__(
         self,
-        patient_data: Dict[str, Any],
+        call_data: Dict[str, Any],
         session_id: str,
         flow_manager: FlowManager = None,
         main_llm=None,
@@ -45,7 +45,7 @@ class DialoutBaseFlow(ABC):
         self.pipeline = pipeline
         self.organization_id = organization_id
         self.cold_transfer_config = cold_transfer_config or {}
-        self._patient_data = patient_data
+        self.call_data = call_data
         self._state_initialized = False
 
     # ==================== Abstract Methods ====================
@@ -71,10 +71,10 @@ class DialoutBaseFlow(ABC):
         self._init_domain_state()
 
     def _init_common_state(self):
-        """Initialize common fields from patient_data."""
-        self.flow_manager.state["patient_id"] = self._patient_data.get("patient_id")
-        self.flow_manager.state["patient_name"] = self._patient_data.get("patient_name", "")
-        self.flow_manager.state["date_of_birth"] = self._patient_data.get("date_of_birth", "")
+        """Initialize common fields from call_data."""
+        self.flow_manager.state["patient_id"] = self.call_data.get("patient_id")
+        self.flow_manager.state["patient_name"] = self.call_data.get("patient_name", "")
+        self.flow_manager.state["date_of_birth"] = self.call_data.get("date_of_birth", "")
 
     def _init_domain_state(self):
         """Override to initialize workflow-specific state."""

@@ -278,9 +278,10 @@ export interface AdminCallsResponse {
 }
 
 export interface CostBreakdown {
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
+  service: string;
+  usage: string;
+  rate: string;
+  formula: string;
   cost_usd: number;
 }
 
@@ -318,6 +319,19 @@ export interface AdminCallDetail {
 export interface PeriodCost {
   cost_usd: number;
   call_count: number;
+  total_minutes: number;
+}
+
+export interface ComponentCost {
+  component: string;
+  cost_usd: number;
+}
+
+export interface WorkflowCost {
+  workflow: string;
+  cost_usd: number;
+  call_count: number;
+  total_minutes: number;
 }
 
 export interface OrgCost {
@@ -325,13 +339,16 @@ export interface OrgCost {
   organization_name: string;
   cost_usd: number;
   call_count: number;
+  total_minutes: number;
 }
 
 export interface AdminCosts {
   today: PeriodCost;
-  this_week: PeriodCost;
-  this_month: PeriodCost;
-  by_organization?: OrgCost[];
+  wtd: PeriodCost;
+  mtd: PeriodCost;
+  by_component: ComponentCost[];
+  by_workflow: WorkflowCost[];
+  by_organization: OrgCost[];
 }
 
 // GET /admin/dashboard - Admin dashboard metrics
@@ -360,12 +377,28 @@ export const getAdminCallDetail = async (sessionId: string): Promise<AdminCallDe
   return response.data;
 };
 
-// GET /admin/costs - Cost summary
-export const getAdminCosts = async (breakdownByOrg: boolean = false): Promise<AdminCosts> => {
-  const response = await api.get<AdminCosts>('/admin/costs', {
-    params: { breakdown_by_org: breakdownByOrg }
-  });
+// GET /admin/costs - Cost summary with breakdowns
+export const getAdminCosts = async (): Promise<AdminCosts> => {
+  const response = await api.get<AdminCosts>('/admin/costs');
   return response.data;
+};
+
+// GET /admin/rates - Get current rates for transparency
+export const getAdminRates = async (): Promise<Record<string, unknown>> => {
+  const response = await api.get<Record<string, unknown>>('/admin/rates');
+  return response.data;
+};
+
+// GET /admin/export/costs - Export costs to Excel (returns blob and filename)
+export const exportCosts = async (): Promise<{ blob: Blob; filename: string }> => {
+  const response = await api.get('/admin/export/costs', {
+    responseType: 'blob',
+  });
+
+  const filename =
+    response.headers['content-disposition']?.split('filename=')[1] || 'optimalbot_financials.xlsx';
+
+  return { blob: new Blob([response.data]), filename };
 };
 
 export default api;

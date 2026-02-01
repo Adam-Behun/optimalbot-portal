@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
@@ -10,6 +10,7 @@ from loguru import logger
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
 LANGFUSE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID", "")
 
+from backend.costs.service import CostService, build_org_map, get_cost_service
 from backend.dependencies import (
     get_organization_db,
     get_session_db,
@@ -19,12 +20,6 @@ from backend.models.organization import AsyncOrganizationRecord
 from backend.sessions import AsyncSessionRecord
 
 router = APIRouter()
-
-
-async def _build_org_map(org_db: AsyncOrganizationRecord) -> dict[str, str]:
-    """Build org_id -> org_name mapping for display."""
-    orgs = await org_db.list_all()
-    return {str(org["_id"]): org.get("name", "Unknown") for org in orgs}
 
 
 @router.get("/dashboard")
@@ -62,7 +57,7 @@ async def get_admin_dashboard(
         ).sort("created_at", -1).limit(10)
         recent_failures = await failures_cursor.to_list(length=10)
 
-        org_map = await _build_org_map(org_db)
+        org_map = await build_org_map(org_db)
 
         failures_with_org = []
         for f in recent_failures:
@@ -130,7 +125,7 @@ async def get_admin_calls(
         cursor = session_db.sessions.find(query).sort("created_at", -1).skip(skip).limit(page_size)
         sessions = await cursor.to_list(length=page_size)
 
-        org_map = await _build_org_map(org_db)
+        org_map = await build_org_map(org_db)
 
         calls = []
         for s in sessions:
@@ -167,69 +162,30 @@ async def get_admin_call_detail(
     current_user: dict = Depends(require_super_admin),
     session_db: AsyncSessionRecord = Depends(get_session_db),
     org_db: AsyncOrganizationRecord = Depends(get_organization_db),
+    cost_service: CostService = Depends(get_cost_service),
 ):
-    """Get detailed call info including costs, transcript, and Langfuse link."""
+    """Get detailed call info including costs with transparency, transcript, and Langfuse link."""
     try:
         # Find session without org filter (super admin can see all)
         session = await session_db.sessions.find_one({"session_id": session_id})
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        org_map = await _build_org_map(org_db)
+        org_map = await build_org_map(org_db)
         org_id = str(session.get("organization_id", ""))
 
-        # Extract cost breakdown from usage field if available
-        costs_breakdown = []
-        usage = session.get("usage", {})
-        costs = session.get("costs", {})
-
-        # LLM breakdown (may have per-model details)
-        llm_usage = usage.get("llm", {})
-        llm_models = llm_usage.get("models", {})
-        if llm_models:
-            # Per-model breakdown available
-            for model_name, model_data in llm_models.items():
-                costs_breakdown.append({
-                    "model": model_name,
-                    "input_tokens": model_data.get("prompt_tokens", 0),
-                    "output_tokens": model_data.get("completion_tokens", 0),
-                    "cost_usd": model_data.get("cost_usd", 0),
-                })
-        else:
-            # Fallback to aggregate LLM totals
-            costs_breakdown.append({
-                "model": "llm",
-                "input_tokens": llm_usage.get("prompt_tokens", 0),
-                "output_tokens": llm_usage.get("completion_tokens", 0),
-                "cost_usd": costs.get("llm_usd", 0),
-            })
-
-        # TTS breakdown
-        tts_usage = usage.get("tts", {})
-        costs_breakdown.append({
-            "model": f"tts ({tts_usage.get('provider', 'unknown')})",
-            "input_tokens": tts_usage.get("characters", 0),
-            "output_tokens": 0,
-            "cost_usd": costs.get("tts_usd", 0),
-        })
-
-        # STT breakdown
-        stt_usage = usage.get("stt", {})
-        costs_breakdown.append({
-            "model": f"stt ({stt_usage.get('provider', 'unknown')})",
-            "input_tokens": int(stt_usage.get("seconds", 0)),
-            "output_tokens": 0,
-            "cost_usd": costs.get("stt_usd", 0),
-        })
-
-        # Telephony breakdown
-        telephony_usage = usage.get("telephony", {})
-        costs_breakdown.append({
-            "model": f"telephony ({telephony_usage.get('provider', 'unknown')})",
-            "input_tokens": int(telephony_usage.get("seconds", 0)),
-            "output_tokens": 0,
-            "cost_usd": costs.get("telephony_usd", 0),
-        })
+        # Build transparent cost breakdown using CostService
+        breakdown_items = cost_service.build_session_cost_audit(session)
+        costs_breakdown = [
+            {
+                "service": item.service,
+                "usage": item.usage,
+                "rate": item.rate,
+                "formula": item.formula,
+                "cost_usd": item.cost_usd,
+            }
+            for item in breakdown_items
+        ]
 
         # Build Langfuse URL (links to session view which shows all traces for this call)
         if LANGFUSE_PROJECT_ID:
@@ -263,82 +219,4 @@ async def get_admin_call_detail(
 
     except Exception:
         logger.exception(f"Error fetching admin call detail for {session_id}")
-        raise
-
-
-@router.get("/costs")
-async def get_admin_costs(
-    breakdown_by_org: bool = Query(False),
-    current_user: dict = Depends(require_super_admin),
-    session_db: AsyncSessionRecord = Depends(get_session_db),
-    org_db: AsyncOrganizationRecord = Depends(get_organization_db),
-):
-    """Get cost summary for today, this week, and this month."""
-    try:
-        now = datetime.now(timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_start = today_start - timedelta(days=today_start.weekday())
-        month_start = today_start.replace(day=1)
-
-        async def get_period_costs(start_date: datetime) -> tuple[float, int]:
-            pipeline = [
-                {"$match": {"created_at": {"$gte": start_date}}},
-                {"$group": {
-                    "_id": None,
-                    "total_cost": {"$sum": {"$ifNull": ["$total_cost_usd", 0]}},
-                    "call_count": {"$sum": 1},
-                }}
-            ]
-            result = await session_db.sessions.aggregate(pipeline).to_list(length=1)
-            if result:
-                return result[0].get("total_cost", 0), result[0].get("call_count", 0)
-            return 0, 0
-
-        today_cost, today_calls = await get_period_costs(today_start)
-        week_cost, week_calls = await get_period_costs(week_start)
-        month_cost, month_calls = await get_period_costs(month_start)
-
-        response = {
-            "today": {
-                "cost_usd": round(today_cost, 4),
-                "call_count": today_calls,
-            },
-            "this_week": {
-                "cost_usd": round(week_cost, 4),
-                "call_count": week_calls,
-            },
-            "this_month": {
-                "cost_usd": round(month_cost, 4),
-                "call_count": month_calls,
-            },
-        }
-
-        if breakdown_by_org:
-            pipeline = [
-                {"$match": {"created_at": {"$gte": month_start}}},
-                {"$group": {
-                    "_id": "$organization_id",
-                    "total_cost": {"$sum": {"$ifNull": ["$total_cost_usd", 0]}},
-                    "call_count": {"$sum": 1},
-                }},
-                {"$sort": {"total_cost": -1}}
-            ]
-            org_results = await session_db.sessions.aggregate(pipeline).to_list(length=None)
-
-            org_map = await _build_org_map(org_db)
-
-            response["by_organization"] = [
-                {
-                    "organization_id": str(r["_id"]) if r["_id"] else "unknown",
-                    "organization_name": org_map.get(str(r["_id"]), "Unknown") if r["_id"] else "Unknown",
-                    "cost_usd": round(r["total_cost"], 4),
-                    "call_count": r["call_count"],
-                }
-                for r in org_results
-            ]
-
-        return response
-
-    except Exception:
-        logger.exception("Error fetching admin costs")
         raise
