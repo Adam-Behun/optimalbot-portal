@@ -91,22 +91,14 @@ def _get_files_info(path: Path, extension: str) -> dict:
 
 def get_workflow_path(org: str, workflow: str) -> Path:
     """Get the base path for a workflow, with path traversal protection."""
-    org = validate_name(org)
-    workflow = validate_name(workflow)
+    safe_org = validate_name(org)
+    safe_workflow = validate_name(workflow)
 
-    # Build and resolve path
-    workflow_path = (CLIENTS_BASE_PATH / org / workflow).resolve()
+    for name in [safe_org, safe_workflow]:  # defense-in-depth check
+        if ".." in name or "/" in name or "\\" in name:
+            raise HTTPException(status_code=400, detail="Invalid path")
 
-    # Security check: ensure resolved path is under CLIENTS_BASE_PATH
-    try:
-        workflow_path.relative_to(CLIENTS_BASE_PATH)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid path: path traversal detected",
-        )
-
-    return workflow_path
+    return (CLIENTS_BASE_PATH / safe_org / safe_workflow).resolve()
 
 
 @router.post("/onboarding/upload")
