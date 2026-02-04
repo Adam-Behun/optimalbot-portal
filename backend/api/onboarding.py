@@ -39,15 +39,14 @@ def convert_objectid(doc: dict) -> dict:
     return result
 
 
-def validate_name(name: str) -> str:
-    """Validate and sanitize org/workflow name to prevent path traversal."""
-    # Only allow alphanumeric, underscores, and hyphens
-    if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+def sanitize_path_component(name: str) -> str:
+    """Sanitize a path component by extracting only safe characters."""
+    if not name or not re.match(r"^[a-zA-Z0-9_-]+$", name):
         raise HTTPException(
             status_code=400,
             detail=f"Invalid name '{name}'. Only alphanumeric, underscores, and hyphens allowed.",
         )
-    return name.lower()
+    return "".join(c for c in name.lower() if c.isalnum() or c in "_-")
 
 
 def validate_conversation_id(conversation_id: str) -> str:
@@ -57,48 +56,35 @@ def validate_conversation_id(conversation_id: str) -> str:
     return conversation_id
 
 
-def safe_path(path: Path) -> Path:
-    """
-    Validate a path is under CLIENTS_BASE_PATH and return resolved path.
+def build_safe_path(*components: str) -> Path:
+    """Build a path under CLIENTS_BASE_PATH using only sanitized components."""
+    clean_parts = []
+    for comp in components:
+        clean = "".join(c for c in comp if c.isalnum() or c in "_-.")
+        if not clean or clean.startswith("."):
+            raise HTTPException(status_code=400, detail="Invalid path component")
+        clean_parts.append(clean)
 
-    This function serves as a security gate for all file operations.
-    """
-    resolved = path.resolve()
-    try:
-        resolved.relative_to(CLIENTS_BASE_PATH)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid path: access denied",
-        )
-    return resolved
+    result = CLIENTS_BASE_PATH.joinpath(*clean_parts).resolve()
+    if not str(result).startswith(str(CLIENTS_BASE_PATH)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return result
 
 
-def _get_files_info(path: Path, extension: str) -> dict:
+def _get_files_info(base_path: Path, extension: str) -> dict:
     """Get count and list of files with given extension."""
-    # Security: verify path is under CLIENTS_BASE_PATH
-    resolved = path.resolve()
-    try:
-        resolved.relative_to(CLIENTS_BASE_PATH)
-    except ValueError:
+    if not base_path.exists():
         return {"count": 0, "files": []}
-
-    if not resolved.exists():
-        return {"count": 0, "files": []}
-    files = sorted([f.name for f in resolved.glob(f"*.{extension}")])
+    clean_ext = "".join(c for c in extension if c.isalnum())
+    files = sorted([f.name for f in base_path.glob(f"*.{clean_ext}")])
     return {"count": len(files), "files": files}
 
 
 def get_workflow_path(org: str, workflow: str) -> Path:
     """Get the base path for a workflow, with path traversal protection."""
-    safe_org = validate_name(org)
-    safe_workflow = validate_name(workflow)
-
-    for name in [safe_org, safe_workflow]:  # defense-in-depth check
-        if ".." in name or "/" in name or "\\" in name:
-            raise HTTPException(status_code=400, detail="Invalid path")
-
-    return (CLIENTS_BASE_PATH / safe_org / safe_workflow).resolve()
+    safe_org = sanitize_path_component(org)
+    safe_workflow = sanitize_path_component(workflow)
+    return build_safe_path(safe_org, safe_workflow)
 
 
 @router.post("/onboarding/upload")
@@ -116,12 +102,12 @@ async def upload_recordings(
     - clients/{org}/{workflow}/transcripts/
     - clients/{org}/{workflow}/sample_conversations/
     """
-    workflow_path = get_workflow_path(org, workflow)
+    safe_org = sanitize_path_component(org)
+    safe_workflow = sanitize_path_component(workflow)
 
-    # Create directory structure with path validation
-    recordings_path = safe_path(workflow_path / "recordings")
-    transcripts_path = safe_path(workflow_path / "transcripts")
-    sample_convos_path = safe_path(workflow_path / "sample_conversations")
+    recordings_path = build_safe_path(safe_org, safe_workflow, "recordings")
+    transcripts_path = build_safe_path(safe_org, safe_workflow, "transcripts")
+    sample_convos_path = build_safe_path(safe_org, safe_workflow, "sample_conversations")
 
     recordings_path.mkdir(parents=True, exist_ok=True)
     transcripts_path.mkdir(parents=True, exist_ok=True)
@@ -132,33 +118,20 @@ async def upload_recordings(
         if not file.filename:
             continue
 
-        # Sanitize filename to prevent path traversal
-        safe_filename = os.path.basename(file.filename)
-        if not safe_filename:
-            continue
+        filename = os.path.basename(file.filename)
+        if not filename or not filename.lower().endswith(".mp3"):
+            raise HTTPException(status_code=400, detail=f"Invalid file: '{filename}'")
 
-        # Validate file extension
-        if not safe_filename.lower().endswith(".mp3"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid file type for '{safe_filename}'. Only MP3 files allowed.",
-            )
-
-        # Read file with size limit check
         content = await file.read(MAX_FILE_SIZE_BYTES + 1)
         if len(content) > MAX_FILE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File '{safe_filename}' exceeds 500MB limit.",
-            )
+            raise HTTPException(status_code=413, detail=f"File '{filename}' exceeds 500MB")
 
-        # Save file with path validation
-        file_path = safe_path(recordings_path / safe_filename)
+        file_path = build_safe_path(safe_org, safe_workflow, "recordings", filename)
         with open(file_path, "wb") as f:
             f.write(content)
 
-        uploaded_files.append(safe_filename)
-        logger.info(f"Uploaded recording: {safe_filename}")
+        uploaded_files.append(filename)
+        logger.info(f"Uploaded recording: {filename}")
 
     return {
         "status": "success",
@@ -181,31 +154,25 @@ async def get_onboarding_status(
 
     Returns counts of files in each stage and conversation stats from MongoDB.
     """
-    workflow_path = get_workflow_path(org, workflow)
-    validated_path = safe_path(workflow_path)
+    safe_org = sanitize_path_component(org)
+    safe_workflow = sanitize_path_component(workflow)
+    workflow_path = build_safe_path(safe_org, safe_workflow)
 
-    if not validated_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Workflow not found",
-        )
+    if not workflow_path.exists():
+        raise HTTPException(status_code=404, detail="Workflow not found")
 
-    recordings_path = safe_path(workflow_path / "recordings")
-    transcripts_path = safe_path(workflow_path / "transcripts")
+    recordings_path = build_safe_path(safe_org, safe_workflow, "recordings")
+    transcripts_path = build_safe_path(safe_org, safe_workflow, "transcripts")
 
     recordings = _get_files_info(recordings_path, "mp3")
     transcripts = _get_files_info(transcripts_path, "json")
 
-    # Get conversation counts from MongoDB
-    org_validated = validate_name(org)
-    workflow_validated = validate_name(workflow)
-    conversations = await conv_db.find_by_org_workflow(org_validated, workflow_validated)
+    conversations = await conv_db.find_by_org_workflow(safe_org, safe_workflow)
     conv_count = len(conversations)
     approved_count = sum(1 for c in conversations if c.get("status") == "approved")
 
-    # Check for flow definition files
-    has_flow_md = safe_path(workflow_path / "flow_definition.md").exists()
-    has_flow_py = safe_path(workflow_path / "flow_definition.py").exists()
+    has_flow_md = build_safe_path(safe_org, safe_workflow, "flow_definition.md").exists()
+    has_flow_py = build_safe_path(safe_org, safe_workflow, "flow_definition.py").exists()
 
     return {
         "org": org,
@@ -247,23 +214,17 @@ async def transcribe_recordings(
     Transcribes all MP3 files in the recordings folder and saves
     JSON transcripts to the transcripts folder.
     """
-    workflow_path = get_workflow_path(org, workflow)
-    recordings_path = safe_path(workflow_path / "recordings")
-    transcripts_path = safe_path(workflow_path / "transcripts")
+    safe_org = sanitize_path_component(org)
+    safe_workflow = sanitize_path_component(workflow)
+    recordings_path = build_safe_path(safe_org, safe_workflow, "recordings")
+    transcripts_path = build_safe_path(safe_org, safe_workflow, "transcripts")
 
     if not recordings_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Recordings folder not found",
-        )
+        raise HTTPException(status_code=404, detail="Recordings folder not found")
 
-    # Get all MP3 files
     mp3_files = list(recordings_path.glob("*.mp3"))
     if not mp3_files:
-        raise HTTPException(
-            status_code=400,
-            detail="No MP3 files found in recordings folder",
-        )
+        raise HTTPException(status_code=400, detail="No MP3 files found")
 
     logger.info(f"Starting transcription of {len(mp3_files)} files")
 
@@ -300,10 +261,10 @@ async def list_conversations(
     """
     List all conversations for an organization/workflow.
     """
-    org = validate_name(org)
-    workflow = validate_name(workflow)
+    safe_org = sanitize_path_component(org)
+    safe_workflow = sanitize_path_component(workflow)
 
-    conversations = await conv_db.find_by_org_workflow(org, workflow)
+    conversations = await conv_db.find_by_org_workflow(safe_org, safe_workflow)
     return {"conversations": [convert_objectid(c) for c in conversations]}
 
 
@@ -335,13 +296,12 @@ async def create_conversation(
     Create a new conversation document.
     Used by the cleanup agent after processing transcripts.
     """
-    # Validate org/workflow names
-    org = validate_name(data.organization_id)
-    workflow = validate_name(data.workflow)
+    safe_org = sanitize_path_component(data.organization_id)
+    safe_workflow = sanitize_path_component(data.workflow)
 
     conversation_data = {
-        "organization_id": org,
-        "workflow": workflow,
+        "organization_id": safe_org,
+        "workflow": safe_workflow,
         "source_filename": data.source_filename,
         "assemblyai_id": data.assemblyai_id,
         "roles": data.roles,
