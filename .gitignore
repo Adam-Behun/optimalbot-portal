@@ -76,6 +76,11 @@ examples/
 pipecat-examples/
 evals/**/results/
 
+# Client data (recordings, transcripts)
+clients/**/recordings/
+clients/**/cleaned_conversations/
+clients/**/raw_transcripts/
+
 # Temp files
 pyproject.toml.backup
 pcc-deploy.toml.backup
