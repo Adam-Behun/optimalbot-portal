@@ -57,19 +57,56 @@ def validate_conversation_id(conversation_id: str) -> str:
     return conversation_id
 
 
+def safe_path(path: Path) -> Path:
+    """
+    Validate a path is under CLIENTS_BASE_PATH and return resolved path.
+
+    This function serves as a security gate for all file operations.
+    """
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(CLIENTS_BASE_PATH)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid path: access denied",
+        )
+    return resolved
+
+
 def _get_files_info(path: Path, extension: str) -> dict:
     """Get count and list of files with given extension."""
-    if not path.exists():
+    # Security: verify path is under CLIENTS_BASE_PATH
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(CLIENTS_BASE_PATH)
+    except ValueError:
         return {"count": 0, "files": []}
-    files = sorted([f.name for f in path.glob(f"*.{extension}")])
+
+    if not resolved.exists():
+        return {"count": 0, "files": []}
+    files = sorted([f.name for f in resolved.glob(f"*.{extension}")])
     return {"count": len(files), "files": files}
 
 
 def get_workflow_path(org: str, workflow: str) -> Path:
-    """Get the base path for a workflow."""
+    """Get the base path for a workflow, with path traversal protection."""
     org = validate_name(org)
     workflow = validate_name(workflow)
-    return CLIENTS_BASE_PATH / org / workflow
+
+    # Build and resolve path
+    workflow_path = (CLIENTS_BASE_PATH / org / workflow).resolve()
+
+    # Security check: ensure resolved path is under CLIENTS_BASE_PATH
+    try:
+        workflow_path.relative_to(CLIENTS_BASE_PATH)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid path: path traversal detected",
+        )
+
+    return workflow_path
 
 
 @router.post("/onboarding/upload")
@@ -89,10 +126,10 @@ async def upload_recordings(
     """
     workflow_path = get_workflow_path(org, workflow)
 
-    # Create directory structure
-    recordings_path = workflow_path / "recordings"
-    transcripts_path = workflow_path / "transcripts"
-    sample_convos_path = workflow_path / "sample_conversations"
+    # Create directory structure with path validation
+    recordings_path = safe_path(workflow_path / "recordings")
+    transcripts_path = safe_path(workflow_path / "transcripts")
+    sample_convos_path = safe_path(workflow_path / "sample_conversations")
 
     recordings_path.mkdir(parents=True, exist_ok=True)
     transcripts_path.mkdir(parents=True, exist_ok=True)
@@ -123,8 +160,8 @@ async def upload_recordings(
                 detail=f"File '{safe_filename}' exceeds 500MB limit.",
             )
 
-        # Save file
-        file_path = recordings_path / safe_filename
+        # Save file with path validation
+        file_path = safe_path(recordings_path / safe_filename)
         with open(file_path, "wb") as f:
             f.write(content)
 
@@ -153,15 +190,16 @@ async def get_onboarding_status(
     Returns counts of files in each stage and conversation stats from MongoDB.
     """
     workflow_path = get_workflow_path(org, workflow)
+    validated_path = safe_path(workflow_path)
 
-    if not workflow_path.exists():
+    if not validated_path.exists():
         raise HTTPException(
             status_code=404,
             detail="Workflow not found",
         )
 
-    recordings_path = workflow_path / "recordings"
-    transcripts_path = workflow_path / "transcripts"
+    recordings_path = safe_path(workflow_path / "recordings")
+    transcripts_path = safe_path(workflow_path / "transcripts")
 
     recordings = _get_files_info(recordings_path, "mp3")
     transcripts = _get_files_info(transcripts_path, "json")
@@ -174,8 +212,8 @@ async def get_onboarding_status(
     approved_count = sum(1 for c in conversations if c.get("status") == "approved")
 
     # Check for flow definition files
-    has_flow_md = (workflow_path / "flow_definition.md").exists()
-    has_flow_py = (workflow_path / "flow_definition.py").exists()
+    has_flow_md = safe_path(workflow_path / "flow_definition.md").exists()
+    has_flow_py = safe_path(workflow_path / "flow_definition.py").exists()
 
     return {
         "org": org,
@@ -218,8 +256,8 @@ async def transcribe_recordings(
     JSON transcripts to the transcripts folder.
     """
     workflow_path = get_workflow_path(org, workflow)
-    recordings_path = workflow_path / "recordings"
-    transcripts_path = workflow_path / "transcripts"
+    recordings_path = safe_path(workflow_path / "recordings")
+    transcripts_path = safe_path(workflow_path / "transcripts")
 
     if not recordings_path.exists():
         raise HTTPException(
