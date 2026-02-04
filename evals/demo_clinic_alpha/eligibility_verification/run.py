@@ -15,8 +15,11 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from statistics import median
+from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
@@ -31,6 +34,107 @@ from clients.demo_clinic_alpha.eligibility_verification.flow_definition import (
 from evals.context import EvalContextManager
 from evals.db import ORG_ID_STR
 from evals.fixtures import TestDB
+
+
+@dataclass
+class LatencyMetrics:
+    llm_latencies_ms: list[float] = field(default_factory=list)
+    turn_latencies_ms: list[float] = field(default_factory=list)
+    conversation_start: float = 0.0
+    conversation_end: float = 0.0
+
+    @property
+    def total_duration_ms(self) -> float:
+        return (self.conversation_end - self.conversation_start) * 1000 if self.conversation_start else 0.0
+
+    @property
+    def llm_median_ms(self) -> float:
+        return median(self.llm_latencies_ms) if self.llm_latencies_ms else 0.0
+
+    @property
+    def llm_p95_ms(self) -> float:
+        if not self.llm_latencies_ms:
+            return 0.0
+        sorted_lat = sorted(self.llm_latencies_ms)
+        return sorted_lat[min(int(len(sorted_lat) * 0.95), len(sorted_lat) - 1)]
+
+    @property
+    def llm_max_ms(self) -> float:
+        return max(self.llm_latencies_ms) if self.llm_latencies_ms else 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "total_duration_ms": round(self.total_duration_ms, 2),
+            "llm_calls": {
+                "count": len(self.llm_latencies_ms),
+                "median_ms": round(self.llm_median_ms, 2),
+                "p95_ms": round(self.llm_p95_ms, 2),
+                "max_ms": round(self.llm_max_ms, 2),
+            },
+            "turns": {
+                "count": len(self.turn_latencies_ms),
+                "median_ms": round(median(self.turn_latencies_ms), 2) if self.turn_latencies_ms else 0.0,
+            },
+        }
+
+
+# Cached pricing from variable_costs.yaml
+_LLM_PRICING: dict | None = None
+
+
+def _get_llm_pricing() -> dict:
+    """Get cached LLM pricing from variable_costs.yaml."""
+    global _LLM_PRICING
+    if _LLM_PRICING is None:
+        costs_path = Path(__file__).parent.parent.parent.parent / "costs/variable_costs.yaml"
+        with open(costs_path) as f:
+            costs = yaml.safe_load(f)
+        _LLM_PRICING = costs.get("llm", {}).get("openai", {})
+    return _LLM_PRICING
+
+
+def _get_model_rates(model: str) -> tuple[float, float]:
+    """Get (input_rate, output_rate) per token for a model."""
+    pricing = _get_llm_pricing()
+    model_pricing = pricing.get(model)
+    if not model_pricing:
+        raise ValueError(f"Model '{model}' not found in costs/variable_costs.yaml")
+    return (
+        model_pricing["input_per_1m_tokens"] / 1_000_000,
+        model_pricing["output_per_1m_tokens"] / 1_000_000,
+    )
+
+
+@dataclass
+class TokenUsage:
+    main_model: str  # From services.yaml llm.model
+    simulator_model: str  # Hardcoded in get_insurance_response
+    main_llm_prompt: int = 0
+    main_llm_completion: int = 0
+    simulator_prompt: int = 0
+    simulator_completion: int = 0
+
+    @property
+    def total_cost(self) -> float:
+        main_in, main_out = _get_model_rates(self.main_model)
+        sim_in, sim_out = _get_model_rates(self.simulator_model)
+        return (self.main_llm_prompt * main_in +
+                self.main_llm_completion * main_out +
+                self.simulator_prompt * sim_in +
+                self.simulator_completion * sim_out)
+
+    def to_dict(self) -> dict:
+        return {
+            "main_llm": {"model": self.main_model, "prompt_tokens": self.main_llm_prompt, "completion_tokens": self.main_llm_completion},
+            "simulator": {"model": self.simulator_model, "prompt_tokens": self.simulator_prompt, "completion_tokens": self.simulator_completion},
+            "total_tokens": self.main_llm_prompt + self.main_llm_completion + self.simulator_prompt + self.simulator_completion,
+            "total_cost_usd": round(self.total_cost, 6),
+        }
+
+
+# Simulator model for insurance rep responses (eval-specific, not in services.yaml)
+SIMULATOR_MODEL = "gpt-4o-mini"
+
 
 # === LANGFUSE CLIENT ===
 langfuse = Langfuse()
@@ -94,18 +198,18 @@ def _values_match(expected, actual) -> bool:
     return False
 
 
-def grade_data_accuracy(conv_text: str, final_state: dict, calls_text: str, expected_data: dict) -> dict:
+def grade_data_accuracy(final_state: dict, expected_data: dict) -> dict:
     if not expected_data:
         return {"pass": True, "reason": "PASS: No expected data defined"}
 
     failures = []
     matches = []
-    for field, expected in expected_data.items():
-        actual = final_state.get(field)
+    for field_name, expected in expected_data.items():
+        actual = final_state.get(field_name)
         if _values_match(expected, actual):
-            matches.append(field)
+            matches.append(field_name)
         else:
-            failures.append(f"{field}: expected '{expected}', got '{actual}'")
+            failures.append(f"{field_name}: expected '{expected}', got '{actual}'")
 
     if failures:
         return {
@@ -218,7 +322,6 @@ def grade_forbidden_phrases(conversation: list[dict], forbidden_phrases: list[st
 
 def grade_function_calls(
     function_calls: list[dict],
-    final_state: dict,
     expected_data: dict = None,
     expected_functions: list[str] = None,
     forbidden_functions: list[str] = None,
@@ -310,6 +413,42 @@ def grade_function_calls(
     return {"pass": True, "reason": f"PASS: {len(checks)} function checks passed"}
 
 
+def grade_golden_response(bot_response: str, expected_info: str) -> dict:
+    """Grade whether a bot response communicates the expected information."""
+    prompt = f"""Does this bot response communicate the expected information?
+
+BOT RESPONSE: "{bot_response}"
+EXPECTED INFO: "{expected_info}"
+
+Reply: PASS: <reason> or FAIL: <what's missing>"""
+    result = _call_grader(prompt)
+    return {"pass": result.upper().startswith("PASS"), "reason": result}
+
+
+def grade_all_golden_responses(conversation: list[dict], golden_text: list[dict]) -> dict:
+    """Grade all golden response expectations against the conversation."""
+    if not golden_text:
+        return {"pass": True, "reason": "No golden responses defined", "checks": []}
+
+    checks = []
+    for golden in golden_text:
+        turn = golden.get("turn")
+        expected = golden.get("info")
+        bot_msgs = [m for m in conversation if m.get("turn") == turn and m.get("role") == "assistant"]
+        if not bot_msgs:
+            checks.append({"turn": turn, "pass": False, "reason": "No bot response at turn"})
+            continue
+        result = grade_golden_response(bot_msgs[0].get("content", ""), expected)
+        checks.append({"turn": turn, **result})
+
+    failures = [c for c in checks if not c["pass"]]
+    return {
+        "pass": len(failures) == 0,
+        "reason": "All golden checks passed" if not failures else f"Failed: {failures[0]['reason']}",
+        "checks": checks,
+    }
+
+
 def grade_scenario(
     conversation: list[dict],
     function_calls: list[dict],
@@ -321,23 +460,25 @@ def grade_scenario(
     expected_functions: list[str] = None,
     forbidden_functions: list[str] = None,
     forbidden_phrases: list[str] = None,
+    golden_text: list[dict] = None,
 ) -> dict:
     conv_text = _format_conversation(conversation)
     final_state = final_state or {}
 
-    data_accuracy = grade_data_accuracy(conv_text, final_state, "", expected_data or {})
+    data_accuracy = grade_data_accuracy(final_state, expected_data or {})
     # Skip quality check for transfer scenarios (conversation doesn't end normally)
     if expected_node in ("transfer_pending", "transfer_initiated", "transfer_failed"):
         quality = {"pass": True, "reason": "PASS: Skipped for transfer scenario"}
     else:
         quality = grade_conversation_quality(conv_text)
     functions = grade_function_calls(
-        function_calls, final_state, expected_data,
+        function_calls, expected_data,
         expected_functions, forbidden_functions,
     )
     node_reached = grade_node_reached(final_node, expected_node)
     state_check = grade_captured_state(final_state, expected_db_state or {})
     phrases_check = grade_forbidden_phrases(conversation, forbidden_phrases or [])
+    golden_check = grade_all_golden_responses(conversation, golden_text or [])
 
     all_passed = all([
         data_accuracy["pass"],
@@ -346,6 +487,7 @@ def grade_scenario(
         node_reached["pass"],
         state_check["pass"],
         phrases_check["pass"],
+        golden_check["pass"],
     ])
 
     failures = []
@@ -361,6 +503,8 @@ def grade_scenario(
         failures.append(f"state: {state_check['reason']}")
     if not phrases_check["pass"]:
         failures.append(f"phrases: {phrases_check['reason']}")
+    if not golden_check["pass"]:
+        failures.append(f"golden: {golden_check['reason']}")
 
     reason = "PASS: All checks passed" if all_passed else "FAIL: " + "; ".join(failures)
 
@@ -374,6 +518,7 @@ def grade_scenario(
             "node_reached": node_reached,
             "captured_state": state_check,
             "forbidden_phrases": phrases_check,
+            "golden_responses": golden_check,
         }
     }
 
@@ -436,7 +581,6 @@ class FlowRunner:
         session_id: str,
         organization_id: str,
         verbose: bool = False,
-        entry_node: str = "greeting",
     ):
         self.mock_flow_manager = MockFlowManager()
         self.mock_pipeline = MockPipeline()
@@ -467,6 +611,11 @@ class FlowRunner:
         self.function_calls = []  # Track all function calls
         self.done = False
         self.end_call_invoked = False  # Track if end_call was called
+        self.latency_metrics = LatencyMetrics()
+        self.token_usage = TokenUsage(
+            main_model=llm_config["model"],
+            simulator_model=SIMULATOR_MODEL,
+        )
 
     def get_tools(self) -> list[dict]:
         functions = self.current_node.get("functions") or []
@@ -490,6 +639,7 @@ class FlowRunner:
     async def _call_llm(self, messages: list[dict], tools: list[dict] | None, node_name: str):
         """Make LLM call - decorated for Langfuse tracing."""
         client = AsyncOpenAI()
+        start_time = perf_counter()
         response = await client.chat.completions.create(
             model=self.llm_config["model"],
             messages=messages,
@@ -498,6 +648,12 @@ class FlowRunner:
             temperature=self.llm_config["temperature"],
             max_tokens=self.llm_config["max_tokens"],
         )
+        # Track latency
+        self.latency_metrics.llm_latencies_ms.append((perf_counter() - start_time) * 1000)
+        # Track tokens
+        if response.usage:
+            self.token_usage.main_llm_prompt += response.usage.prompt_tokens
+            self.token_usage.main_llm_completion += response.usage.completion_tokens
         return response
 
     @observe(as_type="tool")
@@ -667,7 +823,7 @@ class FlowRunner:
 
 
 @observe(as_type="generation", name="insurance_simulator")
-async def get_insurance_response(history: list[dict], insurance_rep: dict, persona: str) -> str:
+async def get_insurance_response(history: list[dict], insurance_rep: dict, persona: str) -> tuple[str, dict]:
     system_prompt = f"""You are an insurance representative.
 
 {persona}
@@ -692,13 +848,17 @@ Stay in character. Be natural and conversational."""
 
     client = AsyncOpenAI()
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=SIMULATOR_MODEL,
         messages=messages,
         temperature=0.7,
         max_tokens=150,
     )
 
-    return response.choices[0].message.content
+    usage = {
+        "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
+        "completion_tokens": getattr(response.usage, "completion_tokens", 0),
+    } if response.usage else {"prompt_tokens": 0, "completion_tokens": 0}
+    return response.choices[0].message.content, usage
 
 
 @observe(name="eligibility_verification_eval")
@@ -721,6 +881,9 @@ async def run_simulation(
         organization_id=ORG_ID_STR,
         verbose=verbose,
     )
+
+    # Start conversation timing
+    runner.latency_metrics.conversation_start = perf_counter()
 
     # Check for pre_actions (e.g., tts_say greeting)
     pre_actions = runner.current_node.get("pre_actions") or []
@@ -746,13 +909,17 @@ async def run_simulation(
     turn = 0
     while not runner.done and turn < 20:
         turn += 1
+        turn_start = perf_counter()
 
         # Insurance rep responds
-        insurance_msg = await get_insurance_response(
+        insurance_msg, sim_usage = await get_insurance_response(
             [{"role": c["role"], "content": c["content"]} for c in conversation],
             insurance_rep,
             persona
         )
+        runner.token_usage.simulator_prompt += sim_usage["prompt_tokens"]
+        runner.token_usage.simulator_completion += sim_usage["completion_tokens"]
+
         print(f"INSURANCE: {insurance_msg}\n")
         conversation.append({"role": "user", "content": insurance_msg, "turn": turn})
 
@@ -772,6 +939,12 @@ async def run_simulation(
         if inner_iterations >= MAX_INNER and not runner.done:
             print("    [WARN] Inner loop max iterations reached without bot speaking")
 
+        # Track turn latency
+        runner.latency_metrics.turn_latencies_ms.append((perf_counter() - turn_start) * 1000)
+
+    # End conversation timing
+    runner.latency_metrics.conversation_end = perf_counter()
+
     final_state = runner.mock_flow_manager.state
     final_node = runner.current_node_name
 
@@ -789,6 +962,8 @@ async def run_simulation(
         "final_state": final_state,
         "final_node": final_node,
         "turns": turn,
+        "latency": runner.latency_metrics.to_dict(),
+        "cost": runner.token_usage.to_dict(),
     }
 
 
@@ -835,6 +1010,8 @@ def save_result(result: dict, trace_id: str, grade: dict) -> Path:
             "final_state": result["final_state"],
             "final_node": result.get("final_node"),
             "turns": result["turns"],
+            "latency": result.get("latency"),
+            "cost": result.get("cost"),
         },
 
         # LLM grade
@@ -932,6 +1109,7 @@ async def run_scenario(scenario_id: str, verbose: bool = False) -> dict:
             expected_functions=scenario.get("expected_functions"),
             forbidden_functions=scenario.get("forbidden_functions"),
             forbidden_phrases=scenario.get("forbidden_phrases"),
+            golden_text=scenario.get("golden_text"),
         )
 
         # Verify DB state after call
@@ -995,6 +1173,10 @@ async def run_all_scenarios(verbose: bool = False) -> list[dict]:
         print("\nFAILED:")
         for r in failed:
             print(f"  - {r['scenario_id']}: {r['grade']['reason']}")
+
+    # Cost summary
+    total_cost = sum(r.get("cost", {}).get("total_cost_usd", 0) for r in results)
+    print(f"\nTOTAL COST: ${total_cost:.4f}")
 
     return results
 

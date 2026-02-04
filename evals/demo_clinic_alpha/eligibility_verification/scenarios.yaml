@@ -21,6 +21,9 @@ scenarios:
     forbidden_phrases:
       - "What's your name"
       - "What is your name"
+    golden_text:
+      - turn: 1
+        info: "Ask for representative's first name and last initial"
     expected_db_state:
       network_status: "In-network"
       plan_type: "POS"

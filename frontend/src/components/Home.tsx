@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CalendarIcon, Shield, Phone, Calendar as CalendarIcon2, HelpCircle, Microscope, Pill, PhoneCall, CheckCircle, XCircle, Voicemail, Clock, DollarSign, TrendingUp } from 'lucide-react';
-import { getOrganization, setSelectedWorkflow } from '@/lib/auth';
+import { getOrganization, setSelectedWorkflow, getAuthUser } from '@/lib/auth';
 import { getMetricsSummary, MetricsSummary } from '@/api';
 
 const workflowIcons: Record<string, React.ReactNode> = {
@@ -35,6 +35,12 @@ export function Home() {
 
   // Get workflows from organization
   const org = getOrganization();
+  const user = getAuthUser();
+
+  // Redirect super admins without organization to /admin
+  if (user?.is_super_admin && !org) {
+    return <Navigate to="/admin" replace />;
+  }
 
   // Fetch metrics
   useEffect(() => {

@@ -41,6 +41,7 @@ import {
   AdminCalls,
   AdminCallDetail,
   AdminCosts,
+  AdminOnboarding,
 } from './components/admin';
 
 function SessionCleanup() {
@@ -224,6 +225,13 @@ const App = () => {
                 <SuperAdminRoute>
                   <SidebarLayout>
                     <AdminCosts />
+                  </SidebarLayout>
+                </SuperAdminRoute>
+              } />
+              <Route path="/admin/onboarding" element={
+                <SuperAdminRoute>
+                  <SidebarLayout>
+                    <AdminOnboarding />
                   </SidebarLayout>
                 </SuperAdminRoute>
               } />

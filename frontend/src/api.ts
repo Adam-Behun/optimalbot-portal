@@ -401,4 +401,207 @@ export const exportCosts = async (): Promise<{ blob: Blob; filename: string }> =
   return { blob: new Blob([response.data]), filename };
 };
 
+// =============================================================================
+// Onboarding API Types and Functions (Super Admin Only)
+// =============================================================================
+
+export interface OnboardingUploadResponse {
+  status: string;
+  org: string;
+  workflow: string;
+  uploaded_files: string[];
+  path: string;
+}
+
+export interface OnboardingPhase {
+  count?: number;
+  approved?: number;
+  files?: string[];
+  complete: boolean;
+}
+
+export interface OnboardingStatus {
+  org: string;
+  workflow: string;
+  path: string;
+  phases: {
+    recordings: OnboardingPhase;
+    transcripts: OnboardingPhase;
+    sample_conversations: OnboardingPhase;
+    flow_design: OnboardingPhase;
+    code_generation: OnboardingPhase;
+  };
+}
+
+export interface TranscribeResult {
+  file: string;
+  status: 'success' | 'error';
+  output?: string;
+  error?: string;
+}
+
+export interface TranscribeResponse {
+  status: string;
+  org: string;
+  workflow: string;
+  total_files: number;
+  success_count: number;
+  error_count: number;
+  results: TranscribeResult[];
+}
+
+// POST /admin/onboarding/upload - Upload recordings
+export const uploadRecordings = async (
+  org: string,
+  workflow: string,
+  files: File[]
+): Promise<OnboardingUploadResponse> => {
+  const formData = new FormData();
+  formData.append('org', org);
+  formData.append('workflow', workflow);
+  files.forEach((file) => {
+    formData.append('files', file);
+  });
+
+  const response = await api.post<OnboardingUploadResponse>('/admin/onboarding/upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+// GET /admin/onboarding/status/{org}/{workflow} - Get onboarding status
+export const getOnboardingStatus = async (
+  org: string,
+  workflow: string
+): Promise<OnboardingStatus> => {
+  const response = await api.get<OnboardingStatus>(`/admin/onboarding/status/${org}/${workflow}`);
+  return response.data;
+};
+
+// POST /admin/onboarding/transcribe/{org}/{workflow} - Trigger transcription
+export const transcribeRecordings = async (
+  org: string,
+  workflow: string
+): Promise<TranscribeResponse> => {
+  const response = await api.post<TranscribeResponse>(
+    `/admin/onboarding/transcribe/${org}/${workflow}`
+  );
+  return response.data;
+};
+
+// =============================================================================
+// Onboarding Conversation Types and Functions (Super Admin Only)
+// =============================================================================
+
+export interface ConversationUtterance {
+  role: string;
+  text: string;
+}
+
+export interface ConversationMetadata {
+  call_type?: string;
+  insurance_company?: string;
+  practice_name?: string;
+  outcome?: string;
+  [key: string]: string | undefined;
+}
+
+export interface OnboardingConversation {
+  id: string;
+  organization_id: string;
+  workflow: string;
+  source_filename: string;
+  assemblyai_id?: string;
+  roles: Record<string, string>;
+  conversation: ConversationUtterance[];
+  metadata?: ConversationMetadata;
+  status: 'cleaned' | 'approved';
+  approved_by?: string;
+  approved_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationCreateData {
+  organization_id: string;
+  workflow: string;
+  source_filename: string;
+  assemblyai_id?: string;
+  roles: Record<string, string>;
+  conversation: ConversationUtterance[];
+  metadata?: ConversationMetadata;
+}
+
+export interface ConversationUpdateData {
+  roles?: Record<string, string>;
+  conversation?: ConversationUtterance[];
+  metadata?: ConversationMetadata;
+}
+
+// GET /admin/onboarding/conversations/{org}/{workflow} - List conversations
+export const getOnboardingConversations = async (
+  org: string,
+  workflow: string
+): Promise<OnboardingConversation[]> => {
+  const response = await api.get<{ conversations: OnboardingConversation[] }>(
+    `/admin/onboarding/conversations/${org}/${workflow}`
+  );
+  return response.data.conversations;
+};
+
+// GET /admin/onboarding/conversations/detail/{id} - Get single conversation
+export const getOnboardingConversation = async (
+  conversationId: string
+): Promise<OnboardingConversation> => {
+  const response = await api.get<{ conversation: OnboardingConversation }>(
+    `/admin/onboarding/conversations/detail/${conversationId}`
+  );
+  return response.data.conversation;
+};
+
+// POST /admin/onboarding/conversations - Create conversation
+export const createOnboardingConversation = async (
+  data: ConversationCreateData
+): Promise<{ status: string; conversation_id: string }> => {
+  const response = await api.post<{ status: string; conversation_id: string }>(
+    '/admin/onboarding/conversations',
+    data
+  );
+  return response.data;
+};
+
+// PUT /admin/onboarding/conversations/{id} - Update conversation
+export const updateOnboardingConversation = async (
+  conversationId: string,
+  data: ConversationUpdateData
+): Promise<{ status: string }> => {
+  const response = await api.put<{ status: string }>(
+    `/admin/onboarding/conversations/${conversationId}`,
+    data
+  );
+  return response.data;
+};
+
+// POST /admin/onboarding/conversations/{id}/approve - Approve conversation
+export const approveOnboardingConversation = async (
+  conversationId: string
+): Promise<{ status: string }> => {
+  const response = await api.post<{ status: string }>(
+    `/admin/onboarding/conversations/${conversationId}/approve`
+  );
+  return response.data;
+};
+
+// DELETE /admin/onboarding/conversations/{id} - Delete conversation
+export const deleteOnboardingConversation = async (
+  conversationId: string
+): Promise<{ status: string }> => {
+  const response = await api.delete<{ status: string }>(
+    `/admin/onboarding/conversations/${conversationId}`
+  );
+  return response.data;
+};
+
 export default api;

@@ -103,6 +103,7 @@ export function AdminDashboard() {
       <div className="flex gap-2 mb-6">
         <Button onClick={() => navigate('/admin/calls')}>View All Calls</Button>
         <Button variant="outline" onClick={() => navigate('/admin/costs')}>Cost Report</Button>
+        <Button variant="outline" onClick={() => navigate('/admin/onboarding')}>Onboarding</Button>
       </div>
 
       {/* Recent Failures */}

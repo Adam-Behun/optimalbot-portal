@@ -13,6 +13,7 @@ from backend.api import (
     dialout,
     health,
     metrics,
+    onboarding,
     patients,
     sessions,
     sms,
@@ -68,3 +69,4 @@ app.include_router(dialin.router, tags=["Dial-In"])
 app.include_router(sms.router, tags=["SMS"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(costs_router, prefix="/admin", tags=["Admin Costs"])
+app.include_router(onboarding.router, prefix="/admin", tags=["Admin Onboarding"])

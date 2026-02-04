@@ -39,7 +39,12 @@ export function AuthCallback() {
         });
         updateOrganization(response.organization);
 
-        navigate('/home');
+        // Route super admins without organization to /admin
+        if (response.is_super_admin && !response.organization) {
+          navigate('/admin');
+        } else {
+          navigate('/home');
+        }
       } catch (err: any) {
         setError(err.response?.data?.detail || 'Authentication failed');
       }
