@@ -99,3 +99,53 @@ class BotBodyData(BaseModel):
             raise ValueError("Either dialin_settings or dialout_targets required")
         if has_dialin and has_dialout:
             raise ValueError("Cannot specify both dialin_settings and dialout_targets")
+
+
+# =============================================================================
+# Onboarding Conversation Schemas
+# =============================================================================
+
+class ConversationUtterance(BaseModel):
+    role: str = Field(..., min_length=1, max_length=100)
+    text: str = Field(..., max_length=50000)
+
+
+class ConversationMetadata(BaseModel):
+    call_type: Optional[str] = None
+    insurance_company: Optional[str] = None
+    practice_name: Optional[str] = None
+    outcome: Optional[str] = None
+
+    model_config = {"extra": "allow"}
+
+
+class ConversationCreate(BaseModel):
+    organization_id: str
+    workflow: str
+    source_filename: str
+    assemblyai_id: Optional[str] = None
+    roles: dict = Field(default_factory=dict)
+    conversation: List[ConversationUtterance]
+    metadata: Optional[ConversationMetadata] = None
+
+
+class ConversationUpdate(BaseModel):
+    roles: Optional[dict] = None
+    conversation: Optional[List[ConversationUtterance]] = None
+    metadata: Optional[ConversationMetadata] = None
+
+
+class ConversationResponse(BaseModel):
+    id: str
+    organization_id: str
+    workflow: str
+    source_filename: str
+    assemblyai_id: Optional[str] = None
+    roles: dict
+    conversation: List[ConversationUtterance]
+    metadata: Optional[dict] = None
+    status: str
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    created_at: str
+    updated_at: str

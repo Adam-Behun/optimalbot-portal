@@ -8,8 +8,10 @@ from loguru import logger
 
 from backend.audit import AuditLogger, get_audit_logger
 from backend.models import (
+    AsyncOnboardingConversationRecord,
     AsyncPatientRecord,
     AsyncUserRecord,
+    get_async_onboarding_conversation_db,
     get_async_patient_db,
     get_async_user_db,
 )
@@ -39,6 +41,10 @@ def get_audit_logger_dep() -> AuditLogger:
 
 def get_organization_db() -> AsyncOrganizationRecord:
     return get_async_organization_db()
+
+
+def get_onboarding_conversation_db() -> AsyncOnboardingConversationRecord:
+    return get_async_onboarding_conversation_db()
 
 
 def get_client_info(request: Request) -> Tuple[str, str]:

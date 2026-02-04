@@ -31,6 +31,9 @@ dependencies = [
     "aiohttp",
     "httpx",
 
+    # Transcription
+    "assemblyai",
+
     # Authentication
     "passlib[bcrypt]",
     "python-jose[cryptography]",
@@ -92,3 +95,11 @@ exclude = ["**/node_modules", "**/__pycache__", ".venv", "whisker", "pipecat_src
 reportMissingImports = "error"
 reportMissingTypeStubs = false
 reportUndefinedVariable = "error"
+
+[tool.bandit]
+exclude_dirs = ["tests", "evals/ivr_deprecated", "evals/*_deprecated", ".venv"]
+# B101: assert used (OK in non-production code)
+# B104: binding to all interfaces (OK for local dev servers)
+skips = ["B101", "B104"]
+# Only report medium and high severity issues
+severity = "medium"

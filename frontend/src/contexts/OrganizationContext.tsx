@@ -7,7 +7,7 @@ interface OrganizationContextType {
   loading: boolean;
   error: string | null;
   getWorkflowSchema: (workflowName: string) => WorkflowConfig | null;
-  updateOrganization: (org: Organization) => void;
+  updateOrganization: (org: Organization | null) => void;
   clearOrganization: () => void;
 }
 
@@ -35,9 +35,11 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   // Update organization (called after login with AuthResponse.organization)
-  const updateOrganization = useCallback((org: Organization) => {
+  const updateOrganization = useCallback((org: Organization | null) => {
     setOrganization(org);
-    storeOrganization(org);
+    if (org) {
+      storeOrganization(org);
+    }
     setError(null);
   }, []);
 

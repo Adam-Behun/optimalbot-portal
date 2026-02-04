@@ -49,7 +49,7 @@ class AuthResponse(BaseModel):
     token_type: str
     user_id: str
     email: str
-    organization: OrganizationResponse
+    organization: OrganizationResponse | None = None
     is_super_admin: bool = False
 
 class RequestResetRequest(BaseModel):
@@ -79,6 +79,7 @@ class CentralLoginResponse(BaseModel):
     organizations: list[OrganizationSummary]
     handoff_token: str
     handoff_expires_in: int
+    is_super_admin: bool = False
 
 
 class ExchangeTokenRequest(BaseModel):
@@ -236,16 +237,26 @@ async def login(
             )
 
         user_id = str(user["_id"])
-        organization_id = str(user.get("organization_id", ""))
+        organization_id = user.get("organization_id")
+        is_super_admin = user.get("is_super_admin", False)
 
-        org = await org_db.get_by_id(organization_id)
-        if not org:
+        org = None
+        if organization_id:
+            org = await org_db.get_by_id(str(organization_id))
+            if not org and not is_super_admin:
+                raise HTTPException(
+                    status_code=403,
+                    detail="User's organization not found"
+                )
+        elif not is_super_admin:
             raise HTTPException(
                 status_code=403,
                 detail="User's organization not found"
             )
 
-        if login_data.organization_slug:
+        organization_id_str = str(organization_id) if organization_id else ""
+
+        if login_data.organization_slug and org:
             if org.get("slug") != login_data.organization_slug:
                 await audit_logger.log_event(
                     event_type="login",
@@ -261,11 +272,11 @@ async def login(
                     detail="User not authorized for this organization"
                 )
 
-        organization_slug = org.get("slug", "")
+        organization_slug = org.get("slug", "") if org else ""
 
         # Check if MFA is enabled
         if user.get("mfa_enabled"):
-            mfa_token = create_mfa_token(user_id, login_data.email, organization_id)
+            mfa_token = create_mfa_token(user_id, login_data.email, organization_id_str)
 
             await audit_logger.log_event(
                 event_type="login",
@@ -275,7 +286,7 @@ async def login(
                 user_agent=user_agent,
                 success=True,
                 details={"mfa_required": True, "role": user.get("role", "admin")},
-                organization_id=organization_id
+                organization_id=organization_id_str or None
             )
 
             logger.info(f"MFA challenge issued for: {login_data.email}")
@@ -294,7 +305,7 @@ async def login(
             user_agent=user_agent,
             success=True,
             details={"role": user.get("role", "admin")},
-            organization_id=organization_id
+            organization_id=organization_id_str or None
         )
 
         access_token = create_access_token(
@@ -302,7 +313,7 @@ async def login(
                 "sub": user_id,
                 "email": login_data.email,
                 "role": user.get("role", "admin"),
-                "organization_id": organization_id,
+                "organization_id": organization_id_str,
                 "organization_slug": organization_slug,
                 "is_super_admin": user.get("is_super_admin", False)
             }
@@ -316,13 +327,13 @@ async def login(
             user_id=user_id,
             email=login_data.email,
             organization=OrganizationResponse(
-                id=organization_id,
+                id=organization_id_str,
                 name=org.get("name", ""),
                 slug=organization_slug,
                 subdomain=org.get("subdomain", organization_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
-            ),
+            ) if org else None,
             is_super_admin=user.get("is_super_admin", False)
         )
 
@@ -520,19 +531,26 @@ async def login_central(
         if user.get("status") == "inactive":
             raise HTTPException(status_code=403, detail="Account is inactive. Contact support.")
 
-        org_id = str(user.get("organization_id", ""))
-        org = await org_db.get_by_id(org_id)
+        is_super_admin = user.get("is_super_admin", False)
+        organization_id = user.get("organization_id")
+        org_id = str(organization_id) if organization_id else ""
 
-        if not org:
+        org = None
+        organizations = []
+
+        if organization_id:
+            org = await org_db.get_by_id(org_id)
+            if org:
+                org_slug = org.get("slug", "")
+                organizations = [OrganizationSummary(
+                    id=org_id,
+                    name=org.get("name", ""),
+                    slug=org_slug,
+                    subdomain=org.get("subdomain", org_slug.replace("_", "-"))
+                )]
+
+        if not org and not is_super_admin:
             raise HTTPException(status_code=403, detail="No organization found")
-
-        org_slug = org.get("slug", "")
-        organizations = [OrganizationSummary(
-            id=org_id,
-            name=org.get("name", ""),
-            slug=org_slug,
-            subdomain=org.get("subdomain", org_slug.replace("_", "-"))
-        )]
 
         handoff_token = secrets.token_urlsafe(32)
         expires_at = datetime.utcnow() + timedelta(minutes=5)
@@ -550,18 +568,19 @@ async def login_central(
             ip_address=ip_address,
             user_agent=user_agent,
             success=True,
-            details={"org_count": len(organizations)},
-            organization_id=org_id
+            details={"org_count": len(organizations), "is_super_admin": is_super_admin},
+            organization_id=org_id or None
         )
 
-        logger.info(f"Central login successful: {login_data.email} (ID: {user['_id']})")
+        logger.info(f"Central login successful: {login_data.email} (ID: {user['_id']}, super_admin: {is_super_admin})")
 
         return CentralLoginResponse(
             user_id=str(user["_id"]),
             email=login_data.email,
             organizations=organizations,
             handoff_token=handoff_token,
-            handoff_expires_in=300
+            handoff_expires_in=300,
+            is_super_admin=is_super_admin
         )
 
     except HTTPException:
@@ -598,15 +617,24 @@ async def exchange_token(
             )
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-        org_id = str(user.get("organization_id", ""))
-        org = await org_db.get_by_id(org_id)
+        is_super_admin = user.get("is_super_admin", False)
+        organization_id = user.get("organization_id")
+        org_id = str(organization_id) if organization_id else ""
+
+        org = None
+        if organization_id:
+            org = await org_db.get_by_id(org_id)
 
         # Accept either slug or subdomain for org validation
         org_slug = org.get("slug", "") if org else ""
         org_subdomain = org.get("subdomain", org_slug.replace("_", "-")) if org else ""
         requested_org = data.organization_slug
 
-        if not org or (requested_org != org_slug and requested_org != org_subdomain):
+        # Super admins can exchange token without org validation (requested_org may be "admin" or empty)
+        if is_super_admin and (not requested_org or requested_org == "admin"):
+            # Super admin without org - allow
+            pass
+        elif not org or (requested_org != org_slug and requested_org != org_subdomain):
             await audit_logger.log_event(
                 event_type="token_exchange",
                 user_id=str(user["_id"]),
@@ -626,8 +654,8 @@ async def exchange_token(
                 "email": user.get("email"),
                 "role": user.get("role", "admin"),
                 "organization_id": org_id,
-                "organization_slug": org.get("slug", ""),
-                "is_super_admin": user.get("is_super_admin", False)
+                "organization_slug": org_slug,
+                "is_super_admin": is_super_admin
             }
         )
 
@@ -638,11 +666,11 @@ async def exchange_token(
             ip_address=ip_address,
             user_agent=user_agent,
             success=True,
-            details={"org_slug": data.organization_slug},
-            organization_id=org_id
+            details={"org_slug": data.organization_slug, "is_super_admin": is_super_admin},
+            organization_id=org_id or None
         )
 
-        logger.info(f"Token exchange successful: {user.get('email')} → {data.organization_slug}")
+        logger.info(f"Token exchange successful: {user.get('email')} → {data.organization_slug or 'admin'}")
 
         return AuthResponse(
             access_token=access_token,
@@ -652,12 +680,12 @@ async def exchange_token(
             organization=OrganizationResponse(
                 id=org_id,
                 name=org.get("name", ""),
-                slug=org.get("slug", ""),
-                subdomain=org.get("subdomain", org.get("slug", "").replace("_", "-")),
+                slug=org_slug,
+                subdomain=org.get("subdomain", org_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
-            ),
-            is_super_admin=user.get("is_super_admin", False)
+            ) if org else None,
+            is_super_admin=is_super_admin
         )
 
     except HTTPException:
@@ -713,11 +741,17 @@ async def login_mfa(
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
 
-        org = await org_db.get_by_id(organization_id)
-        if not org:
+        is_super_admin = user.get("is_super_admin", False)
+
+        org = None
+        if organization_id:
+            org = await org_db.get_by_id(organization_id)
+            if not org and not is_super_admin:
+                raise HTTPException(status_code=403, detail="Organization not found")
+        elif not is_super_admin:
             raise HTTPException(status_code=403, detail="Organization not found")
 
-        organization_slug = org.get("slug", "")
+        organization_slug = org.get("slug", "") if org else ""
 
         await audit_logger.log_event(
             event_type="mfa_verify",
@@ -727,7 +761,7 @@ async def login_mfa(
             user_agent=user_agent,
             success=True,
             details={},
-            organization_id=organization_id
+            organization_id=organization_id or None
         )
 
         access_token = create_access_token(
@@ -735,9 +769,9 @@ async def login_mfa(
                 "sub": user_id,
                 "email": email,
                 "role": user.get("role", "admin"),
-                "organization_id": organization_id,
+                "organization_id": organization_id or "",
                 "organization_slug": organization_slug,
-                "is_super_admin": user.get("is_super_admin", False)
+                "is_super_admin": is_super_admin
             }
         )
 
@@ -749,14 +783,14 @@ async def login_mfa(
             user_id=user_id,
             email=email,
             organization=OrganizationResponse(
-                id=organization_id,
+                id=organization_id or "",
                 name=org.get("name", ""),
                 slug=organization_slug,
                 subdomain=org.get("subdomain", organization_slug.replace("_", "-")),
                 branding=org.get("branding", {}),
                 workflows=org.get("workflows", {})
-            ),
-            is_super_admin=user.get("is_super_admin", False)
+            ) if org else None,
+            is_super_admin=is_super_admin
         )
 
     except HTTPException:

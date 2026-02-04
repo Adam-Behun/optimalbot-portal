@@ -4,11 +4,12 @@
 
 ```bash
 # Local development
-./run.sh                          # validates, starts all services on localhost 
+./run.sh                          # validates, starts all services on localhost
 # First-time setup
 ./setup-local.sh                  # create .venv with uv
 cd frontend && npm install        # install frontend deps
 cd ../marketing && npm install    # install marketing deps
+```
 
 ## Deployment
 
@@ -42,15 +43,14 @@ cd frontend && vercel --prod
 
 | Purpose | Location |
 |---------|----------|
-| Flow definitions | `clients/<client>/flow_definition.py` |
-| Service configs | `clients/<client>/services.yaml` |
+| Flow definitions | `clients/<org>/<workflow>/flow_definition.py` |
+| Service configs | `clients/<org>/<workflow>/services.yaml` |
 | Pipeline factory | `pipeline/pipeline_factory.py` |
-| Pipeline runner | `pipeline/runner.py` |
-| IVR handlers | `handlers/ivr.py` |
+| Transport handlers | `handlers/transport.py` |
 | Dialin webhook | `backend/api/dialin.py` |
 | Dialout endpoint | `backend/api/dialout.py` |
 | Bot starting | `backend/server_utils.py` |
-| Patient model | `backend/models.py` |
+| Patient model | `backend/models/patient.py` |
 
 ## Call Types
 
@@ -87,21 +87,6 @@ clients/
 
 FlowLoader auto-discovers by naming convention.
 
-## MongoDB Schema (patients collection)
-
-Patient schema is dynamic per workflow. See `scripts/eligibility_verification.py` for the eligibility_verification schema.
-
-**Common fields across workflows:**
-```
-call_status: "Not Started" | "Dialing" | "In Progress" | "Completed" | "Failed" | "Voicemail"
-call_transcript, last_call_session_id, last_call_timestamp
-created_at, updated_at
-```
-
-**Eligibility Verification workflow (32 fields):**
-- Inputs: patient_name, date_of_birth, insurance_member_id, cpt_code, caller_name, facility_name, tax_id, provider_npi, place_of_service, etc.
-- Outputs: network_status, plan_type, cpt_covered, copay_amount, coinsurance_percent, prior_auth_required, deductible_*, oop_max_*, reference_number, etc.
-
 ## Environment Variables
 
 **Backend (app.py):**
@@ -116,16 +101,6 @@ OPENAI_API_KEY, GROQ_API_KEY, DEEPGRAM_API_KEY, ELEVENLABS_API_KEY
 DAILY_API_KEY, DAILY_PHONE_NUMBER_ID, MONGO_URI
 LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY  # optional
 ```
-
-## Implementation Plans
-
-**IMPORTANT:** Before implementing features from `docs/*.md`:
-1. Read the plan first - contains architecture decisions
-2. Files marked `← UPDATE` or `← ADD` indicate where to change
-3. Follow implementation order - dependencies matter
-4. Run verification checklist before considering done
-
-Current: `docs/start-bots.md`
 
 ## Project-Specific Patterns
 
@@ -144,7 +119,7 @@ async def my_function(self, flow_manager, ...):
     return result, self.create_next_node()  # or None to stay
 ```
 
-**Core pipeline changes:** Affect all clients - test thoroughly. Key files: `pipeline/pipeline_factory.py`, `pipeline/runner.py`, `handlers/ivr.py`
+**Core pipeline changes:** Affect all clients - test thoroughly. Key files: `pipeline/pipeline_factory.py`, `handlers/transport.py`
 
 **Frontend:** Use Shadcn/Radix components from `frontend/src/components/ui/`, follow patterns in `frontend/src/components/workflows/`
 

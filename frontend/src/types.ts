@@ -150,6 +150,6 @@ export interface AuthResponse {
   token_type: string;
   user_id: string;
   email: string;
-  organization: Organization;
+  organization: Organization | null;
   is_super_admin?: boolean;
 }
