@@ -371,87 +371,46 @@ Include any CPT coverage, accumulators, or reference info in proceed_to_cpt_cove
 - Network: "in network" → "In-Network", "non-par" → "Out-of-Network"
 - Plan type: PPO, HMO, POS, EPO, HDHP
 - Dates: MM/DD/YYYY format
-- PA/prior auth → prior_auth_required: "Yes" """
+- PA/prior auth → prior_auth_required: "Yes"
+
+# IMPORTANT: Call record_plan_data with ALL fields from the rep's response in ONE call.
+- Include every plan info field mentioned in the rep's response
+- Do NOT call record_plan_data multiple times for the same response"""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_network_status",
-                    description="""Record network participation status.
+                    name="record_plan_data",
+                    description="""Record plan information fields. Call ONCE with ALL fields the rep mentioned.
 
-WHEN TO USE: After rep confirms whether facility is in-network.
-VALID VALUES: "In-Network", "Out-of-Network", "Unknown"
+WHEN TO USE: After rep provides ANY plan info (network status, plan type, dates).
+Include ALL mentioned fields in a SINGLE call - do not make separate calls.
 
-EXAMPLES:
-- "yes, in network" → "In-Network"
-- "this facility is participating" → "In-Network"
-- "not in network" → "Out-of-Network" """,
+NORMALIZATION:
+- Network: "in network"/"participating" → "In-Network", "non-par"/"not participating" → "Out-of-Network"
+- Plan type: PPO, HMO, POS, EPO, HDHP, or Unknown
+- Dates: MM/DD/YYYY format
+- Term date: "None" if no termination date""",
                     properties={
-                        "status": {
+                        "network_status": {
                             "type": "string",
                             "enum": ["In-Network", "Out-of-Network", "Unknown"],
                             "description": "Network status"
-                        }
-                    },
-                    required=["status"],
-                    handler=self._record_network_status_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_plan_type",
-                    description="""Record the plan type.
-
-WHEN TO USE: After rep states the plan type.
-VALID VALUES: "PPO", "HMO", "POS", "EPO", "HDHP", "Unknown"
-
-EXAMPLES:
-- "It's a POS plan" → "POS"
-- "This is an HMO" → "HMO" """,
-                    properties={
+                        },
                         "plan_type": {
                             "type": "string",
                             "description": "Plan type: PPO, HMO, POS, EPO, HDHP, or Unknown"
-                        }
-                    },
-                    required=["plan_type"],
-                    handler=self._record_plan_type_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_plan_effective_date",
-                    description="""Record plan effective date.
-
-WHEN TO USE: After rep provides the effective date.
-FORMAT: MM/DD/YYYY (e.g., "01/01/2025")
-
-EXAMPLES:
-- "January first twenty twenty five" → "01/01/2025"
-- "oh one oh one two thousand twenty five" → "01/01/2025" """,
-                    properties={
-                        "date": {
+                        },
+                        "plan_effective_date": {
                             "type": "string",
                             "description": "Effective date in MM/DD/YYYY format"
-                        }
-                    },
-                    required=["date"],
-                    handler=self._record_plan_effective_date_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_plan_term_date",
-                    description="""Record plan termination date.
-
-WHEN TO USE: After rep provides term date or confirms there is none.
-FORMAT: MM/DD/YYYY or "None"
-
-EXAMPLES:
-- "December thirty first twenty twenty five" → "12/31/2025"
-- "No future termination date" → "None"
-- "None on file" → "None" """,
-                    properties={
-                        "date": {
+                        },
+                        "plan_term_date": {
                             "type": "string",
                             "description": "Term date in MM/DD/YYYY format, or 'None' if no termination date"
                         }
                     },
-                    required=["date"],
-                    handler=self._record_plan_term_date_handler
+                    required=[],
+                    handler=self._record_plan_data_handler
                 ),
                 FlowsFunctionSchema(
                     name="proceed_to_cpt_coverage",
@@ -549,7 +508,7 @@ NEVER re-ask for information the rep just provided in their response. This step 
 - If cpt_covered = "No", call proceed_to_accumulators IMMEDIATELY (skip other CPT questions)
 - If all 6 CPT coverage fields are captured, call proceed_to_accumulators IMMEDIATELY
 - Only ask about fields NOT yet mentioned by the rep
-- When rep answers, record ALL mentioned fields via function calls
+- When rep answers, call record_cpt_data with ALL mentioned fields in ONE call
 - If rep volunteers accumulator info or reference number, include in proceed_to_accumulators
 
 # CRITICAL: DO NOT END THE CALL
@@ -562,6 +521,10 @@ NEVER re-ask for information the rep just provided in their response. This step 
 - Date of service: "{date_of_service or "Not yet determined. Is it okay to use today's date?"}"
 - Place of service: "{place_of_service}"
 
+# IMPORTANT: Call record_cpt_data with ALL fields from the rep's response in ONE call.
+- Include every CPT coverage field mentioned in the rep's response
+- Do NOT call record_cpt_data multiple times for the same response
+
 # Data Normalization (PLAIN NUMBERS ONLY - no $ or % symbols)
 - Currency: "50.00", "None" | Percentages: "20", "None"
 - Yes/No: "required"/"applies" → "Yes", "not required"/"doesn't apply" → "No"
@@ -569,131 +532,51 @@ NEVER re-ask for information the rep just provided in their response. This step 
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_cpt_covered",
-                    description="""Record whether CPT code is covered.
+                    name="record_cpt_data",
+                    description="""Record CPT coverage fields. Call ONCE with ALL fields the rep mentioned.
 
-WHEN TO USE: After rep confirms coverage status.
-VALID VALUES: "Yes", "No", "Unknown"
+WHEN TO USE: After rep provides ANY coverage info (covered status, copay, coinsurance, deductible, prior auth, telehealth).
+Include ALL mentioned fields in a SINGLE call - do not make separate calls.
 
-EXAMPLES:
-- "valid and billable" → "Yes"
-- "covered" → "Yes"
-- "not covered under this plan" → "No" """,
+NORMALIZATION (PLAIN NUMBERS ONLY - no $ or % symbols):
+- cpt_covered: "Yes" (covered/valid/billable), "No" (not covered/excluded), "Unknown"
+- copay_amount: Plain number "50.00", "None", or "Unknown"
+- coinsurance_percent: Plain number "20", "None", or "Unknown"
+- deductible_applies: "Yes"/"No"/"Unknown"
+- prior_auth_required: "Yes" (PA/prior auth required), "No", "Unknown"
+- telehealth_covered: "Yes"/"No"/"Unknown" """,
                     properties={
-                        "covered": {
+                        "cpt_covered": {
                             "type": "string",
                             "enum": ["Yes", "No", "Unknown"],
                             "description": "Coverage status"
-                        }
-                    },
-                    required=["covered"],
-                    handler=self._record_cpt_covered_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_copay",
-                    description="""Record copay amount.
-
-WHEN TO USE: After rep provides copay information.
-FORMAT: Plain number with 2 decimals (e.g., "50.00"), "None", or "Unknown". NO $ symbol.
-
-EXAMPLES:
-- "fifty dollars per service" → "50.00"
-- "twenty five dollar copay" → "25.00"
-- "seventy-five copay" → "75.00"
-- "no copay" → "None"
-- "copay does not apply" → "None" """,
-                    properties={
-                        "amount": {
+                        },
+                        "copay_amount": {
                             "type": "string",
-                            "description": "Copay amount as plain number (e.g., '50.00', 'None', 'Unknown')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_copay_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_coinsurance",
-                    description="""Record coinsurance percentage.
-
-WHEN TO USE: After rep provides coinsurance information.
-FORMAT: Plain number (e.g., "20"), "None", or "Unknown". NO % symbol.
-
-EXAMPLES:
-- "twenty percent coinsurance" → "20"
-- "zero percent" → "0"
-- "no coinsurance" → "None"
-- "you pay 80 percent, insurance pays 20" → "80" (patient responsibility) """,
-                    properties={
-                        "percent": {
+                            "description": "Copay as plain number (e.g., '50.00', 'None', 'Unknown')"
+                        },
+                        "coinsurance_percent": {
                             "type": "string",
-                            "description": "Coinsurance percentage as plain number (e.g., '20', 'None', 'Unknown')"
-                        }
-                    },
-                    required=["percent"],
-                    handler=self._record_coinsurance_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_applies",
-                    description="""Record whether deductible applies to this service.
-
-WHEN TO USE: After rep confirms deductible applicability.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "deductible applies" → "Yes"
-- "annual deductible does not apply" → "No"
-- "after meeting your deductible" → "Yes" """,
-                    properties={
-                        "applies": {
+                            "description": "Coinsurance as plain number (e.g., '20', 'None', 'Unknown')"
+                        },
+                        "deductible_applies": {
                             "type": "string",
                             "enum": ["Yes", "No", "Unknown"],
                             "description": "Whether deductible applies"
-                        }
-                    },
-                    required=["applies"],
-                    handler=self._record_deductible_applies_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_prior_auth_required",
-                    description="""Record whether prior authorization is required.
-
-WHEN TO USE: After rep confirms prior auth requirement.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "prior authorization is required" → "Yes"
-- "prior auth is not required" → "No"
-- "you'll need to get approval first" → "Yes" """,
-                    properties={
-                        "required": {
+                        },
+                        "prior_auth_required": {
                             "type": "string",
                             "enum": ["Yes", "No", "Unknown"],
                             "description": "Whether prior auth is required"
-                        }
-                    },
-                    required=["required"],
-                    handler=self._record_prior_auth_required_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_telehealth_covered",
-                    description="""Record whether telehealth is covered.
-
-WHEN TO USE: After rep confirms telehealth coverage.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "telehealth is covered" → "Yes"
-- "same benefit as in-person" → "Yes"
-- "telehealth not available for this service" → "No" """,
-                    properties={
-                        "covered": {
+                        },
+                        "telehealth_covered": {
                             "type": "string",
                             "enum": ["Yes", "No", "Unknown"],
                             "description": "Whether telehealth is covered"
                         }
                     },
-                    required=["covered"],
-                    handler=self._record_telehealth_covered_handler
+                    required=[],
+                    handler=self._record_cpt_data_handler
                 ),
                 FlowsFunctionSchema(
                     name="proceed_to_accumulators",
@@ -767,8 +650,8 @@ Gather deductible and out-of-pocket maximum information, then get a reference nu
 
 # CRITICAL: Individual vs Family Accumulators
 Listen carefully to whether the rep says "individual" or "family":
-- "individual" / "member" / "single" / "subscriber" → use record_deductible_individual, record_oop_max_individual
-- "family" / "household" → use record_deductible_family, record_oop_max_family
+- "individual" / "member" / "single" / "subscriber" → deductible_individual, oop_max_individual
+- "family" / "household" → deductible_family, oop_max_family
 - "non-par" / "out-of-network" / "OON" → note this is OON accumulator (still individual or family)
 
 NEVER record individual amounts to family fields or vice versa. This step is important.
@@ -788,7 +671,7 @@ Example:
 
 # Instructions
 - Only ask about MISSING fields - never re-ask what's already captured
-- When rep answers, record via the appropriate function
+- When rep answers, call record_accumulator_data with ALL mentioned fields in ONE call
 
 # CRITICAL: Reference Number and Closing
 - If you have ALREADY recorded a reference number (in this turn or earlier), call proceed_to_closing
@@ -826,180 +709,71 @@ DO NOT just say "Thank you, goodbye" - you must acknowledge the correction in yo
 # Data Normalization (PLAIN NUMBERS ONLY - no $ symbols)
 - Amounts: "five hundred" → "500.00", "six thousand" → "6000.00"
 - Cents: "eleven seventy point seven four" → "1170.74"
-- "fully met" → deductible_family_met = deductible_family amount"""
+- "fully met" → deductible_family_met = deductible_family amount
+
+# IMPORTANT: Call record_accumulator_data with ALL fields from the rep's response in ONE call.
+- Include every accumulator field mentioned in the rep's response
+- Do NOT call record_accumulator_data multiple times for the same response"""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_deductible_individual",
-                    description="""Record INDIVIDUAL deductible amount. Use ONLY for individual/member/single/subscriber deductibles.
+                    name="record_accumulator_data",
+                    description="""Record accumulator fields. Call ONCE with ALL fields the rep mentioned.
 
-WHEN TO USE: Rep explicitly says "individual", "member", "single", or "subscriber" deductible.
-DO NOT USE: When rep says "family" or "household" - use record_deductible_family instead.
-FORMAT: Plain number with 2 decimals (e.g., "500.00") or "N/A". NO $ symbol.
+WHEN TO USE: After rep provides ANY accumulator info (deductibles, OOP max, allowed amount).
+Include ALL mentioned fields in a SINGLE call - do not make separate calls.
 
-EXAMPLES:
-- "individual deductible is two hundred fifty" → "250.00" ✓
-- "the member deductible is five hundred" → "500.00" ✓
-- "family deductible is one thousand" → DO NOT USE THIS FUNCTION """,
+CRITICAL - Individual vs Family:
+- "individual"/"member"/"single"/"subscriber" → deductible_individual, oop_max_individual
+- "family"/"household" → deductible_family, oop_max_family
+- NEVER record individual amounts to family fields or vice versa
+
+NORMALIZATION (PLAIN NUMBERS ONLY - no $ symbols):
+- Amounts: "five hundred" → "500.00", "six thousand" → "6000.00"
+- Cents: "eleven seventy point seven four" → "1170.74"
+- "fully met"/"satisfied" → use the deductible amount
+- "nothing met" → "0.00"
+- Use "N/A" if not applicable""",
                     properties={
-                        "amount": {
+                        "deductible_individual": {
                             "type": "string",
-                            "description": "Individual deductible amount as plain number (e.g., '500.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_individual_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_individual_met",
-                    description="""Record how much of individual deductible has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "200.00"). NO $ symbol.
-
-EXAMPLES:
-- "two hundred of the deductible met" → "200.00"
-- "fully met" → Use the deductible amount
-- "nothing met yet" → "0.00" """,
-                    properties={
-                        "amount": {
+                            "description": "Individual deductible as plain number (e.g., '500.00', 'N/A')"
+                        },
+                        "deductible_individual_met": {
                             "type": "string",
-                            "description": "Amount of individual deductible met as plain number (e.g., '200.00')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_individual_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_family",
-                    description="""Record FAMILY deductible amount. Use ONLY for family/household deductibles.
-
-WHEN TO USE: Rep explicitly says "family" or "household" deductible.
-DO NOT USE: When rep says "individual", "member", or "single" - use record_deductible_individual instead.
-FORMAT: Plain number with 2 decimals (e.g., "500.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "family deductible is five hundred" → "500.00" ✓
-- "household deductible is one thousand" → "1000.00" ✓
-- "individual deductible is two fifty" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
+                            "description": "Individual deductible met as plain number (e.g., '200.00')"
+                        },
+                        "deductible_family": {
                             "type": "string",
-                            "description": "Family deductible amount as plain number (e.g., '500.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_family_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_family_met",
-                    description="""Record how much of family deductible has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "500.00"). NO $ symbol.
-
-EXAMPLES:
-- "fully met" or "satisfied" → Use the deductible amount
-- "five hundred met" → "500.00"
-- "nothing applied yet" → "0.00" """,
-                    properties={
-                        "amount": {
+                            "description": "Family deductible as plain number (e.g., '500.00', 'N/A')"
+                        },
+                        "deductible_family_met": {
                             "type": "string",
-                            "description": "Amount of family deductible met as plain number (e.g., '500.00')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_family_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_individual",
-                    description="""Record INDIVIDUAL out-of-pocket maximum. Use ONLY for individual/member/single OOP max.
-
-WHEN TO USE: Rep explicitly says "individual", "member", or "single" OOP max.
-DO NOT USE: When rep says "family" or "household" - use record_oop_max_family instead.
-FORMAT: Plain number with 2 decimals (e.g., "3000.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "individual out of pocket max is three thousand" → "3000.00" ✓
-- "family OOP max is six thousand" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
+                            "description": "Family deductible met as plain number (e.g., '500.00')"
+                        },
+                        "oop_max_individual": {
                             "type": "string",
-                            "description": "Individual OOP maximum as plain number (e.g., '3000.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_individual_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_individual_met",
-                    description="""Record how much of individual OOP max has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "1500.00"). NO $ symbol.""",
-                    properties={
-                        "amount": {
+                            "description": "Individual OOP max as plain number (e.g., '3000.00', 'N/A')"
+                        },
+                        "oop_max_individual_met": {
                             "type": "string",
-                            "description": "Amount of individual OOP max met as plain number (e.g., '1500.00')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_individual_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_family",
-                    description="""Record FAMILY out-of-pocket maximum. Use ONLY for family/household OOP max.
-
-WHEN TO USE: Rep explicitly says "family" or "household" OOP max.
-DO NOT USE: When rep says "individual", "member", or "single" - use record_oop_max_individual instead.
-FORMAT: Plain number with 2 decimals (e.g., "6000.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "family out of pocket max is six thousand" → "6000.00" ✓
-- "household OOP max is eight thousand" → "8000.00" ✓
-- "individual OOP is three thousand" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
+                            "description": "Individual OOP max met as plain number (e.g., '1500.00')"
+                        },
+                        "oop_max_family": {
                             "type": "string",
-                            "description": "Family OOP maximum as plain number (e.g., '6000.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_family_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_family_met",
-                    description="""Record how much of family OOP max has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "1170.74"). NO $ symbol.
-
-EXAMPLES:
-- "one thousand one hundred seventy dollars and seventy four cents" → "1170.74"
-- "about twelve hundred" → Ask for exact amount, then record """,
-                    properties={
-                        "amount": {
+                            "description": "Family OOP max as plain number (e.g., '6000.00', 'N/A')"
+                        },
+                        "oop_max_family_met": {
                             "type": "string",
-                            "description": "Amount of family OOP max met as plain number (e.g., '1170.74')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_family_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_allowed_amount",
-                    description="""Record allowed amount if rep mentions it.
-
-WHEN TO USE: If rep provides an allowed/approved amount for the service.
-FORMAT: Plain number with 2 decimals (e.g., "150.00") or "Unknown". NO $ symbol.""",
-                    properties={
-                        "amount": {
+                            "description": "Family OOP max met as plain number (e.g., '1170.74')"
+                        },
+                        "allowed_amount": {
                             "type": "string",
                             "description": "Allowed amount as plain number (e.g., '150.00', 'Unknown')"
                         }
                     },
-                    required=["amount"],
-                    handler=self._record_allowed_amount_handler
+                    required=[],
+                    handler=self._record_accumulator_data_handler
                 ),
                 FlowsFunctionSchema(
                     name="record_reference_number",
@@ -1192,6 +966,35 @@ EXAMPLES:
         # NOTE: reference_number intentionally excluded - must use record_reference_number function
     }
 
+    # Batch field maps: arg_key → state_key for each batch function
+    PLAN_INFO_FIELDS = {
+        "network_status": "network_status",
+        "plan_type": "plan_type",
+        "plan_effective_date": "plan_effective_date",
+        "plan_term_date": "plan_term_date",
+    }
+
+    CPT_COVERAGE_FIELDS = {
+        "cpt_covered": "cpt_covered",
+        "copay_amount": "copay_amount",
+        "coinsurance_percent": "coinsurance_percent",
+        "deductible_applies": "deductible_applies",
+        "prior_auth_required": "prior_auth_required",
+        "telehealth_covered": "telehealth_covered",
+    }
+
+    ACCUMULATOR_FIELDS = {
+        "deductible_individual": "deductible_individual",
+        "deductible_individual_met": "deductible_individual_met",
+        "deductible_family": "deductible_family",
+        "deductible_family_met": "deductible_family_met",
+        "oop_max_individual": "oop_max_individual",
+        "oop_max_individual_met": "oop_max_individual_met",
+        "oop_max_family": "oop_max_family",
+        "oop_max_family_met": "oop_max_family_met",
+        "allowed_amount": "allowed_amount",
+    }
+
     async def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
         """Store any volunteered info in state AND persist to DB. Returns list of captured fields."""
         captured = []
@@ -1215,70 +1018,27 @@ EXAMPLES:
         logger.debug(f"[Flow] Node: greeting → plan_info (captured: {captured if captured else 'none'})")
         return None, self.create_plan_info_node()
 
-    async def _record_network_status_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("network_status", args.get("status", "Unknown"), flow_manager)
-
-    async def _record_plan_type_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("plan_type", args.get("plan_type", "Unknown"), flow_manager)
-
-    async def _record_plan_effective_date_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("plan_effective_date", args.get("date", "Unknown"), flow_manager)
-
-    async def _record_plan_term_date_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("plan_term_date", args.get("date", "Unknown"), flow_manager)
-
     # ═══════════════════════════════════════════════════════════════════
-    # CPT COVERAGE HANDLERS
+    # BATCH RECORD HANDLERS
     # ═══════════════════════════════════════════════════════════════════
 
-    async def _record_cpt_covered_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("cpt_covered", args.get("covered", "Unknown"), flow_manager)
+    async def _record_plan_data_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        """Batch record plan info fields."""
+        captured = await self._record_batch(args, flow_manager, self.PLAN_INFO_FIELDS)
+        logger.debug(f"[Flow] Plan data recorded: {captured if captured else 'none'}")
+        return None, None
 
-    async def _record_copay_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("copay_amount", args.get("amount", "Unknown"), flow_manager)
+    async def _record_cpt_data_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        """Batch record CPT coverage fields."""
+        captured = await self._record_batch(args, flow_manager, self.CPT_COVERAGE_FIELDS)
+        logger.debug(f"[Flow] CPT data recorded: {captured if captured else 'none'}")
+        return None, None
 
-    async def _record_coinsurance_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("coinsurance_percent", args.get("percent", "Unknown"), flow_manager)
-
-    async def _record_deductible_applies_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_applies", args.get("applies", "Unknown"), flow_manager)
-
-    async def _record_prior_auth_required_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("prior_auth_required", args.get("required", "Unknown"), flow_manager)
-
-    async def _record_telehealth_covered_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("telehealth_covered", args.get("covered", "Unknown"), flow_manager)
-
-    # ═══════════════════════════════════════════════════════════════════
-    # ACCUMULATOR HANDLERS
-    # ═══════════════════════════════════════════════════════════════════
-
-    async def _record_deductible_individual_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_individual", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_deductible_individual_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_individual_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_deductible_family_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_family", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_deductible_family_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_family_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_individual_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_individual", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_individual_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_individual_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_family_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_family", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_family_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_family_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_allowed_amount_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("allowed_amount", args.get("amount", "Unknown"), flow_manager)
+    async def _record_accumulator_data_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
+        """Batch record accumulator fields."""
+        captured = await self._record_batch(args, flow_manager, self.ACCUMULATOR_FIELDS)
+        logger.debug(f"[Flow] Accumulator data recorded: {captured if captured else 'none'}")
+        return None, None
 
     async def _record_reference_number_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
         return await self._record_field("reference_number", args.get("reference_number", ""), flow_manager)

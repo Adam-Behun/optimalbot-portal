@@ -342,23 +342,27 @@ def grade_function_calls(
             if fn in called_functions:
                 failures.append(f"Forbidden called: {fn}")
 
-    # function name -> (state_field, arg_name)
+    # function name -> (state_field, arg_name) for single-field record functions
     func_to_field = {
-        "record_network_status": ("network_status", "status"),
-        "record_plan_type": ("plan_type", "plan_type"),
-        "record_cpt_covered": ("cpt_covered", "covered"),
-        "record_copay": ("copay_amount", "amount"),
-        "record_coinsurance": ("coinsurance_percent", "percent"),
-        "record_prior_auth_required": ("prior_auth_required", "required"),
-        "record_deductible_family": ("deductible_family", "amount"),
-        "record_deductible_family_met": ("deductible_family_met", "amount"),
-        "record_oop_max_family": ("oop_max_family", "amount"),
-        "record_oop_max_family_met": ("oop_max_family_met", "amount"),
-        "record_deductible_individual": ("deductible_individual", "amount"),
-        "record_deductible_individual_met": ("deductible_individual_met", "amount"),
-        "record_oop_max_individual": ("oop_max_individual", "amount"),
-        "record_oop_max_individual_met": ("oop_max_individual_met", "amount"),
         "record_reference_number": ("reference_number", "reference_number"),
+    }
+
+    # Batch record functions: arg names match state field names directly
+    batch_record_fields = {
+        "record_plan_data": {
+            "network_status", "plan_type", "plan_effective_date", "plan_term_date",
+        },
+        "record_cpt_data": {
+            "cpt_covered", "copay_amount", "coinsurance_percent",
+            "deductible_applies", "prior_auth_required", "telehealth_covered",
+        },
+        "record_accumulator_data": {
+            "deductible_individual", "deductible_individual_met",
+            "deductible_family", "deductible_family_met",
+            "oop_max_individual", "oop_max_individual_met",
+            "oop_max_family", "oop_max_family_met",
+            "allowed_amount",
+        },
     }
 
     # Fields that can be captured via proceed_to_* functions (arg name = state field name)
@@ -375,7 +379,7 @@ def grade_function_calls(
             fn_name = fc["function"]
             args = fc.get("args", {})
 
-            # Check record_* functions
+            # Check single-field record_* functions
             if fn_name in func_to_field:
                 state_field, arg_name = func_to_field[fn_name]
                 if state_field in expected_data:
@@ -385,6 +389,19 @@ def grade_function_calls(
                         checks.append(f"{fn_name}: {actual_val}")
                     else:
                         failures.append(f"{fn_name}: expected {expected_val}, got {actual_val}")
+
+            # Check batch record functions (arg names = state field names)
+            elif fn_name in batch_record_fields:
+                for field in batch_record_fields[fn_name]:
+                    if field in args and field in expected_data:
+                        actual_val = args[field]
+                        if actual_val is None or actual_val == "None" or actual_val == "":
+                            continue
+                        expected_val = expected_data[field]
+                        if _values_match(expected_val, actual_val):
+                            checks.append(f"{fn_name}.{field}: {actual_val}")
+                        else:
+                            failures.append(f"{fn_name}.{field}: expected {expected_val}, got {actual_val}")
 
             # Check proceed_to_* functions for volunteered data (skip None values - not yet gathered)
             elif fn_name.startswith("proceed_to_"):
@@ -552,6 +569,7 @@ def list_scenarios() -> None:
 class MockFlowManager:
     def __init__(self):
         self.state = {}
+        self.current_node = None
 
 
 class MockPipeline:
@@ -606,6 +624,7 @@ class FlowRunner:
         # Start with greeting node (unified for with/without IVR)
         self.current_node = self.flow.create_greeting_node()
         self.current_node_name = self.current_node.get("name", "greeting")
+        self.mock_flow_manager.current_node = self.current_node_name
         self.context = EvalContextManager()
         self.context.set_node(self.current_node)
         self.function_calls = []  # Track all function calls
@@ -778,6 +797,7 @@ class FlowRunner:
                 if next_node:
                     self.current_node = next_node
                     self.current_node_name = next_node.get("name", "unknown")
+                    self.mock_flow_manager.current_node = self.current_node_name
                     self.context.set_node(next_node)
                     # Process pre_actions on the new node (e.g., tts_say, function)
                     pre_actions = self.current_node.get("pre_actions") or []

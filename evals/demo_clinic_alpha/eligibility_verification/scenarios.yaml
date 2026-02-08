@@ -585,11 +585,6 @@ scenarios:
     expected_db_state:
       cpt_covered: false
       reference_number: "UHC-NC-2025-5432"
-    forbidden_functions:
-      - record_copay
-      - record_coinsurance
-      - record_prior_auth_required
-      - record_telehealth_covered
     patient:
       patient_name: "Emily Johnson"
       date_of_birth: "02/28/1975"

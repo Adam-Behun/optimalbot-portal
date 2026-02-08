@@ -102,6 +102,35 @@ class DialoutBaseFlow(ABC):
         logger.debug(f"[Flow] Recorded: {field_name}={value}")
         return None, None
 
+    async def _record_batch(
+        self, args: Dict[str, Any], flow_manager: FlowManager, field_map: Dict[str, str]
+    ) -> list[str]:
+        """Record multiple fields from a single batch function call.
+
+        Args:
+            args: Function call arguments from LLM.
+            flow_manager: The flow manager instance.
+            field_map: Maps arg key → state key for each field.
+
+        Returns:
+            List of captured field names.
+        """
+        captured = []
+        patient_id = flow_manager.state.get("patient_id")
+
+        for arg_key, state_key in field_map.items():
+            value = args.get(arg_key, "")
+            if isinstance(value, str):
+                value = value.strip()
+            if value:
+                flow_manager.state[state_key] = value
+                await self._try_db_update(patient_id, "update_field", state_key, value)
+                captured.append(state_key)
+
+        if captured:
+            logger.debug(f"[Flow] Batch recorded: {captured}")
+        return captured
+
     # ==================== Shared Schemas ====================
 
     def _end_call_schema(self) -> FlowsFunctionSchema:
