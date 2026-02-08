@@ -3,14 +3,15 @@ Cost-related API endpoints.
 Provides cost summaries, rate transparency, and exports.
 """
 
+import math
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from backend.costs.excel_export import FinancialData, FinancialModelExporter
-from backend.costs.service import CostService, build_org_map, get_cost_service
+from backend.costs.service import CostService, build_org_map, get_benchmarks, get_cost_service
 from backend.dependencies import (
     get_organization_db,
     get_session_db,
@@ -241,3 +242,23 @@ async def export_costs(
     except Exception:
         logger.exception("Error exporting costs")
         raise
+
+
+@router.get("/estimate")
+async def estimate_costs(
+    minutes: float,
+    current_user: dict = Depends(require_super_admin),
+    session_db: AsyncSessionRecord = Depends(get_session_db),
+    cost_service: CostService = Depends(get_cost_service),
+):
+    """Estimate monthly cost for a given call volume based on historical per-minute rates."""
+    if not math.isfinite(minutes) or minutes <= 0:
+        raise HTTPException(status_code=400, detail="Minutes must be a positive number")
+    if minutes > 10_000_000:
+        raise HTTPException(status_code=400, detail="Minutes exceeds reasonable maximum")
+
+    benchmarks = await get_benchmarks(session_db.db)
+    if not benchmarks:
+        raise HTTPException(status_code=404, detail="No benchmark data available")
+
+    return cost_service.estimate_monthly_cost(minutes, benchmarks)

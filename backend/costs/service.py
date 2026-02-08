@@ -3,11 +3,81 @@ Cost aggregation service.
 Handles cost queries and builds transparent breakdowns for sessions.
 """
 
+import statistics
 from dataclasses import dataclass
 from typing import Optional
 
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
 from backend.models.organization import AsyncOrganizationRecord
 from costs.calculator import CostCalculator
+
+
+async def get_benchmarks(db: AsyncIOMotorDatabase) -> dict | None:
+    """
+    Query cost_benchmarks (archived dev data) + sessions (live data)
+    to compute per-minute rates (P90 and average) for each cost component.
+    """
+    # Start from sessions; union with cost_benchmarks only if it exists
+    existing = await db.list_collection_names()
+    pipeline = []
+    if "cost_benchmarks" in existing:
+        pipeline.append({"$unionWith": "cost_benchmarks"})
+    pipeline.extend([
+        {
+            "$match": {
+                "total_cost_usd": {"$gt": 0},
+                "usage.telephony.seconds": {"$gt": 10},
+            }
+        },
+        {
+            "$project": {
+                "minutes": {"$divide": ["$usage.telephony.seconds", 60]},
+                "llm_usd": {"$ifNull": ["$costs.llm_usd", 0]},
+                "tts_usd": {"$ifNull": ["$costs.tts_usd", 0]},
+                "stt_usd": {"$ifNull": ["$costs.stt_usd", 0]},
+                "telephony_usd": {"$ifNull": ["$costs.telephony_usd", 0]},
+            }
+        },
+        {
+            "$project": {
+                "llm_per_min": {"$divide": ["$llm_usd", "$minutes"]},
+                "tts_per_min": {"$divide": ["$tts_usd", "$minutes"]},
+                "stt_per_min": {"$divide": ["$stt_usd", "$minutes"]},
+                "telephony_per_min": {"$divide": ["$telephony_usd", "$minutes"]},
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "session_count": {"$sum": 1},
+                "llm_rates": {"$push": "$llm_per_min"},
+                "tts_rates": {"$push": "$tts_per_min"},
+                "stt_rates": {"$push": "$stt_per_min"},
+                "telephony_rates": {"$push": "$telephony_per_min"},
+            }
+        },
+    ])
+
+    results = await db.sessions.aggregate(pipeline).to_list(length=1)
+    if not results:
+        return None
+
+    row = results[0]
+    components = ["llm", "tts", "stt", "telephony"]
+    p90 = {}
+    avg = {}
+
+    for comp in components:
+        rates = row[f"{comp}_rates"]
+        avg[comp] = statistics.mean(rates)
+        p90[comp] = statistics.quantiles(rates, n=10)[8] if len(rates) >= 2 else rates[0]
+
+    return {
+        "session_count": row["session_count"],
+        "p90": p90,
+        "avg": avg,
+    }
 
 
 async def build_org_map(org_db: AsyncOrganizationRecord) -> dict[str, str]:
@@ -36,6 +106,32 @@ class CostService:
     def get_rates(self) -> dict:
         """Return current rates from variable_costs.yaml."""
         return self._calculator.get_rates()
+
+    @staticmethod
+    def estimate_monthly_cost(minutes: float, benchmarks: dict) -> dict:
+        """Multiply per-minute rates by requested minutes for each component."""
+        components = ["llm", "tts", "stt", "telephony"]
+
+        def build_tier(tier_key: str) -> dict:
+            rates = benchmarks[tier_key]
+            result = {}
+            for comp in components:
+                rate = rates[comp]
+                result[comp] = {
+                    "per_minute": round(rate, 6),
+                    "monthly_cost": round(rate * minutes, 2),
+                }
+            result["total"] = round(
+                sum(result[c]["monthly_cost"] for c in components), 2
+            )
+            return result
+
+        return {
+            "monthly_minutes": minutes,
+            "p90": build_tier("p90"),
+            "avg": build_tier("avg"),
+            "session_count": benchmarks["session_count"],
+        }
 
     def build_session_cost_audit(self, session: dict) -> list[CostBreakdownItem]:
         """
