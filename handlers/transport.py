@@ -85,6 +85,7 @@ async def save_usage_costs(pipeline):
         logger.warning(f"No usage observer for session {pipeline.session_id}, costs not tracked")
         return
     try:
+        pipeline.usage_observer.mark_call_ended()
         costs = pipeline.usage_observer.get_usage_summary()
         success = await get_async_session_db().update_session(
             pipeline.session_id,

@@ -10,9 +10,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { getAdminCosts, exportCosts, AdminCosts as AdminCostsType } from '@/api';
+import { Input } from '@/components/ui/input';
+import { getAdminCosts, exportCosts, getCostEstimate, AdminCosts as AdminCostsType, CostEstimate } from '@/api';
 import { downloadBlob } from '@/lib/download';
-import { DollarSign, Calendar, CalendarDays, CalendarRange, RefreshCw, Download } from 'lucide-react';
+import { DollarSign, Calendar, CalendarDays, CalendarRange, RefreshCw, Download, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
 
 function formatCurrency(value: number, decimals = 4): string {
@@ -29,6 +30,9 @@ export function AdminCosts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [estimateMinutes, setEstimateMinutes] = useState('');
+  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
+  const [estimating, setEstimating] = useState(false);
 
   const fetchData = () => {
     setLoading(true);
@@ -49,6 +53,24 @@ export function AdminCosts() {
       toast.error('Failed to export costs');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleEstimate = async () => {
+    const minutes = parseFloat(estimateMinutes);
+    if (isNaN(minutes) || minutes <= 0 || !isFinite(minutes)) {
+      toast.error('Enter a valid positive number of minutes');
+      return;
+    }
+    setEstimating(true);
+    try {
+      const result = await getCostEstimate(minutes);
+      setEstimate(result);
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Failed to estimate costs';
+      toast.error(msg);
+    } finally {
+      setEstimating(false);
     }
   };
 
@@ -235,7 +257,7 @@ export function AdminCosts() {
       </Card>
 
       {/* Cost by Organization (MTD) */}
-      <Card>
+      <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <DollarSign className="h-5 w-5" />
@@ -276,6 +298,82 @@ export function AdminCosts() {
             </div>
           ) : (
             <p className="text-muted-foreground text-center py-4">No data available</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Cost Estimator */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Calculator className="h-5 w-5" />
+            Cost Estimator
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2 mb-4">
+            <Input
+              type="number"
+              placeholder="Monthly minutes (e.g. 5000)"
+              value={estimateMinutes}
+              onChange={(e) => setEstimateMinutes(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleEstimate()}
+              className="max-w-xs"
+            />
+            <Button onClick={handleEstimate} disabled={estimating}>
+              {estimating ? 'Calculating...' : 'Calculate'}
+            </Button>
+          </div>
+
+          {estimate && (
+            <>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Component</TableHead>
+                      <TableHead className="text-right">$/min (P90)</TableHead>
+                      <TableHead className="text-right">$/min (Avg)</TableHead>
+                      <TableHead className="text-right">Monthly P90</TableHead>
+                      <TableHead className="text-right">Monthly Avg</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(['llm', 'tts', 'stt', 'telephony'] as const).map((comp) => (
+                      <TableRow key={comp}>
+                        <TableCell className="font-medium">{comp.toUpperCase()}</TableCell>
+                        <TableCell className="text-right font-mono">
+                          {formatCurrency(estimate.p90[comp].per_minute, 6)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {formatCurrency(estimate.avg[comp].per_minute, 6)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {formatCurrency(estimate.p90[comp].monthly_cost, 2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {formatCurrency(estimate.avg[comp].monthly_cost, 2)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="font-bold border-t-2">
+                      <TableCell>Total</TableCell>
+                      <TableCell className="text-right" />
+                      <TableCell className="text-right" />
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(estimate.p90.total, 2)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(estimate.avg.total, 2)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Based on {estimate.session_count} sessions | {estimate.monthly_minutes.toLocaleString()} min/month
+              </p>
+            </>
           )}
         </CardContent>
       </Card>

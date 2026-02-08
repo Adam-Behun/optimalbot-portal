@@ -402,6 +402,36 @@ export const exportCosts = async (): Promise<{ blob: Blob; filename: string }> =
 };
 
 // =============================================================================
+// Cost Estimator Types and Functions (Super Admin Only)
+// =============================================================================
+
+export interface ComponentRate {
+  per_minute: number;
+  monthly_cost: number;
+}
+
+export interface CostEstimateTier {
+  llm: ComponentRate;
+  tts: ComponentRate;
+  stt: ComponentRate;
+  telephony: ComponentRate;
+  total: number;
+}
+
+export interface CostEstimate {
+  monthly_minutes: number;
+  p90: CostEstimateTier;
+  avg: CostEstimateTier;
+  session_count: number;
+}
+
+// GET /admin/estimate - Estimate monthly cost based on per-minute benchmarks
+export const getCostEstimate = async (minutes: number): Promise<CostEstimate> => {
+  const response = await api.get<CostEstimate>('/admin/estimate', { params: { minutes } });
+  return response.data;
+};
+
+// =============================================================================
 // Onboarding API Types and Functions (Super Admin Only)
 // =============================================================================
 
