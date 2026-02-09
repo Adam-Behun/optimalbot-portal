@@ -33,15 +33,37 @@ stt:
 tts:
   cartesia:
     pricing_url: https://cartesia.ai/pricing
-    last_verified: 2025-01-17
+    last_verified: 2025-02-08
     hipaa: baa_available
+    notes: Pro plan $5/mo includes 100K credits. Overage at $65/1M. 1 credit = 1 char.
     sonic:
-      per_1m_characters: 60.00
+      per_1m_characters: 65.00
+      plan_credits: 100000
 
 telephony:
   daily:
     pricing_url: https://www.daily.co/pricing/pipecat-cloud/
-    last_verified: 2025-01-17
+    last_verified: 2025-02-08
     hipaa: baa_available
     sip:
-      per_minute: 0.004
+      per_minute: 0.005
+    sip_refer:
+      per_event: 0.20
+
+hosting:
+  pipecat_cloud:
+    pricing_url: https://www.daily.co/pricing/pipecat-cloud/
+    last_verified: 2025-02-08
+    hipaa: verify
+    agent-1x:
+      per_minute: 0.01
+
+recording:
+  daily:
+    pricing_url: https://www.daily.co/pricing/pipecat-cloud/
+    last_verified: 2025-02-08
+    hipaa: baa_available
+    audio:
+      per_minute: 0.005
+    storage:
+      per_minute: 0.003

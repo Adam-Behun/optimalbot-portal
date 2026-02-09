@@ -13,23 +13,10 @@ from backend.models.organization import AsyncOrganizationRecord
 from costs.calculator import CostCalculator
 
 
-async def get_benchmarks(db: AsyncIOMotorDatabase) -> dict | None:
-    """
-    Query cost_benchmarks (archived dev data) + sessions (live data)
-    to compute per-minute rates (P90 and average) for each cost component.
-    """
-    # Start from sessions; union with cost_benchmarks only if it exists
-    existing = await db.list_collection_names()
-    pipeline = []
-    if "cost_benchmarks" in existing:
-        pipeline.append({"$unionWith": "cost_benchmarks"})
-    pipeline.extend([
-        {
-            "$match": {
-                "total_cost_usd": {"$gt": 0},
-                "usage.telephony.seconds": {"$gt": 10},
-            }
-        },
+async def _fetch_rate_docs(collection, match_filter: dict) -> list[dict]:
+    """Run per-minute rate projection on a collection and return docs."""
+    pipeline = [
+        {"$match": match_filter},
         {
             "$project": {
                 "minutes": {"$divide": ["$usage.telephony.seconds", 60]},
@@ -37,6 +24,7 @@ async def get_benchmarks(db: AsyncIOMotorDatabase) -> dict | None:
                 "tts_usd": {"$ifNull": ["$costs.tts_usd", 0]},
                 "stt_usd": {"$ifNull": ["$costs.stt_usd", 0]},
                 "telephony_usd": {"$ifNull": ["$costs.telephony_usd", 0]},
+                "transfer_usd": {"$ifNull": ["$costs.transfer_usd", 0]},
             }
         },
         {
@@ -45,36 +33,61 @@ async def get_benchmarks(db: AsyncIOMotorDatabase) -> dict | None:
                 "tts_per_min": {"$divide": ["$tts_usd", "$minutes"]},
                 "stt_per_min": {"$divide": ["$stt_usd", "$minutes"]},
                 "telephony_per_min": {"$divide": ["$telephony_usd", "$minutes"]},
+                "transfer_per_min": {"$divide": ["$transfer_usd", "$minutes"]},
             }
         },
-        {
-            "$group": {
-                "_id": None,
-                "session_count": {"$sum": 1},
-                "llm_rates": {"$push": "$llm_per_min"},
-                "tts_rates": {"$push": "$tts_per_min"},
-                "stt_rates": {"$push": "$stt_per_min"},
-                "telephony_rates": {"$push": "$telephony_per_min"},
-            }
-        },
-    ])
+    ]
+    return await collection.aggregate(pipeline).to_list(length=None)
 
-    results = await db.sessions.aggregate(pipeline).to_list(length=1)
-    if not results:
+
+async def get_benchmarks(db: AsyncIOMotorDatabase) -> dict | None:
+    """
+    Query sessions (live data) + cost_benchmarks (archived dev data)
+    to compute per-minute rates (P90 and average) for each cost component.
+
+    LLM/TTS/STT/telephony/transfer: derived from historical per-minute rates.
+    Hosting/recording: fixed YAML rates (same every minute).
+    """
+    match_filter = {
+        "total_cost_usd": {"$gt": 0},
+        "usage.telephony.seconds": {"$gt": 10},
+    }
+
+    docs = await _fetch_rate_docs(db.sessions, match_filter)
+
+    # Also pull from cost_benchmarks if it exists
+    existing = await db.list_collection_names()
+    if "cost_benchmarks" in existing:
+        docs.extend(await _fetch_rate_docs(db.cost_benchmarks, match_filter))
+
+    if not docs:
         return None
 
-    row = results[0]
-    components = ["llm", "tts", "stt", "telephony"]
+    # Session-derived rates (vary per call)
+    variable_components = ["llm", "tts", "stt", "telephony", "transfer"]
+    rates_by_comp = {comp: [d[f"{comp}_per_min"] for d in docs] for comp in variable_components}
+
     p90 = {}
     avg = {}
-
-    for comp in components:
-        rates = row[f"{comp}_rates"]
+    for comp in variable_components:
+        rates = rates_by_comp[comp]
         avg[comp] = statistics.mean(rates)
         p90[comp] = statistics.quantiles(rates, n=10)[8] if len(rates) >= 2 else rates[0]
 
+    # Fixed-rate components (same rate every minute, no P90/avg distinction)
+    calculator = CostCalculator()
+    hosting_rate = calculator._get_service_rate("hosting", "pipecat_cloud", "per_minute")
+    recording_rates = calculator._rates.get("recording", {}).get("daily", {})
+    recording_rate = (
+        recording_rates.get("audio", {}).get("per_minute", 0)
+        + recording_rates.get("storage", {}).get("per_minute", 0)
+    )
+    for comp, rate in [("hosting", hosting_rate), ("recording", recording_rate)]:
+        p90[comp] = rate
+        avg[comp] = rate
+
     return {
-        "session_count": row["session_count"],
+        "session_count": len(docs),
         "p90": p90,
         "avg": avg,
     }
@@ -110,13 +123,13 @@ class CostService:
     @staticmethod
     def estimate_monthly_cost(minutes: float, benchmarks: dict) -> dict:
         """Multiply per-minute rates by requested minutes for each component."""
-        components = ["llm", "tts", "stt", "telephony"]
+        components = ["llm", "tts", "stt", "telephony", "hosting", "recording", "transfer"]
 
         def build_tier(tier_key: str) -> dict:
             rates = benchmarks[tier_key]
             result = {}
             for comp in components:
-                rate = rates[comp]
+                rate = rates.get(comp, 0)
                 result[comp] = {
                     "per_minute": round(rate, 6),
                     "monthly_cost": round(rate * minutes, 2),
@@ -230,6 +243,51 @@ class CostService:
                 CostBreakdownItem(
                     service=f"telephony ({telephony_provider})",
                     usage=f"{telephony_seconds:.1f}s",
+                    rate=result.rate_unit,
+                    formula=result.formula,
+                    cost_usd=result.cost_usd,
+                )
+            )
+
+        # Hosting breakdown
+        hosting_usage = usage.get("hosting", {})
+        hosting_seconds = hosting_usage.get("seconds", 0)
+        if hosting_seconds > 0:
+            result = self._calculator.calculate_hosting_cost(hosting_seconds)
+            breakdown.append(
+                CostBreakdownItem(
+                    service="hosting (pipecat cloud)",
+                    usage=f"{hosting_seconds:.1f}s",
+                    rate=result.rate_unit,
+                    formula=result.formula,
+                    cost_usd=result.cost_usd,
+                )
+            )
+
+        # Recording breakdown
+        recording_usage = usage.get("recording", {})
+        recording_seconds = recording_usage.get("seconds", 0)
+        if recording_seconds > 0:
+            result = self._calculator.calculate_recording_cost(recording_seconds)
+            breakdown.append(
+                CostBreakdownItem(
+                    service="recording (daily)",
+                    usage=f"{recording_seconds:.1f}s",
+                    rate=result.rate_unit,
+                    formula=result.formula,
+                    cost_usd=result.cost_usd,
+                )
+            )
+
+        # Transfer breakdown
+        transfer_usage = usage.get("transfer", {})
+        transfer_count = transfer_usage.get("count", 0)
+        if transfer_count > 0:
+            result = self._calculator.calculate_transfer_cost(transfer_count)
+            breakdown.append(
+                CostBreakdownItem(
+                    service="transfer (sip refer)",
+                    usage=f"{transfer_count} event(s)",
                     rate=result.rate_unit,
                     formula=result.formula,
                     cost_usd=result.cost_usd,

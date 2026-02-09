@@ -11,9 +11,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
-import { getAdminCosts, exportCosts, getCostEstimate, AdminCosts as AdminCostsType, CostEstimate } from '@/api';
+import { getAdminCosts, exportCosts, getCostEstimate, AdminCosts as AdminCostsType, CostEstimate, LLMModelCost } from '@/api';
 import { downloadBlob } from '@/lib/download';
-import { DollarSign, Calendar, CalendarDays, CalendarRange, RefreshCw, Download, Calculator } from 'lucide-react';
+import { DollarSign, Calendar, CalendarDays, CalendarRange, RefreshCw, Download, Calculator, AudioLines } from 'lucide-react';
 import { toast } from 'sonner';
 
 function formatCurrency(value: number, decimals = 4): string {
@@ -202,6 +202,19 @@ export function AdminCosts() {
                 </span>
               </div>
               <Progress value={comp.percentage} className="h-2" />
+              {comp.component === 'LLM' && data?.by_llm_model && data.by_llm_model.length > 0 && (
+                <div className="ml-4 mt-1 space-y-1">
+                  {data.by_llm_model.map((m: LLMModelCost) => {
+                    const modelPct = comp.cost_usd > 0 ? (m.cost_usd / comp.cost_usd) * 100 : 0;
+                    return (
+                      <div key={m.model} className="flex justify-between text-xs text-muted-foreground">
+                        <span className="font-mono">{m.model}</span>
+                        <span>{formatCurrency(m.cost_usd)} ({modelPct.toFixed(0)}%)</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           ))}
           {componentPercentages.length === 0 && (
@@ -209,6 +222,39 @@ export function AdminCosts() {
           )}
         </CardContent>
       </Card>
+
+      {/* TTS Credits (Cartesia Plan) */}
+      {data?.tts_credits && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AudioLines className="h-5 w-5" />
+              TTS Credits — Cartesia Pro (MTD)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex justify-between text-sm">
+                <span>
+                  {data.tts_credits.used.toLocaleString()} / {data.tts_credits.plan_limit.toLocaleString()} credits used
+                </span>
+                <span className={data.tts_credits.pct_used > 80 ? 'text-destructive font-medium' : 'text-muted-foreground'}>
+                  {data.tts_credits.pct_used}%
+                </span>
+              </div>
+              <Progress value={Math.min(data.tts_credits.pct_used, 100)} className="h-3" />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>{data.tts_credits.remaining.toLocaleString()} remaining</span>
+                {data.tts_credits.overage > 0 && (
+                  <span className="text-destructive font-medium">
+                    {data.tts_credits.overage.toLocaleString()} overage chars @ $65/1M
+                  </span>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Cost by Workflow (MTD) */}
       <Card className="mb-6">
@@ -339,7 +385,7 @@ export function AdminCosts() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(['llm', 'tts', 'stt', 'telephony'] as const).map((comp) => (
+                    {(['llm', 'tts', 'stt', 'telephony', 'hosting', 'recording', 'transfer'] as const).map((comp) => (
                       <TableRow key={comp}>
                         <TableCell className="font-medium">{comp.toUpperCase()}</TableCell>
                         <TableCell className="text-right font-mono">

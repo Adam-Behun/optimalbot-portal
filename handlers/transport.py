@@ -155,6 +155,8 @@ def setup_dialin_handlers(pipeline):
         if not pipeline.transfer_in_progress:
             return
         logger.info("[Call] Transfer completed - staff answered")
+        if hasattr(pipeline, 'usage_observer') and pipeline.usage_observer:
+            pipeline.usage_observer.mark_transfer()
         pipeline.transcripts.append({
             "role": "system",
             "content": "Call transferred to staff",
@@ -195,6 +197,8 @@ def setup_dialout_handlers(pipeline):
     async def on_dialout_answered(transport, data):
         if pipeline.transfer_in_progress:
             logger.info("[Call] Supervisor transfer completed")
+            if hasattr(pipeline, 'usage_observer') and pipeline.usage_observer:
+                pipeline.usage_observer.mark_transfer()
             pipeline.transcripts.append({
                 "role": "system",
                 "content": "Call transferred to supervisor",
