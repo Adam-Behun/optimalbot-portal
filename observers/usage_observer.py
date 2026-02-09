@@ -56,6 +56,8 @@ class UsageObserver(BaseObserver):
         self._telephony_provider: str = telephony_provider
         self._call_connected_at: Optional[float] = None
 
+        self._transfer_count: int = 0
+
         # Deduplication: track processed frame IDs to avoid duplicate metrics
         self._processed_frame_ids: set = set()
 
@@ -148,6 +150,11 @@ class UsageObserver(BaseObserver):
             self._call_connected_at = time.time()
             logger.debug("[Usage] Call connected")
 
+    def mark_transfer(self):
+        """Called by transport handler when a SIP Refer transfer occurs."""
+        self._transfer_count += 1
+        logger.debug(f"[Usage] Transfer recorded (total: {self._transfer_count})")
+
     def mark_call_ended(self):
         """Called by transport handler when call ends. Idempotent."""
         if self._call_connected_at and self._telephony_seconds == 0.0:
@@ -174,6 +181,7 @@ class UsageObserver(BaseObserver):
             stt_seconds=self._stt_seconds,
             telephony_provider=self._telephony_provider,
             telephony_seconds=self._telephony_seconds,
+            transfer_count=self._transfer_count,
         )
 
     def _log_summary(self):

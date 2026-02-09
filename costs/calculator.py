@@ -259,6 +259,51 @@ class CostCalculator:
             formula=formula,
         )
 
+    def calculate_hosting_cost(self, seconds: float) -> CostResult:
+        """Calculate Pipecat Cloud hosting cost (agent-1x active minutes)."""
+        rate = self._get_service_rate("hosting", "pipecat_cloud", "per_minute")
+        cost = (seconds / 60) * rate
+
+        return CostResult(
+            cost_usd=round(cost, 6),
+            usage=round(seconds, 2),
+            unit="seconds",
+            rate=rate,
+            rate_unit=f"${rate}/min",
+            formula=f"{seconds:.1f}s÷60×${rate}/min",
+        )
+
+    def calculate_recording_cost(self, seconds: float) -> CostResult:
+        """Calculate Daily recording cost (audio capture + storage)."""
+        recording_rates = self._rates.get("recording", {}).get("daily", {})
+        audio_rate = recording_rates.get("audio", {}).get("per_minute", 0)
+        storage_rate = recording_rates.get("storage", {}).get("per_minute", 0)
+        combined_rate = audio_rate + storage_rate
+        cost = (seconds / 60) * combined_rate
+
+        return CostResult(
+            cost_usd=round(cost, 6),
+            usage=round(seconds, 2),
+            unit="seconds",
+            rate=combined_rate,
+            rate_unit=f"${audio_rate}+${storage_rate}/min",
+            formula=f"{seconds:.1f}s÷60×(${audio_rate}+${storage_rate})/min",
+        )
+
+    def calculate_transfer_cost(self, transfer_count: int) -> CostResult:
+        """Calculate SIP Refer transfer cost ($0.20 per event)."""
+        rate = self._rates.get("telephony", {}).get("daily", {}).get("sip_refer", {}).get("per_event", 0)
+        cost = transfer_count * rate
+
+        return CostResult(
+            cost_usd=round(cost, 6),
+            usage=transfer_count,
+            unit="transfers",
+            rate=rate,
+            rate_unit=f"${rate}/event",
+            formula=f"{transfer_count}×${rate}/event",
+        )
+
     def calculate_session_costs(
         self,
         llm_usage: dict,
@@ -268,6 +313,7 @@ class CostCalculator:
         stt_seconds: float,
         telephony_provider: str,
         telephony_seconds: float,
+        transfer_count: int = 0,
     ) -> dict:
         """
         Calculate all costs for a session with full breakdown.
@@ -316,7 +362,24 @@ class CostCalculator:
         # Telephony costs
         telephony_result = self.calculate_telephony_cost(telephony_provider, telephony_seconds)
 
-        total_cost = llm_cost + tts_result.cost_usd + stt_result.cost_usd + telephony_result.cost_usd
+        # Hosting costs (billed on same duration as telephony)
+        hosting_result = self.calculate_hosting_cost(telephony_seconds)
+
+        # Recording costs (billed on same duration as telephony)
+        recording_result = self.calculate_recording_cost(telephony_seconds)
+
+        # Transfer costs (per-event)
+        transfer_result = self.calculate_transfer_cost(transfer_count)
+
+        total_cost = (
+            llm_cost
+            + tts_result.cost_usd
+            + stt_result.cost_usd
+            + telephony_result.cost_usd
+            + hosting_result.cost_usd
+            + recording_result.cost_usd
+            + transfer_result.cost_usd
+        )
 
         return {
             "usage": {
@@ -343,12 +406,33 @@ class CostCalculator:
                     "formula": telephony_result.formula,
                     "rate_unit": telephony_result.rate_unit,
                 },
+                "hosting": {
+                    "seconds": round(telephony_seconds, 2),
+                    "provider": "pipecat_cloud",
+                    "formula": hosting_result.formula,
+                    "rate_unit": hosting_result.rate_unit,
+                },
+                "recording": {
+                    "seconds": round(telephony_seconds, 2),
+                    "provider": "daily",
+                    "formula": recording_result.formula,
+                    "rate_unit": recording_result.rate_unit,
+                },
+                "transfer": {
+                    "count": transfer_count,
+                    "provider": "daily",
+                    "formula": transfer_result.formula,
+                    "rate_unit": transfer_result.rate_unit,
+                },
             },
             "costs": {
                 "llm_usd": round(llm_cost, 6),
                 "tts_usd": tts_result.cost_usd,
                 "stt_usd": stt_result.cost_usd,
                 "telephony_usd": telephony_result.cost_usd,
+                "hosting_usd": hosting_result.cost_usd,
+                "recording_usd": recording_result.cost_usd,
+                "transfer_usd": transfer_result.cost_usd,
             },
             "total_cost_usd": round(total_cost, 4),
         }

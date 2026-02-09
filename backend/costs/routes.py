@@ -75,6 +75,10 @@ async def get_admin_costs(
                                 "tts": {"$sum": {"$ifNull": ["$costs.tts_usd", 0]}},
                                 "stt": {"$sum": {"$ifNull": ["$costs.stt_usd", 0]}},
                                 "telephony": {"$sum": {"$ifNull": ["$costs.telephony_usd", 0]}},
+                                "hosting": {"$sum": {"$ifNull": ["$costs.hosting_usd", 0]}},
+                                "recording": {"$sum": {"$ifNull": ["$costs.recording_usd", 0]}},
+                                "transfer": {"$sum": {"$ifNull": ["$costs.transfer_usd", 0]}},
+                                "tts_characters": {"$sum": {"$ifNull": ["$usage.tts.characters", 0]}},
                             }
                         }
                     ],
@@ -100,6 +104,20 @@ async def get_admin_costs(
                         },
                         {"$sort": {"total_cost": -1}},
                     ],
+                    "by_llm_model": [
+                        {"$match": {"usage.llm.models": {"$exists": True, "$ne": None}}},
+                        {"$project": {"models_arr": {"$objectToArray": "$usage.llm.models"}}},
+                        {"$unwind": "$models_arr"},
+                        {
+                            "$group": {
+                                "_id": "$models_arr.k",
+                                "cost_usd": {"$sum": {"$ifNull": ["$models_arr.v.cost_usd", 0]}},
+                                "prompt_tokens": {"$sum": {"$ifNull": ["$models_arr.v.prompt_tokens", 0]}},
+                                "completion_tokens": {"$sum": {"$ifNull": ["$models_arr.v.completion_tokens", 0]}},
+                            }
+                        },
+                        {"$sort": {"cost_usd": -1}},
+                    ],
                 }
             },
         ]
@@ -113,6 +131,20 @@ async def get_admin_costs(
             {"component": "STT", "cost_usd": round(components.get("stt", 0), 4)},
             {"component": "TTS", "cost_usd": round(components.get("tts", 0), 4)},
             {"component": "Telephony", "cost_usd": round(components.get("telephony", 0), 4)},
+            {"component": "Hosting", "cost_usd": round(components.get("hosting", 0), 4)},
+            {"component": "Recording", "cost_usd": round(components.get("recording", 0), 4)},
+            {"component": "Transfer", "cost_usd": round(components.get("transfer", 0), 4)},
+        ]
+
+        # LLM model breakdown
+        by_llm_model = [
+            {
+                "model": r["_id"],
+                "cost_usd": round(r["cost_usd"], 6),
+                "prompt_tokens": r["prompt_tokens"],
+                "completion_tokens": r["completion_tokens"],
+            }
+            for r in mtd_data.get("by_llm_model", [])
         ]
 
         # Workflow breakdown
@@ -139,13 +171,25 @@ async def get_admin_costs(
             for r in mtd_data.get("by_organization", [])
         ]
 
+        # TTS credit usage (Cartesia plan tracking)
+        tts_characters = components.get("tts_characters", 0)
+        tts_credits = {
+            "used": tts_characters,
+            "plan_limit": 100_000,
+            "remaining": max(0, 100_000 - tts_characters),
+            "overage": max(0, tts_characters - 100_000),
+            "pct_used": round((tts_characters / 100_000) * 100, 1) if tts_characters else 0,
+        }
+
         return {
             "today": today_stats,
             "wtd": week_stats,
             "mtd": month_stats,
             "by_component": by_component,
+            "by_llm_model": by_llm_model,
             "by_workflow": by_workflow,
             "by_organization": by_organization,
+            "tts_credits": tts_credits,
         }
 
     except Exception:
@@ -188,6 +232,9 @@ async def export_costs(
                                 "tts_cost": {"$sum": {"$ifNull": ["$costs.tts_usd", 0]}},
                                 "stt_cost": {"$sum": {"$ifNull": ["$costs.stt_usd", 0]}},
                                 "telephony_cost": {"$sum": {"$ifNull": ["$costs.telephony_usd", 0]}},
+                                "hosting_cost": {"$sum": {"$ifNull": ["$costs.hosting_usd", 0]}},
+                                "recording_cost": {"$sum": {"$ifNull": ["$costs.recording_usd", 0]}},
+                                "transfer_cost": {"$sum": {"$ifNull": ["$costs.transfer_usd", 0]}},
                             }
                         }
                     ],
@@ -226,6 +273,9 @@ async def export_costs(
             stt_cost=totals.get("stt_cost", 0),
             tts_cost=totals.get("tts_cost", 0),
             telephony_cost=totals.get("telephony_cost", 0),
+            hosting_cost=totals.get("hosting_cost", 0),
+            recording_cost=totals.get("recording_cost", 0),
+            transfer_cost=totals.get("transfer_cost", 0),
             customer_data=customer_data,
         )
 

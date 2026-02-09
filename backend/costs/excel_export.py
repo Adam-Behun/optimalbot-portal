@@ -24,6 +24,9 @@ class FinancialData:
     stt_cost: float
     tts_cost: float
     telephony_cost: float
+    hosting_cost: float
+    recording_cost: float
+    transfer_cost: float
     customer_data: List[Tuple[str, float, int]]  # (name, cost, call_count)
 
 
@@ -114,7 +117,10 @@ class FinancialModelExporter:
             ("LLM (OpenAI/Groq)", round(self.data.llm_cost, 4)),
             ("STT (Deepgram)", round(self.data.stt_cost, 4)),
             ("TTS (Cartesia)", round(self.data.tts_cost, 4)),
-            ("Telephony (Daily)", round(self.data.telephony_cost, 4)),
+            ("Telephony (Daily SIP)", round(self.data.telephony_cost, 4)),
+            ("Hosting (Pipecat Cloud)", round(self.data.hosting_cost, 4)),
+            ("Recording (Daily)", round(self.data.recording_cost, 4)),
+            ("Transfer (SIP Refer)", round(self.data.transfer_cost, 4)),
         ]
         for name, cost in items:
             self._cell(1, name)

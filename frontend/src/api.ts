@@ -327,6 +327,13 @@ export interface ComponentCost {
   cost_usd: number;
 }
 
+export interface LLMModelCost {
+  model: string;
+  cost_usd: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
 export interface WorkflowCost {
   workflow: string;
   cost_usd: number;
@@ -342,13 +349,23 @@ export interface OrgCost {
   total_minutes: number;
 }
 
+export interface TTSCredits {
+  used: number;
+  plan_limit: number;
+  remaining: number;
+  overage: number;
+  pct_used: number;
+}
+
 export interface AdminCosts {
   today: PeriodCost;
   wtd: PeriodCost;
   mtd: PeriodCost;
   by_component: ComponentCost[];
+  by_llm_model?: LLMModelCost[];
   by_workflow: WorkflowCost[];
   by_organization: OrgCost[];
+  tts_credits?: TTSCredits;
 }
 
 // GET /admin/dashboard - Admin dashboard metrics
@@ -415,6 +432,9 @@ export interface CostEstimateTier {
   tts: ComponentRate;
   stt: ComponentRate;
   telephony: ComponentRate;
+  hosting: ComponentRate;
+  recording: ComponentRate;
+  transfer: ComponentRate;
   total: number;
 }
 

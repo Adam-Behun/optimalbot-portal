@@ -46,6 +46,16 @@ bot_hosting:
     pay_as_you_go:
       monthly: 0
 
+tts:
+  cartesia:
+    pricing_url: https://cartesia.ai/pricing
+    last_verified: 2025-02-08
+    hipaa: baa_available
+    notes: Pro plan includes 100K credits/month. Overage at $65/1M.
+    pro:
+      monthly: 5
+      included_credits: 100000
+
 observability:
   langfuse:
     pricing_url: https://langfuse.com/pricing
