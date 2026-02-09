@@ -212,14 +212,12 @@ Respond: <dtmf>N</dtmf>, <ivr>completed</ivr>, <ivr>stuck</ivr>, <ivr>wait</ivr>
         if status == IVRStatus.COMPLETED:
             self.deactivate()
             await self._call_event_handler(IVREvent.STATUS_CHANGED, IVRStatus.COMPLETED)
+            return  # Don't push TextFrame — greeting node RESET handles context
 
         elif status == IVRStatus.STUCK:
             self.deactivate()
             await self._call_event_handler(IVREvent.STATUS_CHANGED, IVRStatus.STUCK)
+            return  # Don't push TextFrame — call is ending
 
         elif status == IVRStatus.WAIT:
             logger.trace("[IVR] Waiting")
-
-        text_frame = TextFrame(text=f"<ivr>{status}</ivr>")
-        text_frame.skip_tts = True
-        await self.push_frame(text_frame)

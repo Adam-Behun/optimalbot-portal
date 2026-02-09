@@ -60,6 +60,24 @@ class DialoutBaseFlow(ABC):
         """Return triage configuration for IVR/voicemail detection."""
         pass
 
+    # ==================== Observer Methods (override in subclass) ====================
+
+    def get_observer_system_prompt(self) -> str | None:
+        """Return observer system prompt, or None to disable observer."""
+        return None
+
+    def get_observer_tools(self):
+        """Return observer ToolsSchema, or None to disable observer."""
+        return None
+
+    def register_observer_handlers(self, observer_llm, flow_manager):
+        """Register function handlers on the observer LLM."""
+        pass
+
+    async def run_final_extraction(self, transcript, flow_manager):
+        """Run final extraction sweep at end of call."""
+        pass
+
     # ==================== State Initialization ====================
 
     def _init_flow_state(self):
@@ -266,15 +284,20 @@ class DialoutBaseFlow(ABC):
             return None, None
 
         flow_manager.state["_call_ended"] = True
+        await self._end_call_work(flow_manager)
+        return None, None
 
+    async def _end_call_work(self, flow_manager: FlowManager) -> None:
+        """Perform end-of-call cleanup: update DB, push EndTaskFrame.
+
+        Separated from _end_call_handler so subclasses can run pre-end logic
+        (e.g. final extraction) then call this without re-triggering the guard.
+        """
         logger.info("[Flow] Call ended")
         patient_id = flow_manager.state.get("patient_id")
         session_db = get_async_session_db()
 
         try:
-            # NOTE: Transcript is saved by transport event handlers (cleanup_and_cancel)
-            # after the call actually ends, ensuring all messages are captured.
-
             session_updates = {
                 "status": "completed",
                 "completed_at": datetime.now(timezone.utc),
@@ -300,5 +323,3 @@ class DialoutBaseFlow(ABC):
                 await session_db.update_session(self.session_id, {"status": "failed"}, self.organization_id)
             except Exception:
                 pass
-
-        return None, None

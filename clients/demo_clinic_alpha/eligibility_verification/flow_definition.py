@@ -1,6 +1,11 @@
+import json
 from typing import Any, Dict
 
+import openai
 from loguru import logger
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.frames.frames import FunctionCallResultProperties
 from pipecat_flows import (
     ContextStrategy,
     ContextStrategyConfig,
@@ -11,9 +16,60 @@ from pipecat_flows import (
 
 from clients.demo_clinic_alpha.dialout_base_flow import DialoutBaseFlow
 
+# ═══════════════════════════════════════════════════════════════════
+# SHARED NORMALIZATION RULES (used by both observer and conv LLM)
+# ═══════════════════════════════════════════════════════════════════
+
+NORMALIZATION_RULES = """# Data Normalization (PLAIN NUMBERS ONLY)
+- Currency: "five hundred" -> "500.00", NO $ symbol
+- Percentages: "twenty percent" -> "20", NO % symbol
+- Dates: MM/DD/YYYY
+- Yes/No: "required"/"applies" -> "Yes", "not required" -> "No"
+- Network: "in network"/"participating" -> "In-Network", "non-par" -> "Out-of-Network"
+- Plan type: PPO, HMO, POS, EPO, HDHP
+- "fully met" -> use the deductible/OOP amount as met value
+- "N/A"/"not applicable" -> "N/A", "None"/"no copay" -> "None"
+- Term date: "no termination date" -> "None"
+# Individual vs Family
+- "individual"/"member"/"single" -> deductible_individual or oop_max_individual
+- "family"/"household" -> deductible_family or oop_max_family
+- NEVER record individual amounts to family fields or vice versa"""
+
+
+# Mapping from observer function arg names to flow_manager.state keys.
+# Single source of truth for all extraction field names.
+OBSERVER_FIELD_MAP = {
+    "rep_first_name": "insurance_rep_first_name",
+    "rep_last_initial": "insurance_rep_last_initial",
+    "network_status": "network_status",
+    "plan_type": "plan_type",
+    "plan_effective_date": "plan_effective_date",
+    "plan_term_date": "plan_term_date",
+    "cpt_covered": "cpt_covered",
+    "copay_amount": "copay_amount",
+    "coinsurance_percent": "coinsurance_percent",
+    "deductible_applies": "deductible_applies",
+    "prior_auth_required": "prior_auth_required",
+    "telehealth_covered": "telehealth_covered",
+    "deductible_individual": "deductible_individual",
+    "deductible_individual_met": "deductible_individual_met",
+    "deductible_family": "deductible_family",
+    "deductible_family_met": "deductible_family_met",
+    "oop_max_individual": "oop_max_individual",
+    "oop_max_individual_met": "oop_max_individual_met",
+    "oop_max_family": "oop_max_family",
+    "oop_max_family_met": "oop_max_family_met",
+    "reference_number": "reference_number",
+    "allowed_amount": "allowed_amount",
+    "additional_notes": "additional_notes",
+}
+
+# State field names for extraction (derived from the map)
+EXTRACTION_FIELDS = list(OBSERVER_FIELD_MAP.values())
+
 
 class EligibilityVerificationFlow(DialoutBaseFlow):
-    """Eligibility verification flow with triage support."""
+    """Eligibility verification flow with silent observer for data extraction."""
 
     # ═══════════════════════════════════════════════════════════════════
     # TRIAGE CONFIGURATION
@@ -44,11 +100,11 @@ VOICEMAIL SYSTEM (respond "VOICEMAIL"):
 - Mailbox messages: "This mailbox is full"
 
 DECISION RULES (in order):
-1. Personal name given (not bot name like "Eva") → CONVERSATION
-2. "leave a message" or voicemail request → VOICEMAIL
-3. Contains "please hold", "hold please", press/dial/enter → IVR
-4. 1-3 words without "hold" (e.g., "Provider services.", "Speaking.", "Yes") → CONVERSATION
-5. Default for longer automated-sounding messages → IVR
+1. Personal name given (not bot name like "Eva") -> CONVERSATION
+2. "leave a message" or voicemail request -> VOICEMAIL
+3. Contains "please hold", "hold please", press/dial/enter -> IVR
+4. 1-3 words without "hold" (e.g., "Provider services.", "Speaking.", "Yes") -> CONVERSATION
+5. Default for longer automated-sounding messages -> IVR
 
 Output exactly one classification word: CONVERSATION, IVR, or VOICEMAIL."""
 
@@ -104,22 +160,16 @@ Goal: Reach a human representative who can verify coverage details."""
         )
 
     def get_triage_config(self) -> dict:
-        """Return triage configuration for this flow.
-
-        Called by PipelineFactory to configure TriageDetector and IVRNavigationProcessor.
-        Uses call_data directly since flow_manager may not be set yet.
-        """
+        """Return triage configuration for this flow."""
         return {
             "classifier_prompt": self.TRIAGE_CLASSIFIER_PROMPT,
             "ivr_navigation_goal": self.IVR_NAVIGATION_GOAL.format(
-                # Caller/Provider info
                 provider_agent_first_name=self.call_data.get("provider_agent_first_name", ""),
                 facility_name=self.call_data.get("facility_name", ""),
                 tax_id=self.call_data.get("tax_id", ""),
                 provider_name=self.call_data.get("provider_name", ""),
                 provider_npi=self.call_data.get("provider_npi", ""),
                 provider_call_back_phone=self.call_data.get("provider_call_back_phone", ""),
-                # Member info
                 insurance_member_id=self.call_data.get("insurance_member_id", ""),
                 patient_name=self.call_data.get("patient_name", ""),
                 date_of_birth=self.call_data.get("date_of_birth", ""),
@@ -132,12 +182,10 @@ Goal: Reach a human representative who can verify coverage details."""
 
     def _init_domain_state(self):
         """Initialize eligibility verification specific state fields."""
-        # Insurance identification (3 fields - patient_id, patient_name, date_of_birth handled by base)
         self.flow_manager.state["insurance_member_id"] = self.call_data.get("insurance_member_id", "")
         self.flow_manager.state["insurance_company_name"] = self.call_data.get("insurance_company_name", "")
         self.flow_manager.state["insurance_phone"] = self.call_data.get("insurance_phone", "")
 
-        # Caller/Provider information (7 fields)
         self.flow_manager.state["provider_agent_first_name"] = self.call_data.get("provider_agent_first_name", "")
         self.flow_manager.state["provider_agent_last_initial"] = self.call_data.get("provider_agent_last_initial", "")
         self.flow_manager.state["facility_name"] = self.call_data.get("facility_name", "")
@@ -146,10 +194,13 @@ Goal: Reach a human representative who can verify coverage details."""
         self.flow_manager.state["provider_npi"] = self.call_data.get("provider_npi", "")
         self.flow_manager.state["provider_call_back_phone"] = self.call_data.get("provider_call_back_phone", "")
 
-        # Service information (3 fields)
         self.flow_manager.state["cpt_code"] = self.call_data.get("cpt_code", "")
         self.flow_manager.state["place_of_service"] = self.call_data.get("place_of_service", "")
         self.flow_manager.state["date_of_service"] = self.call_data.get("date_of_service", "")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # GLOBAL INSTRUCTIONS (conv LLM persona)
+    # ═══════════════════════════════════════════════════════════════════
 
     def _get_global_instructions(self) -> str:
         state = self.flow_manager.state
@@ -198,14 +249,178 @@ You are on a phone call with an insurance representative. Your responses will be
 - Stay on topic: eligibility verification only.
 - NEVER fabricate data: Do not invent reference numbers, amounts, dates, or any other information.
 - NEVER record individual amounts as family amounts or vice versa.
-- After saying goodbye, do not speak again - end the call immediately."""
+- After saying goodbye, do not speak again - end the call immediately.
+
+{NORMALIZATION_RULES}"""
+
+    # ═══════════════════════════════════════════════════════════════════
+    # OBSERVER METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def get_extraction_fields(self) -> list[str]:
+        """Return extraction field names for observer context state injection."""
+        return EXTRACTION_FIELDS
+
+    def get_observer_system_prompt(self) -> str:
+        return f"""You are a silent data extraction observer on an insurance eligibility verification call.
+You listen to the full conversation and extract structured data from what the insurance representative says.
+
+# Rules
+- Extract ONLY information explicitly stated by the insurance representative
+- ONLY extract reference_number if rep EXPLICITLY says "reference number is..." or "confirmation number..."
+- NEVER use member ID as reference number
+- NEVER guess or fabricate any values
+- If no new data in this turn, call extract_eligibility_data with empty arguments
+- Always overwrite with the latest value if the rep corrects something
+
+{NORMALIZATION_RULES}"""
+
+    def get_observer_tools(self) -> ToolsSchema:
+        return ToolsSchema(standard_tools=[
+            FunctionSchema(
+                name="extract_eligibility_data",
+                description="Extract eligibility data from the conversation. Only include fields explicitly mentioned by the rep. Empty args if nothing new.",
+                properties={
+                    "rep_first_name": {"type": "string", "description": "Rep's first name"},
+                    "rep_last_initial": {"type": "string", "description": "Rep's last initial (single letter)"},
+                    "network_status": {"type": "string", "enum": ["In-Network", "Out-of-Network", "Unknown"]},
+                    "plan_type": {"type": "string", "description": "PPO, HMO, POS, EPO, HDHP"},
+                    "plan_effective_date": {"type": "string", "description": "MM/DD/YYYY"},
+                    "plan_term_date": {"type": "string", "description": "MM/DD/YYYY or None"},
+                    "cpt_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"]},
+                    "copay_amount": {"type": "string", "description": "Plain number: 50.00, None"},
+                    "coinsurance_percent": {"type": "string", "description": "Plain number: 20, None"},
+                    "deductible_applies": {"type": "string", "enum": ["Yes", "No", "Unknown"]},
+                    "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"]},
+                    "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"]},
+                    "deductible_individual": {"type": "string", "description": "Plain number: 500.00, N/A"},
+                    "deductible_individual_met": {"type": "string", "description": "Plain number: 200.00"},
+                    "deductible_family": {"type": "string", "description": "Plain number: 1000.00, N/A"},
+                    "deductible_family_met": {"type": "string", "description": "Plain number: 500.00"},
+                    "oop_max_individual": {"type": "string", "description": "Plain number: 3000.00, N/A"},
+                    "oop_max_individual_met": {"type": "string", "description": "Plain number: 1500.00"},
+                    "oop_max_family": {"type": "string", "description": "Plain number: 6000.00, N/A"},
+                    "oop_max_family_met": {"type": "string", "description": "Plain number: 3000.00"},
+                    "reference_number": {"type": "string", "description": "Exactly as stated by rep"},
+                    "allowed_amount": {"type": "string", "description": "Plain number: 150.00, Unknown"},
+                    "additional_notes": {"type": "string", "description": "Special instructions or limitations"},
+                },
+                required=[],
+            )
+        ])
+
+    def register_observer_handlers(self, observer_llm, flow_manager):
+        """Register the single extraction handler on the observer LLM."""
+        flow = self
+
+        async def _handle_extract(params):
+            args = params.arguments
+            patient_id = flow_manager.state.get("patient_id")
+            extracted = []
+
+            for arg_name, state_key in OBSERVER_FIELD_MAP.items():
+                value = args.get(arg_name, "")
+                if isinstance(value, str):
+                    value = value.strip()
+                if value:
+                    flow_manager.state[state_key] = value
+                    await flow._try_db_update(patient_id, "update_field", state_key, value)
+                    extracted.append(f"{state_key}={value}")
+
+            if extracted:
+                logger.info(f"[Observer] Extracted: {', '.join(extracted)}")
+            else:
+                logger.debug("[Observer] No new data this turn")
+
+            await params.result_callback(
+                {"status": "ok"},
+                properties=FunctionCallResultProperties(run_llm=False),
+            )
+
+        observer_llm.register_function("extract_eligibility_data", _handle_extract)
+
+    async def run_final_extraction(self, transcript, flow_manager):
+        """Run a final gpt-4o extraction sweep with full transcript before ending the call."""
+        if not transcript:
+            logger.debug("[Observer] No transcript for final extraction")
+            return
+
+        state = flow_manager.state
+
+        # Find fields still missing
+        missing = [f for f in EXTRACTION_FIELDS if not state.get(f)]
+        if not missing:
+            logger.info("[Observer] Final extraction: all fields already populated")
+            return
+
+        logger.info(f"[Observer] Final extraction: attempting to recover {len(missing)} missing fields: {missing}")
+
+        # Build transcript text from the list of transcript entries
+        if isinstance(transcript, list):
+            transcript_text = "\n".join(
+                f"{t.get('role', 'unknown')}: {t.get('content', '')}"
+                for t in transcript if isinstance(t, dict)
+            )
+        else:
+            transcript_text = str(transcript)
+
+        current_state = {f: state.get(f) for f in EXTRACTION_FIELDS if state.get(f)}
+
+        try:
+            client = openai.AsyncOpenAI()
+
+            tools = [{
+                "type": "function",
+                "function": {
+                    "name": "extract_missing_data",
+                    "description": "Extract any missing eligibility data from the full transcript.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {f: {"type": "string"} for f in missing},
+                        "required": [],
+                    },
+                },
+            }]
+
+            response = await client.chat.completions.create(
+                model="gpt-4o",
+                temperature=0,
+                max_tokens=256,
+                messages=[
+                    {"role": "system", "content": f"Extract missing eligibility data from this call transcript.\n\nAlready extracted:\n{json.dumps(current_state, indent=2)}\n\n{NORMALIZATION_RULES}\n\n- ONLY extract reference_number if rep EXPLICITLY said it\n- NEVER use member ID as reference number"},
+                    {"role": "user", "content": transcript_text},
+                ],
+                tools=tools,
+                tool_choice={"type": "function", "function": {"name": "extract_missing_data"}},
+            )
+
+            tool_calls = response.choices[0].message.tool_calls
+            if tool_calls:
+                args = json.loads(tool_calls[0].function.arguments)
+                patient_id = state.get("patient_id")
+                recovered = []
+                for field, value in args.items():
+                    if isinstance(value, str):
+                        value = value.strip()
+                    if value and field in missing:
+                        state[field] = value
+                        await self._try_db_update(patient_id, "update_field", field, value)
+                        recovered.append(f"{field}={value}")
+
+                if recovered:
+                    logger.info(f"[Observer] Final extraction recovered: {', '.join(recovered)}")
+                else:
+                    logger.info("[Observer] Final extraction: no additional data found")
+
+        except Exception as e:
+            logger.error(f"[Observer] Final extraction failed: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # FLOW NODES (conv LLM — 6 pure flow-control functions)
+    # ═══════════════════════════════════════════════════════════════════
 
     def create_greeting_node(self) -> NodeConfig:
-        """Create greeting node for when a human answers (with or without IVR).
-
-        For outbound calls, we always wait for the receiving party to speak first.
-        The transcription that triggered human detection is injected by the handler.
-        """
+        """Create greeting node for when a human answers."""
         return NodeConfig(
             name="greeting",
             role_messages=[{
@@ -216,14 +431,12 @@ You are on a phone call with an insurance representative. Your responses will be
                 "role": "system",
                 "content": """A human answered. Give your FULL greeting (with patient name) and collect the rep's name.
 
-# Your First Response - ALWAYS Do Both Steps Together
+# Your First Response
 
 STEP 1 - PARSE THEIR NAME (if stated):
-- "This is Diana" → first_name="Diana", last_initial=""
-- "Marcus B. speaking" → first_name="Marcus", last_initial="B"
-- "Provider services" → no name
-
-Call record_rep_name with ONLY the info spoken. Leave last_initial empty if not stated.
+- "This is Diana" -> first_name="Diana", last_initial=""
+- "Marcus B. speaking" -> first_name="Marcus", last_initial="B"
+- "Provider services" -> no name
 
 STEP 2 - SAY YOUR FULL GREETING:
 Your greeting MUST include the patient name. This step is important.
@@ -236,58 +449,25 @@ CRITICAL: Even if the rep asks "What's your name?" or "What facility?" - you sti
 
 # Example
 Rep: "Thank you for holding. This is Diana. May I have your name and the facility you are calling from?"
-You: [call record_rep_name(first_name="Diana", last_initial="")]
 You say: "Hi Diana, this is Jennifer calling from Specialty Surgery Associates about eligibility verification for Robert Williams. May I have your last initial for my records?"
 
 # After Rep Gives Last Initial
 Say "Perfect, thank you." and WAIT. Do not ask questions - the rep will ask you for member info.
 
 # Answering Rep's Questions (After Greeting)
-- Member name → "[patient name]"
-- Date of birth → "[date of birth]"
-- Member ID → "[member ID]"
-- Tax ID → "[tax ID]"
+- Member name -> "[patient name]"
+- Date of birth -> "[date of birth]"
+- Member ID -> "[member ID]"
+- Tax ID -> "[tax ID]"
 
 # When to Proceed
-When rep indicates they can help OR gives any eligibility info → call proceed_to_plan_info."""
+When rep indicates they can help OR gives any eligibility info -> call proceed_to_plan_info."""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_rep_name",
-                    description="Record rep's first name and last initial when they introduce themselves or when asked.",
-                    properties={
-                        "first_name": {"type": "string", "description": "Representative's first name"},
-                        "last_initial": {"type": "string", "description": "Last initial (single letter, empty if not provided)"}
-                    },
-                    required=["first_name"],
-                    handler=self._record_rep_name_handler
-                ),
-                FlowsFunctionSchema(
                     name="proceed_to_plan_info",
-                    description="Move to plan info. Include ANY info the rep already volunteered - plan info, CPT coverage, accumulators, or reference number.",
-                    properties={
-                        # Plan info
-                        "network_status": {"type": "string", "enum": ["In-Network", "Out-of-Network", "Unknown"], "description": "If mentioned"},
-                        "plan_type": {"type": "string", "description": "PPO, HMO, POS, EPO, HDHP if mentioned"},
-                        "plan_effective_date": {"type": "string", "description": "MM/DD/YYYY if mentioned"},
-                        "plan_term_date": {"type": "string", "description": "'None' or MM/DD/YYYY if mentioned"},
-                        # CPT coverage
-                        "cpt_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If rep said covered/not covered"},
-                        "copay_amount": {"type": "string", "description": "Plain number with 2 decimals: '50.00', 'None' if mentioned"},
-                        "coinsurance_percent": {"type": "string", "description": "Plain number: '20', 'None' if mentioned"},
-                        "deductible_applies": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
-                        "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If PA/prior auth mentioned"},
-                        "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
-                        # Accumulators
-                        "deductible_individual": {"type": "string", "description": "Individual deductible amount if mentioned"},
-                        "deductible_individual_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "deductible_family": {"type": "string", "description": "Family deductible amount if mentioned"},
-                        "deductible_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "oop_max_individual": {"type": "string", "description": "Individual OOP max if mentioned"},
-                        "oop_max_individual_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "oop_max_family": {"type": "string", "description": "Family OOP max if mentioned"},
-                        "oop_max_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                    },
+                    description="Move to plan info when rep is ready to help or gives eligibility info.",
+                    properties={},
                     required=[],
                     handler=self._proceed_to_plan_info_handler
                 ),
@@ -300,17 +480,15 @@ When rep indicates they can help OR gives any eligibility info → call proceed_
         )
 
     def create_plan_info_node(self) -> NodeConfig:
-        """Gather basic plan information: network status, plan type, effective date, term date."""
+        """Gather basic plan information."""
         state = self.flow_manager.state
         facility = state.get("facility_name", "")
 
-        # Check what's already captured
         has_network = bool(state.get("network_status"))
         has_plan_type = bool(state.get("plan_type"))
         has_effective = bool(state.get("plan_effective_date"))
         has_term = bool(state.get("plan_term_date"))
 
-        # Build list of missing fields
         missing = []
         if not has_network:
             missing.append(f'Network status: "Is {facility} participating in the network?"')
@@ -321,7 +499,6 @@ When rep indicates they can help OR gives any eligibility info → call proceed_
         if not has_term:
             missing.append('Term date: "Is there a term date?"')
 
-        # Build state summary
         captured = []
         if has_network:
             captured.append(f"network_status: {state.get('network_status')}")
@@ -346,7 +523,7 @@ When rep indicates they can help OR gives any eligibility info → call proceed_
                 "content": f"""# Goal
 Gather plan information, then move to CPT coverage questions.
 
-# Already Captured
+# Already Captured (by observer)
 {captured_text}
 
 # Still Need (Plan Info)
@@ -355,125 +532,20 @@ Gather plan information, then move to CPT coverage questions.
 # Instructions
 - If all 4 plan info fields are captured, call proceed_to_cpt_coverage IMMEDIATELY
 - Only ask about MISSING plan info fields - never re-ask what's already captured
-- When rep answers, record via the appropriate function
+- Before calling proceed_to_cpt_coverage, briefly restate the gathered values for confirmation. Example: "So I have you as in-network with a PPO plan, effective January first with no term date - is that correct?"
 - If rep asks about CPT code or volunteers coverage info, call proceed_to_cpt_coverage
 
 # CRITICAL: DO NOT END THE CALL
 - When rep says "anything else?" - if plan info fields are missing, ask for them
 - If all plan info is captured, call proceed_to_cpt_coverage - DO NOT say goodbye
 - DO NOT say "that covers everything" or thank them until the ENTIRE call is done
-- You still need CPT coverage details, accumulators, and reference number after this
-
-# Capture Volunteered Info
-Include any CPT coverage, accumulators, or reference info in proceed_to_cpt_coverage call.
-
-# Data Normalization
-- Network: "in network" → "In-Network", "non-par" → "Out-of-Network"
-- Plan type: PPO, HMO, POS, EPO, HDHP
-- Dates: MM/DD/YYYY format
-- PA/prior auth → prior_auth_required: "Yes" """
+- You still need CPT coverage details, accumulators, and reference number after this"""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_network_status",
-                    description="""Record network participation status.
-
-WHEN TO USE: After rep confirms whether facility is in-network.
-VALID VALUES: "In-Network", "Out-of-Network", "Unknown"
-
-EXAMPLES:
-- "yes, in network" → "In-Network"
-- "this facility is participating" → "In-Network"
-- "not in network" → "Out-of-Network" """,
-                    properties={
-                        "status": {
-                            "type": "string",
-                            "enum": ["In-Network", "Out-of-Network", "Unknown"],
-                            "description": "Network status"
-                        }
-                    },
-                    required=["status"],
-                    handler=self._record_network_status_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_plan_type",
-                    description="""Record the plan type.
-
-WHEN TO USE: After rep states the plan type.
-VALID VALUES: "PPO", "HMO", "POS", "EPO", "HDHP", "Unknown"
-
-EXAMPLES:
-- "It's a POS plan" → "POS"
-- "This is an HMO" → "HMO" """,
-                    properties={
-                        "plan_type": {
-                            "type": "string",
-                            "description": "Plan type: PPO, HMO, POS, EPO, HDHP, or Unknown"
-                        }
-                    },
-                    required=["plan_type"],
-                    handler=self._record_plan_type_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_plan_effective_date",
-                    description="""Record plan effective date.
-
-WHEN TO USE: After rep provides the effective date.
-FORMAT: MM/DD/YYYY (e.g., "01/01/2025")
-
-EXAMPLES:
-- "January first twenty twenty five" → "01/01/2025"
-- "oh one oh one two thousand twenty five" → "01/01/2025" """,
-                    properties={
-                        "date": {
-                            "type": "string",
-                            "description": "Effective date in MM/DD/YYYY format"
-                        }
-                    },
-                    required=["date"],
-                    handler=self._record_plan_effective_date_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_plan_term_date",
-                    description="""Record plan termination date.
-
-WHEN TO USE: After rep provides term date or confirms there is none.
-FORMAT: MM/DD/YYYY or "None"
-
-EXAMPLES:
-- "December thirty first twenty twenty five" → "12/31/2025"
-- "No future termination date" → "None"
-- "None on file" → "None" """,
-                    properties={
-                        "date": {
-                            "type": "string",
-                            "description": "Term date in MM/DD/YYYY format, or 'None' if no termination date"
-                        }
-                    },
-                    required=["date"],
-                    handler=self._record_plan_term_date_handler
-                ),
-                FlowsFunctionSchema(
                     name="proceed_to_cpt_coverage",
-                    description="Move to CPT coverage. Include ANY info the rep already volunteered. NORMALIZE TO PLAIN NUMBERS: copay '75.00' not '$75' or 'seventy-five', coinsurance '20' not '20%'.",
-                    properties={
-                        # CPT coverage
-                        "cpt_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If rep said covered/not covered"},
-                        "copay_amount": {"type": "string", "description": "Plain number with 2 decimals: '50.00', 'None' if mentioned"},
-                        "coinsurance_percent": {"type": "string", "description": "Plain number: '20', 'None' if mentioned"},
-                        "deductible_applies": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
-                        "prior_auth_required": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If PA/prior auth mentioned"},
-                        "telehealth_covered": {"type": "string", "enum": ["Yes", "No", "Unknown"], "description": "If mentioned"},
-                        # Accumulators
-                        "deductible_individual": {"type": "string", "description": "Individual deductible amount if mentioned"},
-                        "deductible_individual_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "deductible_family": {"type": "string", "description": "Family deductible amount if mentioned"},
-                        "deductible_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "oop_max_individual": {"type": "string", "description": "Individual OOP max if mentioned"},
-                        "oop_max_individual_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "oop_max_family": {"type": "string", "description": "Family OOP max if mentioned"},
-                        "oop_max_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                    },
+                    description="Move to CPT coverage questions after plan info is gathered.",
+                    properties={},
                     required=[],
                     handler=self._proceed_to_cpt_coverage_handler
                 )
@@ -482,13 +554,12 @@ EXAMPLES:
         )
 
     def create_cpt_coverage_node(self) -> NodeConfig:
-        """Gather CPT coverage details: coverage status, copay, coinsurance, deductible, prior auth, telehealth."""
+        """Gather CPT coverage details."""
         state = self.flow_manager.state
         cpt_code = state.get("cpt_code", "")
-        place_of_service = state.get("place_of_service", "")
         date_of_service = state.get("date_of_service", "")
+        place_of_service = state.get("place_of_service", "")
 
-        # Check what's already captured
         cpt_fields = {
             "cpt_covered": ("Coverage status", f'"Does the patient have coverage for CPT code {cpt_code}?"'),
             "copay_amount": ("Copay", '"What is the copay?"'),
@@ -521,194 +592,39 @@ EXAMPLES:
                 "content": f"""# Goal
 Verify coverage details for CPT code {cpt_code}.
 
-# Already Captured
+# Already Captured (by observer)
 {captured_text}
 
 # Still Need
 {missing_text}
 
 # CRITICAL: If CPT is NOT COVERED
-If the rep says the CPT code is "not covered", "excluded", "not a covered benefit", or similar:
-- Record cpt_covered as "No"
-- DO NOT ask about copay, coinsurance, deductible, prior auth, or telehealth - these are irrelevant for non-covered services
+If the rep says the CPT code is "not covered", "excluded", "not a covered benefit":
 - Proceed directly to accumulators (you still need deductible/OOP info and reference number)
-
-# Capture ALL Info From Each Response
-Insurance reps often provide multiple pieces of information in one response. Listen carefully and extract EVERYTHING they mention:
-- "covered" / "valid and billable" → cpt_covered: Yes
-- "not covered" / "excluded" / "plan exclusion" → cpt_covered: No (then skip to accumulators)
-- "no copay" / "$X copay" → copay_amount
-- "X% coinsurance" → coinsurance_percent
-- "deductible applies" / "ded applies" → deductible_applies: Yes
-- "PA required" / "need prior auth" → prior_auth_required: Yes
-- "telehealth available/not available" → telehealth_covered
-
-NEVER re-ask for information the rep just provided in their response. This step is important.
 
 # Instructions
 - If cpt_covered = "No", call proceed_to_accumulators IMMEDIATELY (skip other CPT questions)
-- If all 6 CPT coverage fields are captured, call proceed_to_accumulators IMMEDIATELY
+- If all 6 CPT coverage fields are captured, briefly restate values for confirmation then call proceed_to_accumulators
+- Example: "So I have coverage confirmed with a fifty dollar copay, twenty percent coinsurance, deductible applies, no prior auth needed, and telehealth covered - does that sound right?"
 - Only ask about fields NOT yet mentioned by the rep
-- When rep answers, record ALL mentioned fields via function calls
-- If rep volunteers accumulator info or reference number, include in proceed_to_accumulators
+- NEVER re-ask for information the rep just provided. This step is important.
 
-# CRITICAL: DO NOT END THE CALL
-- When rep says "anything else?" - YES, you need accumulators and reference! Ask for them.
-- DO NOT say goodbye, thank you, or end the conversation from this node
-- You MUST call proceed_to_accumulators to continue
-- The call is NOT complete until you have accumulators AND reference number
+# When to Call proceed_to_accumulators
+- When rep confirms CPT coverage info — call proceed_to_accumulators even if some fields weren't asked
+- When rep says "anything else?" or "is there anything else?" — call proceed_to_accumulators IMMEDIATELY
+- When rep volunteers deductible, OOP, or reference info — call proceed_to_accumulators IMMEDIATELY
+- DO NOT ask deductible/OOP questions from this node — that is the next step
+- DO NOT say goodbye or end the conversation from this node
 
 # Handling Rep Questions
 - Date of service: "{date_of_service or "Not yet determined. Is it okay to use today's date?"}"
-- Place of service: "{place_of_service}"
-
-# Data Normalization (PLAIN NUMBERS ONLY - no $ or % symbols)
-- Currency: "50.00", "None" | Percentages: "20", "None"
-- Yes/No: "required"/"applies" → "Yes", "not required"/"doesn't apply" → "No"
-- PA/prior auth → "Yes" """
+- Place of service: "{place_of_service}" """
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_cpt_covered",
-                    description="""Record whether CPT code is covered.
-
-WHEN TO USE: After rep confirms coverage status.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "valid and billable" → "Yes"
-- "covered" → "Yes"
-- "not covered under this plan" → "No" """,
-                    properties={
-                        "covered": {
-                            "type": "string",
-                            "enum": ["Yes", "No", "Unknown"],
-                            "description": "Coverage status"
-                        }
-                    },
-                    required=["covered"],
-                    handler=self._record_cpt_covered_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_copay",
-                    description="""Record copay amount.
-
-WHEN TO USE: After rep provides copay information.
-FORMAT: Plain number with 2 decimals (e.g., "50.00"), "None", or "Unknown". NO $ symbol.
-
-EXAMPLES:
-- "fifty dollars per service" → "50.00"
-- "twenty five dollar copay" → "25.00"
-- "seventy-five copay" → "75.00"
-- "no copay" → "None"
-- "copay does not apply" → "None" """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Copay amount as plain number (e.g., '50.00', 'None', 'Unknown')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_copay_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_coinsurance",
-                    description="""Record coinsurance percentage.
-
-WHEN TO USE: After rep provides coinsurance information.
-FORMAT: Plain number (e.g., "20"), "None", or "Unknown". NO % symbol.
-
-EXAMPLES:
-- "twenty percent coinsurance" → "20"
-- "zero percent" → "0"
-- "no coinsurance" → "None"
-- "you pay 80 percent, insurance pays 20" → "80" (patient responsibility) """,
-                    properties={
-                        "percent": {
-                            "type": "string",
-                            "description": "Coinsurance percentage as plain number (e.g., '20', 'None', 'Unknown')"
-                        }
-                    },
-                    required=["percent"],
-                    handler=self._record_coinsurance_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_applies",
-                    description="""Record whether deductible applies to this service.
-
-WHEN TO USE: After rep confirms deductible applicability.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "deductible applies" → "Yes"
-- "annual deductible does not apply" → "No"
-- "after meeting your deductible" → "Yes" """,
-                    properties={
-                        "applies": {
-                            "type": "string",
-                            "enum": ["Yes", "No", "Unknown"],
-                            "description": "Whether deductible applies"
-                        }
-                    },
-                    required=["applies"],
-                    handler=self._record_deductible_applies_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_prior_auth_required",
-                    description="""Record whether prior authorization is required.
-
-WHEN TO USE: After rep confirms prior auth requirement.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "prior authorization is required" → "Yes"
-- "prior auth is not required" → "No"
-- "you'll need to get approval first" → "Yes" """,
-                    properties={
-                        "required": {
-                            "type": "string",
-                            "enum": ["Yes", "No", "Unknown"],
-                            "description": "Whether prior auth is required"
-                        }
-                    },
-                    required=["required"],
-                    handler=self._record_prior_auth_required_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_telehealth_covered",
-                    description="""Record whether telehealth is covered.
-
-WHEN TO USE: After rep confirms telehealth coverage.
-VALID VALUES: "Yes", "No", "Unknown"
-
-EXAMPLES:
-- "telehealth is covered" → "Yes"
-- "same benefit as in-person" → "Yes"
-- "telehealth not available for this service" → "No" """,
-                    properties={
-                        "covered": {
-                            "type": "string",
-                            "enum": ["Yes", "No", "Unknown"],
-                            "description": "Whether telehealth is covered"
-                        }
-                    },
-                    required=["covered"],
-                    handler=self._record_telehealth_covered_handler
-                ),
-                FlowsFunctionSchema(
                     name="proceed_to_accumulators",
-                    description="Move to accumulators. Include ANY info the rep already volunteered.",
-                    properties={
-                        # Accumulators
-                        "deductible_individual": {"type": "string", "description": "Individual deductible if mentioned"},
-                        "deductible_individual_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "deductible_family": {"type": "string", "description": "Family deductible if mentioned"},
-                        "deductible_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "oop_max_individual": {"type": "string", "description": "Individual OOP max if mentioned"},
-                        "oop_max_individual_met": {"type": "string", "description": "Amount met if mentioned"},
-                        "oop_max_family": {"type": "string", "description": "Family OOP max if mentioned"},
-                        "oop_max_family_met": {"type": "string", "description": "Amount met if mentioned"},
-                    },
+                    description="Move to accumulators after CPT coverage is gathered.",
+                    properties={},
                     required=[],
                     handler=self._proceed_to_accumulators_handler
                 )
@@ -717,10 +633,9 @@ EXAMPLES:
         )
 
     def create_accumulators_node(self) -> NodeConfig:
-        """Gather deductible and out-of-pocket maximum information, then get a reference number."""
+        """Gather deductible and OOP max information, then get a reference number."""
         state = self.flow_manager.state
 
-        # Check what's already captured - both individual and family accumulators + reference
         acc_fields = {
             "deductible_individual": ("Individual deductible", '"What is the individual deductible amount?"'),
             "deductible_individual_met": ("Individual deductible met", '"How much of the individual deductible has been met?"'),
@@ -759,7 +674,7 @@ You are MID-CALL with an insurance rep who has already verified your identity. C
 # Goal
 Gather deductible and out-of-pocket maximum information, then get a reference number.
 
-# Already Captured
+# Already Captured (by observer)
 {captured_text}
 
 # Still Need
@@ -767,323 +682,37 @@ Gather deductible and out-of-pocket maximum information, then get a reference nu
 
 # CRITICAL: Individual vs Family Accumulators
 Listen carefully to whether the rep says "individual" or "family":
-- "individual" / "member" / "single" / "subscriber" → use record_deductible_individual, record_oop_max_individual
-- "family" / "household" → use record_deductible_family, record_oop_max_family
-- "non-par" / "out-of-network" / "OON" → note this is OON accumulator (still individual or family)
-
-NEVER record individual amounts to family fields or vice versa. This step is important.
+- "individual" / "member" / "single" / "subscriber" -> individual fields
+- "family" / "household" -> family fields
 
 If rep ONLY provides individual OR family amounts, ask ONCE: "Do you have the [family/individual] amounts as well?"
 
 # CRITICAL: When Rep Says Info Not Available
-If rep says "I only have individual" or "I don't have family amounts" or similar:
-- STOP asking about the unavailable accumulator type
+If rep says "I only have individual" or "I don't have family amounts":
+- STOP asking about the unavailable type
 - Do NOT repeatedly ask for info the rep said they don't have
-- Record what you have and proceed to reference number
 - One "no" is enough - move on immediately
-
-Example:
-- Rep says "The individual deductible is $750" → record it, ask about family ONCE
-- Rep says "I only have individual" → STOP asking about family, proceed to reference number
-
-# Instructions
-- Only ask about MISSING fields - never re-ask what's already captured
-- When rep answers, record via the appropriate function
-
-# CRITICAL: Reference Number and Closing
-- If you have ALREADY recorded a reference number (in this turn or earlier), call proceed_to_closing
-- If you do NOT have a reference number yet, ask: "May I have a reference number for this call?"
-- NEVER ask for a reference number if you already recorded one - check your function calls first
 
 # Reference Number Rules - READ CAREFULLY
 - You MUST ask for a reference number: "May I have a reference number for this call?"
-- ONLY record a reference number AFTER the rep EXPLICITLY provides one IN THEIR MESSAGE
-- The reference number MUST appear in the rep's actual words - look for phrases like "reference number is..." or "confirmation number..."
+- ONLY acknowledge a reference number AFTER the rep EXPLICITLY provides one
 - NEVER use the member ID as a reference number - they are DIFFERENT things
 - NEVER guess, invent, or fabricate a reference number
 - If the rep says "anything else?" but you don't have a reference number yet, ask for one
 
-**HALLUCINATION WARNING**: You MUST NOT invent reference numbers. If the rep has not explicitly said a reference number in their message, you CANNOT record one. Check the rep's ACTUAL words - did they SAY a reference number? If not, ASK for one.
-
-WRONG: Recording member ID "CIG334455667" as reference number
-WRONG: Making up "CIG-2025-1234" when rep never said it
-RIGHT: Ask "May I have a reference number?" and wait for rep to EXPLICITLY say one
+**HALLUCINATION WARNING**: You MUST NOT invent reference numbers. If the rep has not explicitly said a reference number in their message, ASK for one.
 
 # WHEN TO CALL proceed_to_closing
-ONLY call proceed_to_closing when BOTH conditions are met:
-1. You have recorded a reference number that the rep ACTUALLY SAID
-2. You have captured all required accumulator info
+Before calling proceed_to_closing, briefly restate the accumulators and reference number for confirmation.
+Example: "So I have the individual deductible at five hundred with four twelve met, family at one thousand with five hundred met, individual out-of-pocket max at three thousand with fifteen hundred met, and the reference number is A B C one two three - is that all correct?"
 
-If the rep has NOT given you a reference number, you MUST ask for one before proceeding.
-
-# CRITICAL: Handling Corrections
-If the rep CORRECTS a value they gave earlier:
-1. Your spoken response MUST SAY: "I'll update that, thank you for the correction."
-2. Call record_correction function
-3. Then continue
-DO NOT just say "Thank you, goodbye" - you must acknowledge the correction in your words.
-
-# Data Normalization (PLAIN NUMBERS ONLY - no $ symbols)
-- Amounts: "five hundred" → "500.00", "six thousand" → "6000.00"
-- Cents: "eleven seventy point seven four" → "1170.74"
-- "fully met" → deductible_family_met = deductible_family amount"""
+ONLY call proceed_to_closing when the rep has given you a reference number.
+If the rep has NOT given a reference number, ask for one first."""
             }],
             functions=[
                 FlowsFunctionSchema(
-                    name="record_deductible_individual",
-                    description="""Record INDIVIDUAL deductible amount. Use ONLY for individual/member/single/subscriber deductibles.
-
-WHEN TO USE: Rep explicitly says "individual", "member", "single", or "subscriber" deductible.
-DO NOT USE: When rep says "family" or "household" - use record_deductible_family instead.
-FORMAT: Plain number with 2 decimals (e.g., "500.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "individual deductible is two hundred fifty" → "250.00" ✓
-- "the member deductible is five hundred" → "500.00" ✓
-- "family deductible is one thousand" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Individual deductible amount as plain number (e.g., '500.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_individual_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_individual_met",
-                    description="""Record how much of individual deductible has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "200.00"). NO $ symbol.
-
-EXAMPLES:
-- "two hundred of the deductible met" → "200.00"
-- "fully met" → Use the deductible amount
-- "nothing met yet" → "0.00" """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Amount of individual deductible met as plain number (e.g., '200.00')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_individual_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_family",
-                    description="""Record FAMILY deductible amount. Use ONLY for family/household deductibles.
-
-WHEN TO USE: Rep explicitly says "family" or "household" deductible.
-DO NOT USE: When rep says "individual", "member", or "single" - use record_deductible_individual instead.
-FORMAT: Plain number with 2 decimals (e.g., "500.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "family deductible is five hundred" → "500.00" ✓
-- "household deductible is one thousand" → "1000.00" ✓
-- "individual deductible is two fifty" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Family deductible amount as plain number (e.g., '500.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_family_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_deductible_family_met",
-                    description="""Record how much of family deductible has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "500.00"). NO $ symbol.
-
-EXAMPLES:
-- "fully met" or "satisfied" → Use the deductible amount
-- "five hundred met" → "500.00"
-- "nothing applied yet" → "0.00" """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Amount of family deductible met as plain number (e.g., '500.00')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_deductible_family_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_individual",
-                    description="""Record INDIVIDUAL out-of-pocket maximum. Use ONLY for individual/member/single OOP max.
-
-WHEN TO USE: Rep explicitly says "individual", "member", or "single" OOP max.
-DO NOT USE: When rep says "family" or "household" - use record_oop_max_family instead.
-FORMAT: Plain number with 2 decimals (e.g., "3000.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "individual out of pocket max is three thousand" → "3000.00" ✓
-- "family OOP max is six thousand" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Individual OOP maximum as plain number (e.g., '3000.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_individual_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_individual_met",
-                    description="""Record how much of individual OOP max has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "1500.00"). NO $ symbol.""",
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Amount of individual OOP max met as plain number (e.g., '1500.00')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_individual_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_family",
-                    description="""Record FAMILY out-of-pocket maximum. Use ONLY for family/household OOP max.
-
-WHEN TO USE: Rep explicitly says "family" or "household" OOP max.
-DO NOT USE: When rep says "individual", "member", or "single" - use record_oop_max_individual instead.
-FORMAT: Plain number with 2 decimals (e.g., "6000.00") or "N/A". NO $ symbol.
-
-EXAMPLES:
-- "family out of pocket max is six thousand" → "6000.00" ✓
-- "household OOP max is eight thousand" → "8000.00" ✓
-- "individual OOP is three thousand" → DO NOT USE THIS FUNCTION """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Family OOP maximum as plain number (e.g., '6000.00', 'N/A')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_family_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_oop_max_family_met",
-                    description="""Record how much of family OOP max has been met.
-
-WHEN TO USE: After rep provides amount met.
-FORMAT: Plain number with 2 decimals (e.g., "1170.74"). NO $ symbol.
-
-EXAMPLES:
-- "one thousand one hundred seventy dollars and seventy four cents" → "1170.74"
-- "about twelve hundred" → Ask for exact amount, then record """,
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Amount of family OOP max met as plain number (e.g., '1170.74')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_oop_max_family_met_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_allowed_amount",
-                    description="""Record allowed amount if rep mentions it.
-
-WHEN TO USE: If rep provides an allowed/approved amount for the service.
-FORMAT: Plain number with 2 decimals (e.g., "150.00") or "Unknown". NO $ symbol.""",
-                    properties={
-                        "amount": {
-                            "type": "string",
-                            "description": "Allowed amount as plain number (e.g., '150.00', 'Unknown')"
-                        }
-                    },
-                    required=["amount"],
-                    handler=self._record_allowed_amount_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_reference_number",
-                    description="""Record call reference number ONLY when the rep EXPLICITLY provides one.
-
-WHEN TO USE: ONLY after rep says something like "your reference number is..." or "confirmation number..."
-NEVER USE:
-- If rep hasn't explicitly given a reference number
-- NEVER use the member ID as a reference number - they are DIFFERENT things
-- NEVER guess or fabricate a reference number
-
-If you don't have a reference number, ASK: "May I have a reference number for this call?"
-
-WRONG: Using member ID "CIG334455667" as reference - this is NOT a reference number
-RIGHT: "CIG-2025-1234" provided explicitly by rep
-
-EXAMPLES:
-- Rep says "Your reference is ABC123456" → "ABC123456" ✓
-- Rep says "Reference number UHC-2025-789456" → "UHC-2025-789456" ✓
-- Rep hasn't given a reference → DO NOT CALL THIS FUNCTION, ask for one first """,
-                    properties={
-                        "reference_number": {
-                            "type": "string",
-                            "description": "Reference number exactly as stated"
-                        }
-                    },
-                    required=["reference_number"],
-                    handler=self._record_reference_number_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_rep_name",
-                    description="""Record representative's first name and last initial.
-
-WHEN TO USE: If you learn the rep's name during the call.
-NOTE: May already be known from greeting.
-
-EXAMPLES:
-- "This is Eliza M." → first_name="Eliza", last_initial="M"
-- "My name is Sarah" → first_name="Sarah", last_initial="" """,
-                    properties={
-                        "first_name": {
-                            "type": "string",
-                            "description": "Representative's first name"
-                        },
-                        "last_initial": {
-                            "type": "string",
-                            "description": "Last initial (single letter, empty if not provided)"
-                        }
-                    },
-                    required=["first_name"],
-                    handler=self._record_rep_name_handler
-                ),
-                FlowsFunctionSchema(
-                    name="record_correction",
-                    description="""Update ANY previously recorded field when rep CORRECTS a value.
-
-WHEN TO USE: ONLY when rep explicitly says they need to correct something from earlier.
-Example: "I gave you the wrong copay. It should be fifty dollars, not twenty-five."
-Example: "Actually, the coinsurance is twenty percent, not fifteen."
-
-Valid field names: copay_amount, coinsurance_percent, deductible_applies, prior_auth_required,
-telehealth_covered, network_status, plan_type, deductible_individual, deductible_family,
-oop_max_individual, oop_max_family
-
-IMPORTANT: Only call this function ONCE per correction. Do not repeat.""",
-                    properties={
-                        "field_name": {
-                            "type": "string",
-                            "description": "The field to correct (e.g., 'copay_amount', 'coinsurance_percent')"
-                        },
-                        "corrected_value": {
-                            "type": "string",
-                            "description": "The CORRECTED value as plain number (e.g., '50.00' for currency, '20' for percent)"
-                        }
-                    },
-                    required=["field_name", "corrected_value"],
-                    handler=self._record_correction_handler
-                ),
-                FlowsFunctionSchema(
                     name="proceed_to_closing",
-                    description="""Move to closing node to end the call.
-
-ONLY call this AFTER you have recorded a reference number via record_reference_number.
-If you have not yet recorded a reference number, ASK for one first - do NOT call this function.""",
+                    description="Move to closing after accumulators and reference number are gathered.",
                     properties={},
                     required=[],
                     handler=self._proceed_to_closing_handler
@@ -1106,49 +735,23 @@ If you have not yet recorded a reference number, ASK for one first - do NOT call
             task_messages=[{
                 "role": "system",
                 "content": """# Goal
-
 Thank the representative and end the call.
 
 # CRITICAL: You MUST call end_call
-
 Every response in this node MUST include a call to end_call. This step is important.
 - First response: Say thank you, then call end_call
 - If you speak at all: You must also call end_call in the same turn
 
 # Instructions
-
 1. Say: "Thank you for your help. Goodbye!"
 2. Call end_call in the SAME turn - do not wait for a response
 
 # NEVER DO THIS:
 - Do NOT say goodbye and then wait for a response
 - Do NOT respond after saying goodbye
-- Do NOT say goodbye more than once
-
-# Recording Additional Notes
-
-If the rep already mentioned important info not captured elsewhere, record with record_additional_notes in the same turn as end_call."""
+- Do NOT say goodbye more than once"""
             }],
             functions=[
-                FlowsFunctionSchema(
-                    name="record_additional_notes",
-                    description="""Record any additional important information from the rep.
-
-WHEN TO USE: If rep mentions special instructions, limitations, or other important details not covered by other fields.
-FORMAT: Free text, exactly as stated.
-
-EXAMPLES:
-- "Coverage is limited to 6 visits per year" → Record this limitation
-- "Make sure to submit within 90 days" → Record this instruction""",
-                    properties={
-                        "notes": {
-                            "type": "string",
-                            "description": "Additional notes or special instructions from the rep"
-                        }
-                    },
-                    required=["notes"],
-                    handler=self._record_additional_notes_handler
-                ),
                 FlowsFunctionSchema(
                     name="end_call",
                     description="End the conversation after saying goodbye.",
@@ -1160,209 +763,68 @@ EXAMPLES:
             respond_immediately=True
         )
 
-    # Transfer nodes are inherited from DialoutBaseFlow:
-    # - create_staff_confirmation_node
-    # - create_transfer_initiated_node
-    # - create_transfer_pending_node
-    # - create_transfer_failed_node
-
-    # Field mappings: arg name -> state key (if different)
-    VOLUNTEERED_FIELD_MAPPINGS = {
-        # Plan info
-        "network_status": "network_status",
-        "plan_type": "plan_type",
-        "plan_effective_date": "plan_effective_date",
-        "plan_term_date": "plan_term_date",
-        # CPT coverage
-        "cpt_covered": "cpt_covered",
-        "copay_amount": "copay_amount",
-        "coinsurance_percent": "coinsurance_percent",
-        "deductible_applies": "deductible_applies",
-        "prior_auth_required": "prior_auth_required",
-        "telehealth_covered": "telehealth_covered",
-        # Accumulators
-        "deductible_individual": "deductible_individual",
-        "deductible_individual_met": "deductible_individual_met",
-        "deductible_family": "deductible_family",
-        "deductible_family_met": "deductible_family_met",
-        "oop_max_individual": "oop_max_individual",
-        "oop_max_individual_met": "oop_max_individual_met",
-        "oop_max_family": "oop_max_family",
-        "oop_max_family_met": "oop_max_family_met",
-        # NOTE: reference_number intentionally excluded - must use record_reference_number function
-    }
-
-    async def _store_volunteered_info(self, args: Dict[str, Any], flow_manager: FlowManager) -> list[str]:
-        """Store any volunteered info in state AND persist to DB. Returns list of captured fields."""
-        captured = []
-        patient_id = flow_manager.state.get("patient_id")
-
-        for field in self.VOLUNTEERED_FIELD_MAPPINGS.keys():
-            value = args.get(field, "")
-            if isinstance(value, str):
-                value = value.strip()
-            if value and value.lower() not in ["unknown", ""]:
-                flow_manager.state[field] = value
-                await self._try_db_update(patient_id, "update_field", field, value)
-                captured.append(field)
-
-        return captured
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSITION HANDLERS (simplified — no data recording)
+    # ═══════════════════════════════════════════════════════════════════
 
     async def _proceed_to_plan_info_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
-        captured = await self._store_volunteered_info(args, flow_manager)
-        logger.debug(f"[Flow] Node: greeting → plan_info (captured: {captured if captured else 'none'})")
+        logger.debug("[Flow] Node: greeting -> plan_info")
         return None, self.create_plan_info_node()
 
-    async def _record_network_status_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("network_status", args.get("status", "Unknown"), flow_manager)
+    async def _proceed_to_cpt_coverage_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, "NodeConfig"]:
+        logger.debug("[Flow] Node: plan_info -> cpt_coverage")
+        return None, self.create_cpt_coverage_node()
 
-    async def _record_plan_type_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("plan_type", args.get("plan_type", "Unknown"), flow_manager)
-
-    async def _record_plan_effective_date_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("plan_effective_date", args.get("date", "Unknown"), flow_manager)
-
-    async def _record_plan_term_date_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("plan_term_date", args.get("date", "Unknown"), flow_manager)
-
-    # ═══════════════════════════════════════════════════════════════════
-    # CPT COVERAGE HANDLERS
-    # ═══════════════════════════════════════════════════════════════════
-
-    async def _record_cpt_covered_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("cpt_covered", args.get("covered", "Unknown"), flow_manager)
-
-    async def _record_copay_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("copay_amount", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_coinsurance_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("coinsurance_percent", args.get("percent", "Unknown"), flow_manager)
-
-    async def _record_deductible_applies_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_applies", args.get("applies", "Unknown"), flow_manager)
-
-    async def _record_prior_auth_required_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("prior_auth_required", args.get("required", "Unknown"), flow_manager)
-
-    async def _record_telehealth_covered_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("telehealth_covered", args.get("covered", "Unknown"), flow_manager)
-
-    # ═══════════════════════════════════════════════════════════════════
-    # ACCUMULATOR HANDLERS
-    # ═══════════════════════════════════════════════════════════════════
-
-    async def _record_deductible_individual_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_individual", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_deductible_individual_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_individual_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_deductible_family_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_family", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_deductible_family_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("deductible_family_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_individual_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_individual", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_individual_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_individual_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_family_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_family", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_oop_max_family_met_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("oop_max_family_met", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_allowed_amount_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("allowed_amount", args.get("amount", "Unknown"), flow_manager)
-
-    async def _record_reference_number_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("reference_number", args.get("reference_number", ""), flow_manager)
-
-    async def _record_rep_name_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        """Record rep's first name and last initial as separate fields."""
-        first_name = args.get("first_name", "").strip()
-        last_initial = args.get("last_initial", "").strip().upper()
-
-        # Normalize to single character
-        if len(last_initial) > 1:
-            last_initial = last_initial[0]
-
-        patient_id = flow_manager.state.get("patient_id")
-
-        if first_name:
-            flow_manager.state["insurance_rep_first_name"] = first_name
-            await self._try_db_update(patient_id, "update_field", "insurance_rep_first_name", first_name)
-            logger.debug(f"[Flow] Recorded: insurance_rep_first_name={first_name}")
-
-        if last_initial:
-            flow_manager.state["insurance_rep_last_initial"] = last_initial
-            await self._try_db_update(patient_id, "update_field", "insurance_rep_last_initial", last_initial)
-            logger.debug(f"[Flow] Recorded: insurance_rep_last_initial={last_initial}")
-
-        return None, None
-
-    CORRECTABLE_FIELDS = {
-        "copay_amount", "coinsurance_percent", "deductible_applies",
-        "prior_auth_required", "telehealth_covered", "network_status",
-        "plan_type", "deductible_individual", "deductible_individual_met",
-        "deductible_family", "deductible_family_met", "oop_max_individual",
-        "oop_max_individual_met", "oop_max_family", "oop_max_family_met"
-    }
-
-    async def _record_correction_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        """Record correction to any previously captured field."""
-        field_name = args.get("field_name", "")
-        if field_name not in self.CORRECTABLE_FIELDS:
-            logger.warning(f"[Flow] Attempted to correct invalid field: {field_name}")
-            return None, None
-        logger.info(f"[Flow] Correction: {field_name}")
-        return await self._record_field(field_name, args.get("corrected_value", ""), flow_manager)
-
-    async def _record_additional_notes_handler(self, args: Dict[str, Any], flow_manager: FlowManager):
-        return await self._record_field("additional_notes", args.get("notes", ""), flow_manager)
+    async def _proceed_to_accumulators_handler(
+        self, args: Dict[str, Any], flow_manager: FlowManager
+    ) -> tuple[None, "NodeConfig"]:
+        logger.debug("[Flow] Node: cpt_coverage -> accumulators")
+        return None, self.create_accumulators_node()
 
     async def _proceed_to_closing_handler(
         self, args: Dict[str, Any], flow_manager: FlowManager
     ) -> tuple[None, "NodeConfig"]:
-        """Transition from accumulators to closing node."""
-        # Guard 1: Check if already on closing node (prevents duplicate transitions)
+        # Guard: Prevent duplicate transitions
         if flow_manager.current_node == "closing":
             logger.debug("[Flow] Already on closing node, ignoring duplicate proceed_to_closing call")
             return None, None
 
-        # Guard 2: Only proceed if reference_number has been recorded
+        # Guard: Only proceed if reference_number has been recorded (by observer)
         reference_number = flow_manager.state.get("reference_number")
         if not reference_number:
             logger.warning("[Flow] proceed_to_closing called but no reference_number recorded - staying on accumulators")
             return None, None
 
-        captured = await self._store_volunteered_info(args, flow_manager)
-        logger.debug(f"[Flow] Node: accumulators → closing (captured: {captured if captured else 'none'})")
+        logger.debug("[Flow] Node: accumulators -> closing")
         return None, self.create_closing_node()
 
-    async def _proceed_to_accumulators_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, "NodeConfig"]:
-        """Transition from cpt_coverage to accumulators node."""
-        captured = await self._store_volunteered_info(args, flow_manager)
-        logger.debug(f"[Flow] Node: cpt_coverage → accumulators (captured: {captured if captured else 'none'})")
-        return None, self.create_accumulators_node()
+    # ═══════════════════════════════════════════════════════════════════
+    # END CALL HANDLER (with final extraction)
+    # ═══════════════════════════════════════════════════════════════════
 
-    async def _proceed_to_cpt_coverage_handler(
-        self, args: Dict[str, Any], flow_manager: FlowManager
-    ) -> tuple[None, "NodeConfig"]:
-        """Transition from plan_info to cpt_coverage node."""
-        captured = await self._store_volunteered_info(args, flow_manager)
-        logger.debug(f"[Flow] Node: plan_info → cpt_coverage (captured: {captured if captured else 'none'})")
-        return None, self.create_cpt_coverage_node()
+    async def _end_call_handler(self, args: Dict[str, Any], flow_manager: FlowManager) -> tuple[None, None]:
+        """End the call with a final extraction sweep."""
+        # Guard: Prevent multiple EndTaskFrame calls
+        if flow_manager.state.get("_call_ended"):
+            logger.debug("[Flow] end_call already called, ignoring duplicate")
+            return None, None
 
-    # Transfer handlers are inherited from DialoutBaseFlow:
+        flow_manager.state["_call_ended"] = True
+
+        # Run final extraction before ending
+        if hasattr(self, 'pipeline') and self.pipeline:
+            transcript = getattr(self.pipeline, 'transcripts', [])
+            await self.run_final_extraction(transcript, flow_manager)
+
+        # Call base class work directly (skips guard since we already set it)
+        await self._end_call_work(flow_manager)
+        return None, None
+
+    # Transfer handlers inherited from DialoutBaseFlow:
     # - _request_staff_handler
     # - _dial_staff_handler
     # - _return_to_closing_handler
-    # - _end_call_handler
