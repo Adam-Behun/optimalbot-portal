@@ -36,7 +36,7 @@ cd frontend && vercel --prod
 - **Backend:** FastAPI, MongoDB (Motor async)
 - **Frontend:** React, Shadcn/Radix UI, TailwindCSS
 - **Voice:** Pipecat AI + Pipecat Flows
-- **Services:** OpenAI (main LLM), Groq (fast classifier), Deepgram Flux (STT), Cartesia (TTS), Daily.co (telephony)
+- **Services:** OpenAI (main LLM), Groq (fast classifier), Deepgram Flux (STT), Cartesia (TTS), Daily.co (telephony/rooms)
 - **Observability:** OpenTelemetry + Langfuse
 
 ## Key Files
@@ -73,7 +73,7 @@ Each flow node has:
 **LLM Switching:** Greeting uses Groq (fast), verification uses OpenAI (function calling). Switch via `pre_actions`.
 
 **IVR Entry Paths:**
-1. IVR detected → `IVRNavigator` → verification node
+1. IVR detected → `IVRNavigationProcessor` → verification node
 2. Human detected → greeting node → verification node
 
 ## Adding New Clients
@@ -97,7 +97,7 @@ PIPECAT_API_KEY, PIPECAT_AGENT_NAME  # production only
 
 **Bot (bot.py):**
 ```bash
-OPENAI_API_KEY, GROQ_API_KEY, DEEPGRAM_API_KEY, ELEVENLABS_API_KEY
+OPENAI_API_KEY, GROQ_API_KEY, DEEPGRAM_API_KEY, CARTESIA_API_KEY
 DAILY_API_KEY, DAILY_PHONE_NUMBER_ID, MONGO_URI
 LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY  # optional
 ```

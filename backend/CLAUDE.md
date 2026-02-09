@@ -24,16 +24,82 @@ FastAPI backend for healthcare portal. Handles authentication, patient CRUD, and
 | PUT | `/patients/{id}` | Update patient | Yes |
 | DELETE | `/patients/{id}` | Delete patient | Yes |
 
-### Calls
+### Calls (Dial-Out)
 | Method | Path | Purpose | Auth |
 |--------|------|---------|------|
 | POST | `/start-call` | Initiate dial-out call | Yes |
 | GET | `/call/{session_id}/status` | Get call status | Yes |
 | GET | `/call/{session_id}/transcript` | Get call transcript | Yes |
 | DELETE | `/call/{session_id}` | End call session | Yes |
-| POST | `/dialin-webhook/{org}/{workflow}` | Daily.co incoming call webhook | No* |
+
+### Dial-In
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| POST | `/dialin-webhook/{client_name}/{workflow_name}` | Daily.co incoming call webhook | No* |
 
 *Dial-in webhook is unauthenticated but validates org slug exists.
+
+### Sessions (`/sessions`)
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| GET | `/sessions` | List sessions (filterable) | Yes |
+| GET | `/sessions/{session_id}` | Get session detail | Yes |
+| DELETE | `/sessions/{session_id}` | End/terminate session | Yes |
+
+### Metrics (`/metrics`)
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| GET | `/metrics/summary` | Call metrics summary | Yes |
+| GET | `/metrics/breakdown/status` | Status breakdown | Yes |
+| GET | `/metrics/breakdown/errors` | Error breakdown | Yes |
+| GET | `/metrics/daily` | Daily metrics | Yes |
+
+### Webhooks (`/webhooks`)
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| GET | `/webhooks` | List webhooks | Yes |
+| POST | `/webhooks` | Create webhook | Yes |
+| GET | `/webhooks/{webhook_id}` | Get webhook | Yes |
+| PUT | `/webhooks/{webhook_id}` | Update webhook | Yes |
+| DELETE | `/webhooks/{webhook_id}` | Delete webhook | Yes |
+| POST | `/webhooks/{webhook_id}/test` | Test webhook | Yes |
+| POST | `/webhooks/{webhook_id}/reset` | Reset webhook secret | Yes |
+
+### SMS
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| POST | `/sms-webhook/inbound` | Inbound SMS webhook | No |
+| POST | `/sms/send` | Send SMS | Yes |
+
+### Admin (`/admin`)
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| GET | `/admin/dashboard` | Admin dashboard stats | Yes |
+| GET | `/admin/calls` | Admin call list | Yes |
+| GET | `/admin/calls/{session_id}` | Admin call detail | Yes |
+
+### Admin Onboarding (`/admin/onboarding`)
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| POST | `/admin/onboarding/upload` | Upload onboarding files | Yes |
+| GET | `/admin/onboarding/status/{org}/{workflow}` | Onboarding status | Yes |
+| POST | `/admin/onboarding/transcribe/{org}/{workflow}` | Transcribe recordings | Yes |
+| GET | `/admin/onboarding/conversations/{org}/{workflow}` | List conversations | Yes |
+| GET | `/admin/onboarding/conversations/detail/{id}` | Conversation detail | Yes |
+| POST | `/admin/onboarding/conversations` | Create conversation | Yes |
+| PUT | `/admin/onboarding/conversations/{id}` | Update conversation | Yes |
+| POST | `/admin/onboarding/conversations/{id}/approve` | Approve conversation | Yes |
+| DELETE | `/admin/onboarding/conversations/{id}` | Delete conversation | Yes |
+
+### MFA (`/auth/mfa`)
+| Method | Path | Purpose | Auth |
+|--------|------|---------|------|
+| POST | `/auth/login/mfa` | MFA login verification | No |
+| POST | `/auth/mfa/setup` | Start MFA setup | Yes |
+| POST | `/auth/mfa/verify` | Verify MFA setup | Yes |
+| POST | `/auth/mfa/disable` | Disable MFA | Yes |
+| GET | `/auth/mfa/status` | Get MFA status | Yes |
+| POST | `/auth/mfa/backup-codes` | Generate backup codes | Yes |
 
 ## MongoDB Access
 
@@ -52,7 +118,7 @@ db.patients.countDocuments({workflow: "eligibility_verification"}) // Count by w
 
 One-liner queries:
 ```bash
-mongosh "mongodb+srv://alfons_user:REDACTED@analytics.dsaxr6b.mongodb.net/alfons" --eval "db.patients.countDocuments()"
+mongosh "$MONGO_URI" --eval "db.patients.countDocuments()"
 ```
 
 ## MongoDB Collections
@@ -116,10 +182,16 @@ Organization-scoped access uses `Depends(require_organization_access)`.
 | `audit.py` | AuditLogger for HIPAA compliance |
 | `server_utils.py` | Daily room creation, bot start (local/production) |
 | `api/health.py` | Root info and `/health` endpoint |
-| `api/auth.py` | Login, logout, password reset endpoints |
+| `api/auth.py` | Login, logout, password reset, MFA endpoints |
 | `api/patients.py` | Patient CRUD endpoints |
 | `api/dialout.py` | Outbound call management |
 | `api/dialin.py` | Inbound call webhook handler |
+| `api/sessions.py` | Session list/detail/terminate |
+| `api/metrics.py` | Call metrics and breakdowns |
+| `api/webhooks.py` | Webhook CRUD and testing |
+| `api/sms.py` | SMS inbound webhook and send |
+| `api/admin.py` | Admin dashboard and call views |
+| `api/onboarding.py` | Onboarding upload, transcription, conversations |
 
 ## Architecture Layers
 
