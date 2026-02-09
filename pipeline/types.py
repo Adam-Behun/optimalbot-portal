@@ -24,3 +24,6 @@ class ConversationComponents:
     safety_monitor: Optional[Any] = None
     output_validator: Optional[Any] = None
     safety_config: dict = field(default_factory=dict)
+    observer_llm: Optional[Any] = None
+    observer_context_manager: Optional[Any] = None
+    bot_speech_producer: Optional[Any] = None

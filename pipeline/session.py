@@ -201,6 +201,15 @@ class CallSession:
         if hasattr(self.flow, '_init_flow_state'):
             self.flow._init_flow_state()
 
+        self._init_observer()
+
+    def _init_observer(self):
+        """Register observer extraction handlers if observer LLM is configured."""
+        if not self.components.observer_llm:
+            return
+        self.flow.register_observer_handlers(self.components.observer_llm, self.flow_manager)
+        logger.info("Observer extraction handlers registered")
+
     def _setup_handlers(self) -> None:
         """Register all event handlers."""
         setup_transport_handlers(self, self.call_type)

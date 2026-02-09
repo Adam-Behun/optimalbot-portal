@@ -5,6 +5,8 @@ from typing import Any, Dict
 import yaml
 from loguru import logger
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import TTSTextFrame
+from pipecat.pipeline.parallel_pipeline import ParallelPipeline
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -12,17 +14,26 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.consumer_processor import ConsumerProcessor
+from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.producer_processor import ProducerProcessor
 from pipecat.turns.mute import FirstSpeechUserMuteStrategy
 from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 
 from core.flow_loader import FlowLoader
 from pipeline.ivr_human_detector import IVRHumanDetector
 from pipeline.ivr_navigation_processor import IVRNavigationProcessor
+from pipeline.observer import ObserverContextManager, create_observer_branch
 from pipeline.safety_processors import OutputValidator, SafetyMonitor
 from pipeline.transcript_logger import TranscriptLogger
 from pipeline.triage_detector import TriageDetector
 from pipeline.types import ConversationComponents
 from services.service_factory import ServiceFactory
+
+
+async def _is_tts_text_frame(frame):
+    """Filter for ProducerProcessor: matches TTSTextFrame."""
+    return isinstance(frame, TTSTextFrame)
 
 
 class PipelineFactory:
@@ -63,6 +74,13 @@ class PipelineFactory:
             classifier_llm = None
             logger.info("classifier_llm not configured - triage detection disabled")
 
+        # Create observer LLM (optional)
+        observer_llm_config = services_config['services'].get('observer_llm')
+        observer_llm = None
+        if observer_llm_config:
+            observer_llm = ServiceFactory.create_llm(observer_llm_config)
+            logger.info("Observer LLM created for silent data extraction")
+
         components = PipelineFactory._create_conversation_components(
             client_name=client_name,
             session_data=session_data,
@@ -73,6 +91,7 @@ class PipelineFactory:
             classifier_llm=classifier_llm,
             call_type=call_type,
             services_config=services_config,
+            observer_llm=observer_llm,
         )
 
         pipeline, params = PipelineFactory._assemble_pipeline(components)
@@ -115,6 +134,7 @@ class PipelineFactory:
         classifier_llm: Any,
         call_type: str,
         services_config: Dict[str, Any],
+        observer_llm: Any = None,
     ) -> ConversationComponents:
         """Create flow and conversation components."""
         context = LLMContext()
@@ -207,6 +227,32 @@ class PipelineFactory:
                 logger.warning(f"OutputValidator init failed, continuing without: {e}")
                 output_validator = None
 
+        # Create observer components if observer LLM is configured and flow supports it
+        observer_context_manager = None
+        bot_speech_producer = None
+        if observer_llm and hasattr(flow, 'get_observer_system_prompt'):
+            observer_prompt = flow.get_observer_system_prompt()
+            observer_tools = flow.get_observer_tools()
+            if observer_prompt and observer_tools:
+                # Get extraction field names from flow if available
+                extraction_fields = None
+                if hasattr(flow, 'get_extraction_fields'):
+                    extraction_fields = flow.get_extraction_fields()
+
+                observer_context_manager = ObserverContextManager(
+                    system_prompt=observer_prompt,
+                    tools=observer_tools,
+                    tool_choice="required",
+                    flow_ref=flow,
+                    extraction_fields=extraction_fields,
+                )
+
+                bot_speech_producer = ProducerProcessor(
+                    filter=_is_tts_text_frame,
+                    passthrough=True,
+                )
+                logger.info("Observer pipeline branch configured")
+
         return ConversationComponents(
             transport=transport,
             stt=stt,
@@ -224,43 +270,67 @@ class PipelineFactory:
             safety_monitor=safety_monitor,
             output_validator=output_validator,
             safety_config=safety_config,
+            observer_llm=observer_llm,
+            observer_context_manager=observer_context_manager,
+            bot_speech_producer=bot_speech_producer,
         )
 
     @staticmethod
     def _assemble_pipeline(components: ConversationComponents) -> tuple[Pipeline, PipelineParams]:
-        processors = [components.transport.input(), components.stt, TranscriptLogger()]
+        # Pre-processors: transport input -> STT -> transcript logger -> safety -> triage -> IVR
+        pre_processors = [components.transport.input(), components.stt, TranscriptLogger()]
 
         if components.safety_monitor:
-            processors.append(components.safety_monitor)
+            pre_processors.append(components.safety_monitor)
 
         if components.triage_detector:
-            processors.append(components.triage_detector.detector())
+            pre_processors.append(components.triage_detector.detector())
 
         if components.ivr_human_detector:
-            processors.append(components.ivr_human_detector)
+            pre_processors.append(components.ivr_human_detector)
 
-        processors.extend([
+        # Build conversational processors (shared between observer and flat pipeline)
+        conv_processors = [
             components.context_aggregator.user(),
             components.active_llm,
-        ])
-
-        # IVRNavigationProcessor must be AFTER LLM to intercept LLM responses
-        # and parse DTMF/IVR tags before they reach TTS
+        ]
         if components.ivr_processor:
-            processors.append(components.ivr_processor)
-
+            conv_processors.append(components.ivr_processor)
         if components.output_validator:
-            processors.append(components.output_validator)
-
-        processors.append(components.tts)
-
+            conv_processors.append(components.output_validator)
+        conv_processors.append(components.tts)
         if components.triage_detector:
-            processors.append(components.triage_detector.gate())
+            conv_processors.append(components.triage_detector.gate())
+        conv_processors.append(components.context_aggregator.assistant())
 
-        processors.extend([
-            components.context_aggregator.assistant(),
-            components.transport.output()
-        ])
+        # Check if we have an observer branch
+        has_observer = (
+            components.observer_llm
+            and components.observer_context_manager
+            and components.bot_speech_producer
+        )
+
+        if has_observer:
+            # Conv branch ends with bot_speech_producer to share TTSTextFrame
+            conv_branch = conv_processors + [components.bot_speech_producer]
+
+            # Observer branch: receives bot speech via consumer, builds context, runs observer LLM
+            bot_speech_consumer = ConsumerProcessor(
+                producer=components.bot_speech_producer,
+                direction=FrameDirection.DOWNSTREAM,
+            )
+            observer_branch = create_observer_branch(
+                components.observer_context_manager,
+                components.observer_llm,
+                bot_speech_consumer,
+            )
+
+            parallel = ParallelPipeline(conv_branch, observer_branch)
+            processors = pre_processors + [parallel, components.transport.output()]
+            logger.info("Pipeline assembled with ParallelPipeline (conv + observer)")
+        else:
+            # Flat pipeline (backward compatible)
+            processors = pre_processors + conv_processors + [components.transport.output()]
 
         pipeline = Pipeline(processors)
 
