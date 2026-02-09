@@ -19,13 +19,15 @@ src/
 ├── App.tsx             # Routes, providers (Theme, Organization, Router)
 ├── components/
 │   ├── ui/             # Shadcn primitives (Button, Input, Select, Table, etc.)
+│   ├── admin/          # Admin dashboard, calls, costs, onboarding
 │   ├── workflows/
-│   │   ├── shared/     # DynamicForm, DynamicTable, TranscriptViewer, WorkflowLayout
+│   │   ├── shared/     # DynamicForm, DynamicTable, SessionTable, SessionDetailSheet, TranscriptViewer, WorkflowLayout
 │   │   ├── eligibility_verification/, patient_scheduling/, mainline/, lab_results/, prescription_status/
-│   └── LoginForm, ProtectedRoute, SidebarLayout, AppSidebar, etc.
+│   └── ProtectedRoute, SidebarLayout, AppSidebar, AuthCallback, Home, etc.
 ├── contexts/           # OrganizationContext (org + workflow schemas)
-├── lib/                # auth.ts (localStorage), utils.ts (date formatting)
-└── hooks/
+├── lib/                # auth.ts (localStorage), utils.ts (date formatting), download.ts, export.ts
+├── hooks/              # useSessions, use-mobile
+└── utils/              # Utility helpers
 ```
 
 ## Key Patterns
